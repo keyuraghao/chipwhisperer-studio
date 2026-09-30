@@ -78,6 +78,7 @@ export function initTarget(ctx, el) {
   );
 
   ctx.on('serial', appendConsole);
+  get('/api/target/serial').then((recs) => recs.slice(-200).forEach(appendConsole)).catch(() => {});  // traffic from before this page was opened
   ctx.on('target-connected', () => tree.refresh());
   ctx.on('target-disconnected', () => tree.refresh());
   return { tree };

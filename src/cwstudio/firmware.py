@@ -493,7 +493,7 @@ class FirmwareManager:
         return {
             "project": project, "platform": platform_name, "arch": arch, "compiler": compiler,
             "cwd": pdir, "make": make, "build_cmd": [make, f"-j{jobs}"] + args + extra,
-            "clean_cmd": [make, f"PLATFORM={platform_name}", "clean"] + ([a for a in args if a.startswith("CRYPTO_TARGET=")]),
+            "clean_cmd": [make, f"PLATFORM={platform_name}"] + [a for a in args if a.startswith(("CRYPTO_TARGET=", "SS_VER="))] + ["clean"],
             "env": env, "hex": os.path.join(pdir, f"{target}-{platform_name}.hex"),
             "elf": os.path.join(pdir, f"{target}-{platform_name}.elf"),
             "programmer": plat.get("programmer"), "mcu": plat.get("mcu"), "label": plat.get("label"),
@@ -561,10 +561,12 @@ class FirmwareManager:
         try:
             self._publish("build", self.build_status())
             log.info("Building %s for %s with %s", plan["project"], plan["platform"], plan["compiler"])
+            if clean:
+                with self._lock:
+                    self.build_lines.append("$ " + " ".join(plan["clean_cmd"]))
+                self._run(plan["clean_cmd"], plan)
             with self._lock:
                 self.build_lines.append("$ " + " ".join(plan["build_cmd"]))
-            if clean:
-                self._run(plan["clean_cmd"], plan)
             if job.get("state") == "cancelled":
                 return
             rc = self._run(plan["build_cmd"], plan)

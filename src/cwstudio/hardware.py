@@ -20,8 +20,8 @@ SCOPE_KINDS = {
 }
 
 TARGET_KINDS = {
-    "SimpleSerial": {"label": "SimpleSerial v1 (legacy firmware)"},
     "SimpleSerial2": {"label": "SimpleSerial v2 (default firmware)"},
+    "SimpleSerial": {"label": "SimpleSerial v1 (legacy firmware)"},
     "SimpleSerial2_CDC": {"label": "SimpleSerial v2 over USB-CDC"},
     "CW305": {"label": "CW305 Artix FPGA board"},
     "sim": {"label": "Simulated AES target"},

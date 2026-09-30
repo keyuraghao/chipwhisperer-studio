@@ -4,7 +4,9 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 
 [![CI](https://github.com/keyuraghao/chipwhisperer-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/keyuraghao/chipwhisperer-studio/actions/workflows/ci.yml) ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)
 
-![ChipWhisperer Studio capturing traces with a live waveform](docs/images/capture.png)
+**Documentation:** the [ChipWhisperer Studio wiki](https://github.com/keyuraghao/chipwhisperer-studio/wiki) explains every feature, option and setup step in detail, from [installation](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Installation) and a [quick start](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Quick-Start) to the [MCP server](https://github.com/keyuraghao/chipwhisperer-studio/wiki/MCP-Server) and [troubleshooting](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Troubleshooting).
+
+![ChipWhisperer Studio capturing traces with a live waveform](docs/wiki/images/capture.png)
 
 > ChipWhisperer Studio is an independent community project. It is not affiliated with or endorsed by NewAE Technology Inc.; it uses their open source `chipwhisperer` Python library for all hardware access.
 
@@ -20,6 +22,7 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 - [Development](#development)
 - [Releases](#releases)
 - [License](#license)
+- [Full documentation (wiki)](https://github.com/keyuraghao/chipwhisperer-studio/wiki)
 
 ## Features
 
@@ -68,43 +71,43 @@ Options: `--port 8765`, `--host 0.0.0.0` (remote access), `--no-browser`, `--win
 
 Choose your ChipWhisperer (or Auto-detect, or the Simulator) and press **Connect scope**, then **Connect target**. Use SimpleSerial v2 for current ChipWhisperer firmware.
 
-![Connect tab](docs/images/connect.png)
+![Connect tab](docs/wiki/images/connect.png)
 
 ### 2. Configure the scope
 
 Every scope setting is listed with its documentation (hover a name) and read back from the hardware after each change. Press **Single** in the header to check the waveform while you adjust gain, samples, offset and trigger.
 
-![Scope settings tree](docs/images/scope.png)
+![Scope settings tree](docs/wiki/images/scope.png)
 
 ### 3. Program and talk to the target
 
 Program a `.hex` from disk or straight from a Studio build, check the target answers in the serial console, and send SimpleSerial commands by hand.
 
-![Target tab](docs/images/target.png)
+![Target tab](docs/wiki/images/target.png)
 
 ### 4. Capture traces
 
 Pick a trace count and key/plaintext mode and press **Run**. Traces stream to the waveform view as they are captured. Overlay the last N traces, show the mean and min/max envelope, zoom, and place cursors. Export as a ChipWhisperer project (`.cwp`) or `.npz` to continue in Python.
 
-![Capture with the live trace and the running mean](docs/images/capture.png)
+![Capture with the live trace and the running mean](docs/wiki/images/capture.png)
 
 ### 5. Recover the key with CPA
 
 Run a correlation power analysis attack with the leakage model that matches your target. With a known key the partial guessing entropy (PGE) plot shows every byte converging to rank 0; click a byte to see where it leaks in the trace.
 
-![CPA result with all 16 key bytes recovered](docs/images/analysis.png)
+![CPA result with all 16 key bytes recovered](docs/wiki/images/analysis.png)
 
 ### 6. Sweep glitch parameters
 
 Configure the glitch module in the Scope tab, then sweep parameters such as `glitch.ext_offset` and `glitch.width`. Each point is classified as normal, success (a valid but wrong answer) or reset, and plotted live.
 
-![Glitch sweep scatter plot](docs/images/glitch.png)
+![Glitch sweep scatter plot](docs/wiki/images/glitch.png)
 
 ### 7. Work in a notebook
 
 The **Notebook** tab is a Jupyter-style editor that runs inside Studio. Write Python cell by cell (Shift+Enter runs a cell), mix in Markdown text cells, and see output, errors and matplotlib figures inline. Cells share Studio's hardware connection: `cw.scope()` and `cw.target()` return the devices you connected, and every trace captured with `cw.capture_trace()` or a manual `scope.arm()` / `scope.capture()` loop shows up live in the waveform view. Press **View traces** to jump to the Capture tab with them.
 
-![Notebook running a capture and plotting the mean trace](docs/images/notebook.png)
+![Notebook running a capture and plotting the mean trace](docs/wiki/images/notebook.png)
 
 Notebooks are standard `.ipynb` files: import your own, or export them to use with Jupyter. **Download tutorials** fetches NewAE's chipwhisperer-jupyter courses (SCA101, Fault101 and more) at the version that matches your firmware sources. They run unmodified: `%run` setup scripts, `%%bash` build cells using Studio's compilers, programming and capture loops all work. The `studio` object adds shortcuts such as `studio.traces`, `studio.build_firmware()` and `studio.program()`.
 
@@ -112,19 +115,19 @@ Notebooks are standard `.ipynb` files: import your own, or export them to use wi
 
 **Notes** is a text pad for keys, glitch settings that worked and to-dos, saved automatically as Markdown files. **Calc** evaluates expressions with side-channel helpers (`0x2b ^ 0x7e`, `hw(x)`, `hd(a, b)`, `sbox(x)`, `mean(...)`) and computes count, sum, mean, median, min, max, peak to peak, standard deviation and RMS of the current selection: the waveform between cursors or in the zoomed range, one sample across all traces, or any selected text.
 
-![Notes with live selection statistics in the log bar](docs/images/notes.png)
+![Notes with live selection statistics in the log bar](docs/wiki/images/notes.png)
 
 Select numbers anywhere in Studio (a note, notebook output, the log or the serial console) and the log bar shows their count, sum, mean, min and max immediately.
 
-![Calculator with statistics between the waveform cursors](docs/images/calc.png)
+![Calculator with statistics between the waveform cursors](docs/wiki/images/calc.png)
 
 ## Building firmware
 
 The **Firmware** tab builds ChipWhisperer's own firmware projects (simpleserial-aes, simpleserial-glitch, simpleserial-ecc and the others) with ChipWhisperer's makefiles, for any of the 38 platforms they support. Choose a project, a platform and GCC or clang, then press **Build & program**: Studio compiles the firmware and flashes the connected target with the right programmer.
 
-![Firmware tab after a clang build for CW-Lite Arm](docs/images/firmware.png)
+![Firmware tab after a clang build for CW-Lite Arm](docs/wiki/images/firmware.png)
 
-![How Studio builds and flashes firmware](docs/images/firmware-flow.svg)
+![How Studio builds and flashes firmware](docs/wiki/images/firmware-flow.svg)
 
 ### Compilers download on demand
 
@@ -140,7 +143,7 @@ Studio does not bundle compilers, which would add hundreds of MB to every downlo
 
 Clang builds compile every C file with clang and let GCC assemble the startup files and link against newlib or avr-libc, so the firmware uses the same C library and linker scripts as a GCC build. For targets without a free pinned toolchain (TriCore, PowerPC, RX) or to pin a specific compiler, add a **custom toolchain** from an archive URL or an existing folder. Compilers already on your `PATH` are detected and used as a fallback.
 
-![Toolchains and firmware sources](docs/images/toolchains.png)
+![Toolchains and firmware sources](docs/wiki/images/toolchains.png)
 
 ### Sources come from NewAE, not from Studio
 
@@ -148,7 +151,7 @@ Firmware sources are not packed into Studio either. Studio downloads `firmware/m
 
 ### Platform coverage
 
-Every Arm, AVR and RISC-V platform in ChipWhisperer builds with GCC, apart from three whose upstream HAL sources are broken (CW308_EFM32GG11, CW308_PSOC62, CW308_NRF52). With clang, 26 platforms build, including all the common ones (CWLITEARM, CWNANO, CWHUSKY, CWLITEXMEGA, CW304, STM32F0 to F4, SAM4S, K82F, NEORV32, Ibex); a few HALs use GCC-only constructs, so use GCC for those. AURIX, RX65N and MPC5676R need a custom toolchain. Builds are verified in CI on Linux, Windows and macOS.
+Every Arm, AVR and RISC-V platform in ChipWhisperer builds with GCC, apart from three whose upstream HAL sources are broken (CW308_EFM32GG11, CW308_PSOC62, CW308_NRF52). With clang, 28 of the 38 platforms build, including all the common ones (CWLITEARM, CWNANO, CWHUSKY, CWLITEXMEGA, CW304, STM32F0 to F4, SAM4S, K82F, NEORV32, Ibex); a few HALs use GCC-only constructs, so use GCC for those. AURIX, RX65N and MPC5676R need a custom toolchain. Builds are verified in CI on Linux, Windows and macOS.
 
 ## AI agents (MCP)
 
@@ -156,7 +159,7 @@ Every Arm, AVR and RISC-V platform in ChipWhisperer builds with GCC, apart from 
 
 If Studio is already running, the MCP server attaches to it, so you can watch the agent capture and analyse in the browser. Otherwise it starts a headless Studio in the background.
 
-![MCP setup in the Help tab](docs/images/mcp.png)
+![MCP setup in the Help tab](docs/wiki/images/mcp.png)
 
 **Claude Code:**
 
@@ -182,11 +185,11 @@ Try asking your agent: *"Connect to the simulator, capture 100 traces with a fix
 
 Everything the UI and the MCP server do goes through a documented HTTP API; open `/api/docs` for interactive documentation. Start Studio with `--host 0.0.0.0` on the machine that has the hardware and use it from any browser on the network, or drive captures from scripts and CI.
 
-![Light theme](docs/images/capture-light.png)
+![Light theme](docs/wiki/images/capture-light.png)
 
 ## Architecture
 
-![ChipWhisperer Studio architecture](docs/images/architecture.svg)
+![ChipWhisperer Studio architecture](docs/wiki/images/architecture.svg)
 
 Studio is one Python process: a FastAPI server that serves the web UI, the HTTP API and a WebSocket for live traces. A single worker thread owns the USB hardware, while CPA, toolchain downloads and firmware builds run on their own threads. The MCP server is another client of the same API. Details are in [docs/DESIGN.md](docs/DESIGN.md).
 

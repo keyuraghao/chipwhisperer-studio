@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>How notebook cells share Studio's hardware</title>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="120%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.10"/></filter>
+  </defs>
+  <rect width="1200" height="560" rx="16" fill="#f8fafc"/>
+  <text x="40" y="44" font-size="12.5" font-weight="600" fill="#475569" letter-spacing="0.6">NOTEBOOK CELLS AND STUDIO SHARE ONE CONNECTION</text>
+
+  <g filter="url(#sh)">
+    <rect x="40" y="70" width="330" height="200" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="435" y="70" width="330" height="200" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="830" y="70" width="330" height="200" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  </g>
+  <rect x="40" y="70" width="330" height="6" rx="3" fill="#2f7de1"/>
+  <rect x="435" y="70" width="330" height="6" rx="3" fill="#7c3aed"/>
+  <rect x="830" y="70" width="330" height="6" rx="3" fill="#12a383"/>
+
+  <text x="62" y="106" font-size="16" font-weight="600" fill="#0f172a">Your notebook cell</text>
+  <g font-size="12" fill="#334155" font-family="ui-monospace, Menlo, Consolas, monospace">
+    <text x="62" y="134">%run "../../Setup_Generic.ipynb"</text>
+    <text x="62" y="154">import chipwhisperer as cw</text>
+    <text x="62" y="174">scope = cw.scope()</text>
+    <text x="62" y="194">!make PLATFORM={PLATFORM}</text>
+    <text x="62" y="214">target.simpleserial_write("p", pt)</text>
+    <text x="62" y="234">wave = scope.get_last_trace()</text>
+  </g>
+  <text x="62" y="258" font-size="11.5" fill="#64748b">Shift+Enter in the Notebook tab, or an MCP agent</text>
+
+  <text x="457" y="106" font-size="16" font-weight="600" fill="#0f172a">Studio kernel</text>
+  <g font-size="12.5" fill="#475569">
+    <text x="457" y="134">Rewrites %magics and !shell lines into</text>
+    <text x="457" y="152">kernel calls, then runs the cell in one</text>
+    <text x="457" y="170">persistent namespace on the hardware</text>
+    <text x="457" y="188">thread. Output streams to the browser;</text>
+    <text x="457" y="206">matplotlib figures become images.</text>
+  </g>
+  <text x="457" y="238" font-size="11" fill="#64748b" font-family="ui-monospace, Menlo, Consolas, monospace">notebook.py  ·  Kernel</text>
+
+  <text x="852" y="106" font-size="16" font-weight="600" fill="#0f172a">ChipWhisperer stand-ins</text>
+  <g font-size="12.5" fill="#475569">
+    <text x="852" y="134">cw.scope() and cw.target() return</text>
+    <text x="852" y="152">StudioScope and StudioTarget: they</text>
+    <text x="852" y="170">forward everything to the devices</text>
+    <text x="852" y="188">connected in Studio and pass the</text>
+    <text x="852" y="206">library's isinstance checks.</text>
+  </g>
+  <text x="852" y="238" font-size="11" fill="#64748b" font-family="ui-monospace, Menlo, Consolas, monospace">cw proxy  ·  unchanged library</text>
+
+  <g filter="url(#sh)">
+    <rect x="40" y="340" width="330" height="170" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="435" y="340" width="330" height="170" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="830" y="340" width="330" height="170" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  </g>
+  <text x="62" y="376" font-size="16" font-weight="600" fill="#0f172a">Shell commands</text>
+  <g font-size="12.5" fill="#475569">
+    <text x="62" y="404">!cmd and %%bash run with Studio's</text>
+    <text x="62" y="422">downloaded compilers and make on PATH,</text>
+    <text x="62" y="440">with {var} and $var expansion, so the</text>
+    <text x="62" y="458">tutorials' build cells work unchanged.</text>
+  </g>
+
+  <text x="457" y="376" font-size="16" font-weight="600" fill="#0f172a">Hardware worker</text>
+  <g font-size="12.5" fill="#475569">
+    <text x="457" y="404">The one thread that owns USB. Cells</text>
+    <text x="457" y="422">run here one at a time, so they never</text>
+    <text x="457" y="440">collide with UI actions; Stop raises</text>
+    <text x="457" y="458">KeyboardInterrupt inside the cell.</text>
+  </g>
+
+  <text x="852" y="376" font-size="16" font-weight="600" fill="#0f172a">Trace store and Capture tab</text>
+  <g font-size="12.5" fill="#475569">
+    <text x="852" y="404">Every trace the notebook reads is stored</text>
+    <text x="852" y="422">with its plaintext, key and response and</text>
+    <text x="852" y="440">streamed to the waveform view live.</text>
+    <text x="852" y="458">View traces opens the Capture tab.</text>
+  </g>
+
+  <g stroke="#475569" stroke-width="1.8" fill="none">
+    <path d="M372 170 H431" marker-end="url(#arr)"/>
+    <path d="M767 170 H826" marker-end="url(#arr)"/>
+    <path d="M600 272 V336" marker-end="url(#arr)"/>
+    <path d="M205 272 V336" marker-end="url(#arr)"/>
+    <path d="M995 272 V336" marker-end="url(#arr)"/>
+    <path d="M769 425 H826" marker-end="url(#arr)"/>
+  </g>
+  <text x="380" y="160" font-size="11" fill="#64748b">queued</text>
+  <text x="775" y="160" font-size="11" fill="#64748b">import cw</text>
+  <text x="612" y="310" font-size="11" fill="#64748b">runs on</text>
+  <text x="217" y="310" font-size="11" fill="#64748b">!make, %%bash</text>
+  <text x="1007" y="310" font-size="11" fill="#64748b">get_last_trace()</text>
+</svg>

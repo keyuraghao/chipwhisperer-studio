@@ -201,3 +201,16 @@ def test_disconnect(client):
     client.post("/api/scope/disconnect")
     st = client.get("/api/status").json()
     assert st["scope"]["connected"] is False and st["target"]["connected"] is False
+
+
+def test_download_npy_set_as_zip(client):
+    import io
+    import zipfile
+    client.post("/api/scope/connect", json={"kind": "sim"})
+    client.post("/api/target/connect", json={"kind": "sim"})
+    client.post("/api/capture/start", json={"count": 3, "clear": True})
+    wait_job(client)
+    r = client.get("/api/traces/download/npy")
+    assert r.status_code == 200
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert sorted(names) == ["traces_keys.npy", "traces_textins.npy", "traces_textouts.npy", "traces_waves.npy"]

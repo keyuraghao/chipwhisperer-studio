@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the README screenshots in docs/images.
+"""Regenerate the screenshots used by the README and the wiki (docs/wiki/images).
 
 Starts a Studio with the simulator in a temporary data folder, runs a realistic session through the HTTP API (400 captured traces, a CPA attack, a glitch sweep and a clang firmware build), then photographs every tab with Playwright in dark and light themes.
 
@@ -79,7 +79,28 @@ def prepare(api: Api, with_firmware: bool):
     api("POST", "/api/firmware/sources/check")
 
 
-async def shoot(base: str, out: str, width: int, height: int):
+TUTORIAL = "chipwhisperer-jupyter/courses/sca101/Lab 3_3 - DPA on Firmware Implementation of AES (HARDWARE).ipynb"
+
+
+def prepare_extras(api: Api, with_firmware: bool):
+    """State for the more detailed wiki scenes: serial traffic, a run NewAE tutorial."""
+    api("POST", "/api/target/simpleserial", {"cmd": "k", "data": "2b7e151628aed2a6abf7158809cf4f3c", "read_len": 0})
+    for pt in ("00112233445566778899aabbccddeeff", "3243f6a8885a308d313198a2e0370734"):
+        api("POST", "/api/target/simpleserial", {"cmd": "p", "data": pt, "read_len": 16})
+    if with_firmware:
+        tut = api("GET", "/api/notebooks")["tutorials"]
+        if not tut.get("installed"):
+            api("POST", "/api/notebooks/tutorials/fetch")
+            api.wait("/api/notebooks", lambda r: (r["tutorials"].get("job") or {}).get("state") in ("installed", "error"), every=2)
+        setup = {"cells": [{"cell_type": "code", "source": "SCOPETYPE = 'OPENADC'\nPLATFORM = 'CWLITEARM'\nCRYPTO_TARGET = 'TINYAES128C'\nSS_VER = 'SS_VER_2_1'"}]}
+        nb = api("GET", "/api/notebooks/file?path=" + urllib.request.quote(TUTORIAL))
+        if not any(c["source"].startswith("SCOPETYPE = 'OPENADC'") for c in nb["cells"]):
+            nb["cells"].insert(0, {"cell_type": "code", "source": setup["cells"][0]["source"], "outputs": [], "execution_count": None})
+        api("PUT", "/api/notebooks/file", {"path": TUTORIAL, "notebook": nb})
+        api("POST", "/api/notebooks/run", {"path": TUTORIAL, "stop_on_error": False})
+
+
+async def shoot(base: str, out: str, width: int, height: int, with_firmware: bool = True):
     from playwright.async_api import async_playwright
 
     errors = []
@@ -98,66 +119,160 @@ async def shoot(base: str, out: str, width: int, height: int):
                 await page.locator("#sidebar").evaluate(f"e => e.scrollTop = {scroll}")
                 await page.wait_for_timeout(300)
 
-            async def snap(name: str):
-                await page.screenshot(path=os.path.join(out, name))
+            async def snap(name: str, element: str = None):
+                path = os.path.join(out, name)
+                if element:
+                    await page.locator(element).first.screenshot(path=path)
+                else:
+                    await page.screenshot(path=path)
                 print("wrote", name)
 
-            if scheme == "dark":
-                await tab("connect")
-                await snap("connect.png")
-                await tab("scope")
-                for group in ("gain", "adc", "clock"):
-                    loc = page.locator(".tree .ghead", has_text=group).first
-                    if await loc.count():
-                        await loc.click()
-                await snap("scope.png")
-                await tab("target")
-                await snap("target.png")
-                await tab("firmware")
-                await page.wait_for_timeout(600)
-                await snap("firmware.png")
-                await tab("firmware", 99999)
-                await snap("toolchains.png")
-                await tab("capture")
-                await page.locator("#wave-toolbar label", has_text="mean").locator("input").check()
+            async def run_capture(count=300):
+                await page.fill("#panel-capture input[type=number] >> nth=0", str(count))
                 await page.click("#btn-run")
                 await page.wait_for_timeout(2500)
-                await snap("capture.png")
-                await tab("analysis", 380)
-                await snap("analysis.png")
-                await tab("glitch", 700)
-                await snap("glitch.png")
-                await tab("help", 420)
-                await snap("mcp.png")
-                await tab("notebook")
-                loc = page.locator(".nb-file", has_text="Studio tour")
-                await loc.first.click()
-                await page.wait_for_timeout(1500)
-                await page.locator(".nb-scroll").evaluate("e => e.scrollTop = 0")
-                await snap("notebook.png")
-                await tab("notes")
-                await page.evaluate("() => { const s = document.querySelector('#panel-notes select'); s.value = 'Lab notes.md'; s.dispatchEvent(new Event('change')); }")
-                await page.wait_for_timeout(800)
-                await page.evaluate("() => { const t = document.querySelector('.notes-text'); t.focus(); const i = t.value.indexOf('21 24'); t.setSelectionRange(i, i + 20); document.dispatchEvent(new Event('selectionchange')); }")
-                await page.wait_for_timeout(600)
-                await snap("notes.png")
-                await tab("calc")
-                for expr in ("0x2b ^ 0x7e", "hw(0xff) + sbox(0x53)", "3.3 / 4096 * 1000"):
-                    await page.fill(".calc-in", expr)
-                    await page.keyboard.press("Enter")
-                    await page.wait_for_timeout(300)
-                await page.click("#wave-plot", position={"x": 300, "y": 300})
-                await page.click("#wave-plot", position={"x": 700, "y": 300}, modifiers=["Shift"])
-                await page.select_option("#panel-calc select", "cursors")
-                await page.wait_for_timeout(600)
-                await snap("calc.png")
-            else:
+
+            if scheme == "light":
                 await tab("capture")
-                await page.click("#btn-single")
-                await page.wait_for_timeout(1500)
-                await snap("capture-light.png")
-                await tab("firmware")
-                await snap("firmware-light.png")
+                await page.locator("#wave-toolbar label", has_text="mean").locator("input").check()
+                await run_capture()
+                await snap("overview-light.png")
+                await page.close()
+                continue
+
+            # Connect
+            await tab("connect")
+            await snap("connect.png")
+            scan = page.locator("#panel-connect button", has_text="Scan USB")
+            if await scan.count():
+                await scan.first.click()
+                await page.wait_for_timeout(1200)
+            await snap("connect-panel.png", "#sidebar")
+            # Scope
+            await tab("scope")
+            for group in ("gain", "adc", "clock"):
+                loc = page.locator(".tree .ghead", has_text=group).first
+                if await loc.count():
+                    await loc.click()
+            await page.wait_for_timeout(400)
+            await snap("scope.png")
+            await page.fill("#panel-scope input.flex >> nth=0", "glitch")
+            await page.wait_for_timeout(400)
+            loc = page.locator(".tree .ghead", has_text="glitch").first
+            if await loc.count():
+                await loc.click()
+            await page.wait_for_timeout(400)
+            await snap("scope-glitch.png")
+            await page.fill("#panel-scope input.flex >> nth=0", "")
+            # Target
+            await tab("target")
+            await snap("target.png")
+            await tab("target", 99999)
+            await page.locator("#panel-target button", has_text="Send key").click()
+            await page.wait_for_timeout(400)
+            await page.locator("#panel-target .row:has-text('Command') button", has_text="Send").first.click()
+            await page.wait_for_timeout(800)
+            await page.locator("#panel-target h2", has_text="Serial console").scroll_into_view_if_needed()
+            await page.wait_for_timeout(300)
+            await snap("target-serial.png", "#sidebar")
+            # Firmware
+            await tab("firmware")
+            await page.wait_for_timeout(600)
+            await snap("firmware.png")
+            for summ in ("Advanced options", "Build output"):
+                loc = page.locator("#panel-firmware summary", has_text=summ)
+                if await loc.count():
+                    await loc.first.click()
+            await page.wait_for_timeout(400)
+            await snap("firmware-build-output.png", "#panel-firmware .card")
+            await snap("firmware-sources.png", "#panel-firmware .card:has(.card-head .title:text-is('Firmware sources'))")
+            await snap("toolchains.png", "#panel-firmware .card:has(.card-head .title:text-is('Toolchains'))")
+            await page.locator("#panel-firmware summary", has_text="Add a custom toolchain").click()
+            fields = {"Name, e.g. TriCore GCC 11": "TriCore GCC 11", "arch, e.g. tricore or arm,riscv": "tricore", "tool prefix, e.g. tricore-elf-": "tricore-elf-", "or an existing install folder": "/opt/tricore-gcc"}
+            for ph, val in fields.items():
+                await page.fill(f'#panel-firmware input[placeholder="{ph}"]', val)
+            await page.wait_for_timeout(300)
+            await snap("toolchains-custom.png", "#panel-firmware .card:has(.card-head .title:text-is('Toolchains'))")
+            # Capture and waveform
+            await tab("capture")
+            await run_capture()
+            await snap("capture.png")
+            await snap("capture-panel.png", "#sidebar")
+            await page.select_option("#wave-toolbar select >> nth=1", value="10")
+            await page.locator("#wave-toolbar label", has_text="min/max").locator("input").check()
+            await page.wait_for_timeout(1200)
+            await snap("waveform-overlay.png")
+            await page.select_option("#wave-toolbar select >> nth=1", value="0")
+            await page.locator("#wave-toolbar label", has_text="min/max").locator("input").uncheck()
+            await page.locator("#wave-toolbar label", has_text="mean").locator("input").check()
+            await page.locator("#wave-toolbar label", has_text="time axis").locator("input").check()
+            await page.click("#btn-single")
+            await page.wait_for_timeout(1200)
+            box = await page.locator("#wave-plot").bounding_box()
+            await page.mouse.move(box["x"] + box["width"] * 0.08, box["y"] + box["height"] * 0.5)
+            await page.mouse.down()
+            await page.mouse.move(box["x"] + box["width"] * 0.55, box["y"] + box["height"] * 0.5, steps=8)
+            await page.mouse.up()
+            await page.wait_for_timeout(600)
+            await page.mouse.click(box["x"] + box["width"] * 0.25, box["y"] + box["height"] * 0.5)
+            await page.keyboard.down("Shift")
+            await page.mouse.click(box["x"] + box["width"] * 0.72, box["y"] + box["height"] * 0.5)
+            await page.keyboard.up("Shift")
+            await page.wait_for_timeout(600)
+            await snap("waveform-cursors.png")
+            # Analysis
+            await tab("analysis", 380)
+            await snap("analysis.png")
+            # Notebook
+            await tab("notebook")
+            await page.locator(".nb-file", has_text="Studio tour").first.click()
+            await page.wait_for_timeout(1500)
+            await snap("notebook.png")
+            if with_firmware:
+                folder = page.locator(".nb-folder > summary", has_text="courses/sca101")
+                if await folder.count():
+                    await folder.first.click()
+                    await page.locator(".nb-file", has_text="Lab 3_3 - DPA on Firmware Implementation of AES (HARDWARE)").first.click()
+                    await page.wait_for_timeout(2000)
+                    target = page.locator(".nb-cell", has_text="Capturing traces").first
+                    if await target.count():
+                        await target.scroll_into_view_if_needed()
+                        await page.locator(".nb-scroll").evaluate("e => e.scrollTop = Math.max(0, e.scrollTop - 250)")
+                    await page.wait_for_timeout(500)
+                    await snap("notebook-tutorial.png")
+            # Notes, selection statistics, calculator
+            await tab("notes")
+            await page.evaluate("() => { const s = document.querySelector('#panel-notes select'); s.value = 'Lab notes.md'; s.dispatchEvent(new Event('change')); }")
+            await page.wait_for_timeout(800)
+            await page.evaluate("() => { const t = document.querySelector('.notes-text'); t.focus(); const i = t.value.indexOf('21 24'); t.setSelectionRange(i, i + 20); document.dispatchEvent(new Event('selectionchange')); }")
+            await page.wait_for_timeout(600)
+            await snap("selection-stats.png")
+            await page.locator("#panel-notes button", has_text="Preview").click()
+            await page.wait_for_timeout(500)
+            await snap("notes.png")
+            await tab("calc")
+            for expr in ("0x2b ^ 0x7e", "hw(0xff) + sbox(0x53)", "3.3 / 4096 * 1000"):
+                await page.fill(".calc-in", expr)
+                await page.keyboard.press("Enter")
+                await page.wait_for_timeout(300)
+            await page.mouse.click(box["x"] + box["width"] * 0.25, box["y"] + box["height"] * 0.5)
+            await page.keyboard.down("Shift")
+            await page.mouse.click(box["x"] + box["width"] * 0.6, box["y"] + box["height"] * 0.5)
+            await page.keyboard.up("Shift")
+            await page.select_option("#panel-calc select", "cursors")
+            await page.wait_for_timeout(600)
+            await snap("calc.png")
+            # Help
+            await tab("help")
+            await snap("help.png")
+            await tab("help", 420)
+            await snap("mcp-setup.png")
+            # Overview last so the waveform is busy
+            await tab("capture")
+            await page.locator("#wave-toolbar label", has_text="time axis").locator("input").uncheck()
+            await page.dblclick("#wave-plot")
+            await run_capture()
+            await snap("overview.png")
             await page.close()
         await browser.close()
     if errors:
@@ -169,7 +284,7 @@ async def shoot(base: str, out: str, width: int, height: int):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--data-dir", default=os.path.join(ROOT, "build", "screenshot-data"))
-    ap.add_argument("--out", default=os.path.join(ROOT, "docs", "images"))
+    ap.add_argument("--out", default=os.path.join(ROOT, "docs", "wiki", "images"))
     ap.add_argument("--port", type=int, default=0, help="HTTP port for the temporary Studio (default: any free port)")
     ap.add_argument("--size", default="1600x1000")
     ap.add_argument("--no-firmware", action="store_true", help="skip toolchain downloads and the firmware build")
@@ -184,7 +299,8 @@ def main() -> int:
     try:
         _up(base)
         prepare(api, not args.no_firmware)
-        return asyncio.run(shoot(base, args.out, width, height))
+        prepare_extras(api, not args.no_firmware)
+        return asyncio.run(shoot(base, args.out, width, height, not args.no_firmware))
     finally:
         try:
             api("POST", "/api/shutdown")

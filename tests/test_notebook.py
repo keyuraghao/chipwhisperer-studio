@@ -181,3 +181,14 @@ def test_calculator_and_stats(client):
 def test_stats_helper():
     st = tools.stats([2, 4, 4, 4, 5, 5, 7, 9])
     assert st["mean"] == 5 and round(st["std"], 4) == 2.1381 and st["rms"] > 5
+
+
+def test_cw_plot_and_plt_show(client):
+    run(client, "import chipwhisperer as cw\nimport numpy as np")
+    r = run(client, "p = cw.plot(np.sin(np.arange(100) / 5)) * cw.plot(np.cos(np.arange(100) / 5))\np")
+    assert r["ok"] and "image/png" in r["outputs"][-1]["data"], r["outputs"]
+    r = run(client, "fig = cw.plot()\nfor k in range(3):\n    fig = fig * cw.plot(np.arange(10) * k)\nfig")
+    assert r["ok"] and "image/png" in r["outputs"][-1]["data"]
+    r = run(client, "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.show()\nprint('after show')")
+    kinds = [o["output_type"] for o in r["outputs"]]
+    assert kinds.index("display_data") < kinds.index("stream"), kinds  # figure shown before the later print

@@ -1,0 +1,65 @@
+name: Publish wiki
+
+# docs/wiki is the source of the GitHub wiki: every change merged to main is copied to <repo>.wiki.git.
+# GitHub only creates the wiki repository after its first page exists, so create any page once in the web UI before the first run.
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/wiki/**", ".github/workflows/wiki.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the wiki source
+        run: |
+          set -e
+          if grep -rn $'—' docs/wiki --include=*.md; then echo "em dash found in the wiki"; exit 1; fi
+          python3 - <<'EOF'
+          import os, re, sys
+          root = "docs/wiki"
+          pages = {f[:-3] for f in os.listdir(root) if f.endswith(".md")}
+          images = set(os.listdir(os.path.join(root, "images")))
+          bad = []
+          for f in sorted(os.listdir(root)):
+              if not f.endswith(".md"):
+                  continue
+              text = open(os.path.join(root, f), encoding="utf-8").read()
+              for target in re.findall(r"\]\(([^)\s#]+)(?:#[^)]*)?\)", text):
+                  if target.startswith(("http://", "https://", "mailto:")):
+                      continue
+                  if target.startswith("images/"):
+                      if target[7:] not in images:
+                          bad.append(f"{f}: missing image {target}")
+                  elif target not in pages:
+                      bad.append(f"{f}: broken page link {target}")
+          print("\n".join(bad) or f"{len(pages)} pages, {len(images)} images, links ok")
+          sys.exit(1 if bad else 0)
+          EOF
+      - name: Push to the GitHub wiki
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          if ! git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki; then
+            echo "::error::The wiki repository does not exist yet. Open the Wiki tab on GitHub, create any first page, then re-run this workflow."
+            exit 1
+          fi
+          rsync -a --delete --exclude .git docs/wiki/ wiki/
+          cd wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "wiki already up to date"; exit 0; fi
+          git commit -m "Update wiki from ${GITHUB_SHA::7}"
+          git push

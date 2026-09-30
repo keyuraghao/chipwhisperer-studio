@@ -295,6 +295,14 @@ def create_app(session: Session) -> FastAPI:
     async def traces_download(fmt: str):
         try:
             path = await run(session.export_traces, os.path.join(session.data_dir, "exports", "traces"), fmt)
+            if "*" in path:  # the .npy set is several files: send them as one zip
+                import glob
+                import zipfile
+                zpath = path.replace("_*.npy", "_npy.zip")
+                with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+                    for f in sorted(glob.glob(path)):
+                        z.write(f, os.path.basename(f))
+                path = zpath
             return FileResponse(path, filename=os.path.basename(path))
         except Exception as e:  # noqa: BLE001
             err(e)

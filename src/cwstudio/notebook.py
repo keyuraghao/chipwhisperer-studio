@@ -589,6 +589,7 @@ class Kernel:
         tid = threading.get_ident()
         sink = lambda name, s: self._stream(e, name, s)  # noqa: E731
         _install_routers()  # something may have replaced sys.stdout/stderr since the last cell
+        self._patch_pyplot()
         for r in _ROUTERS.values():
             r.sinks[tid] = sink
         old_cwd = os.getcwd()
@@ -643,6 +644,14 @@ class Kernel:
                     return
                 self._flush_streams(e, force=True)
                 self._emit_to(e, {"output_type": "execute_result", "execution_count": e.count, "data": rich_bundle(val), "metadata": {}})
+
+    def _patch_pyplot(self):
+        """Make plt.show() display the current figures right away (it is a no-op with the Agg backend)."""
+        plt = sys.modules.get("matplotlib.pyplot")
+        if plt is not None and not getattr(plt.show, "_studio", False):
+            show = lambda *a, **kw: self._flush_figures()  # noqa: E731
+            show._studio = True
+            plt.show = show
 
     def _flush_figures(self):
         plt = sys.modules.get("matplotlib.pyplot")
@@ -942,17 +951,56 @@ class _CWProxy(types.ModuleType):
         return self._real.program_target(unwrap(scope), prog_type, fw_path, **kwargs)
 
     def plot(self, *args, **kwargs):
-        """Show a trace in Studio's waveform view and inline in the notebook (replaces the holoviews based cw.plot)."""
+        """Stand-in for ChipWhisperer's holoviews based cw.plot(): returns a plot that renders inline, combines with * or + like the original (cw.plot(a) * cw.plot(b)), and also shows the data in Studio's waveform view. cw.plot() with no data gives an empty plot to add to."""
+        if not args and kwargs.get("y") is None:
+            return CWPlot([])
         y = np.asarray(args[-1] if args else kwargs.get("y"), dtype=np.float32).ravel()
+        x = np.asarray(args[0], dtype=np.float64).ravel() if len(args) >= 2 else None
         self._k.bus.publish_event(trace_event("trace", y, {"index": -1, "stored": False, "source": "notebook"}, droppable=False))
-        try:
-            import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(9, 3))
-            ax.plot(y, lw=0.8)
-            ax.grid(alpha=0.3)
+        return CWPlot([(x, y, kwargs.get("label"))])
+
+
+class CWPlot:
+    """Result of cw.plot() in a Studio notebook: one or more curves drawn with matplotlib when displayed."""
+
+    def __init__(self, curves):
+        self.curves = list(curves)
+        self.opts_kw: Dict[str, Any] = {}
+
+    def __mul__(self, other):
+        if isinstance(other, CWPlot):
+            return CWPlot(self.curves + other.curves)
+        return NotImplemented
+
+    __add__ = __mul__
+    __rmul__ = __mul__
+
+    def opts(self, *args, **kwargs):  # holoviews style styling calls are accepted and mostly ignored
+        self.opts_kw.update(kwargs)
+        return self
+
+    def _repr_png_(self):
+        if not self.curves:
             return None
-        except ImportError:
-            return None
+        import matplotlib
+        from matplotlib.figure import Figure
+        width, height = self.opts_kw.get("width", 900), self.opts_kw.get("height", 300)
+        fig = Figure(figsize=(max(4, width / 100), max(2, height / 100)), dpi=100)
+        ax = fig.add_subplot(111)
+        for x, y, label in self.curves:
+            ax.plot(np.arange(len(y)) if x is None else x, y, lw=0.8, label=label)
+        if any(c[2] for c in self.curves):
+            ax.legend()
+        ax.grid(alpha=0.3)
+        if self.opts_kw.get("title"):
+            ax.set_title(self.opts_kw["title"])
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        del matplotlib
+        return buf.getvalue()
+
+    def __repr__(self):
+        return f"<cw.plot with {len(self.curves)} curve(s)>"
 
 
 def unwrap(obj):
@@ -1090,6 +1138,7 @@ class StudioHelper:
     def build_firmware(self, project="simpleserial-aes", platform="CWLITEARM", compiler="gcc", **options) -> str:
         """Build firmware with Studio's toolchains and return the .hex path (raises with the build log tail on failure)."""
         fm = self._k.session.firmware
+        options.setdefault("ss_ver", "SS_VER_2_1")  # same default as the Firmware tab
         r = fm.build(dict(options, project=project, platform=platform, compiler=compiler), wait=True)
         if r.get("state") != "ok":
             tail = "\n".join(fm.build_log()["lines"][-30:])

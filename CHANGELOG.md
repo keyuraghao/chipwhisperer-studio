@@ -4,7 +4,21 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Wiki:** a full user and developer guide in `docs/wiki`, published to the GitHub wiki by CI, with new screenshots of every tab and a diagram of how notebook cells share the hardware.
+
+### Changed
+
+- The Connect tab now preselects SimpleSerial v2, which current ChipWhisperer firmware uses, instead of the legacy v1 protocol.
+- In notebooks, `cw.plot()` returns a plot object that combines with `*` and `+` like ChipWhisperer's holoviews version (`cw.plot(a) * cw.plot(b)`, `fig = cw.plot()`), and `plt.show()` shows figures immediately.
+- `studio.build_firmware()` defaults to SimpleSerial v2.1, like the Firmware tab.
+
+### Fixed
+
+- **Download in browser** for the NumPy `.npy` set now downloads one zip with all four files instead of failing.
+- The serial console shows traffic from before the page was opened.
+- The build log prints the `make clean` command before its output, and `clean` receives the same SimpleSerial version as the build, so the log no longer shows a misleading "SS_VER set to SS_VER_1_1".
 
 ## [0.3.0] - 2026-09-30
 

@@ -13,7 +13,7 @@ ChipWhisperer Studio (`cwstudio`) is a standalone, cross-platform desktop applic
 
 ## Architecture
 
-![ChipWhisperer Studio architecture](images/architecture.svg)
+![ChipWhisperer Studio architecture](wiki/images/architecture.svg)
 
 Everything runs in one Python process. Clients (the browser UI, AI agents through the MCP server, and scripts) all use the same HTTP API and WebSocket. A single worker thread owns the hardware; CPA analysis, toolchain downloads and firmware builds run on their own threads and only reach the hardware through the worker.
 
@@ -50,7 +50,7 @@ Every scope and target sub-object in `chipwhisperer` implements `_dict_repr()`. 
 
 `toolchains.py` manages compilers. `resources/toolchains.json` pins each toolchain by version, per-host URL (plus mirrors) and SHA-256. An install downloads the archive (switching to the next mirror if a server fails or is too slow), verifies the checksum, unpacks it with path traversal checks, creates tool name aliases where ChipWhisperer's makefiles expect different prefixes (for example `riscv32-unknown-elf-gcc` for xPack's `riscv-none-elf-gcc`) and records a marker file. Custom toolchains can be registered from an archive URL or an existing folder, and compilers on `PATH` are used as a fallback. The registry can refresh itself from the Studio repository, so new compiler versions do not require a Studio release.
 
-![How Studio builds and flashes firmware](images/firmware-flow.svg)
+![How Studio builds and flashes firmware](wiki/images/firmware-flow.svg)
 
 `firmware.py` manages sources and builds. Sources are not bundled: the manager asks GitHub which commit the chosen channel (`develop`, `latest-release`, a tag or a commit) points to, downloads `firmware/mcu` from that commit plus the `chipwhisperer-fw-extra` submodule commit it pins, and records what it installed so "check for updates" can compare against upstream. A known-good commit is used when GitHub is unreachable. Projects are discovered from makefiles that include `Makefile.inc`, and platforms, HALs and MCUs are parsed from `hal/Makefile.hal`.
 
