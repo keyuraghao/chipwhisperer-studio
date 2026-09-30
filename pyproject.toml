@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chipwhisperer-studio"
+dynamic = ["version"]
+description = "Desktop app for ChipWhisperer hardware: live waveforms, capture, CPA, glitching and firmware builds"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "Keyur Aghao"}]
+requires-python = ">=3.10"
+dependencies = [
+    "chipwhisperer>=6.0",
+    "numpy>=2.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "websockets>=12",
+    "mcp>=2.2",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.optional-dependencies]
+window = ["pywebview>=5"]
+test = ["pytest", "httpx"]
+
+[project.scripts]
+cw-studio = "cwstudio.cli:main"
+
+[project.urls]
+Repository = "https://github.com/keyuraghao/chipwhisperer-studio"
+
+[tool.setuptools.dynamic]
+version = {attr = "cwstudio.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cwstudio = ["static/*", "static/**/*", "resources/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

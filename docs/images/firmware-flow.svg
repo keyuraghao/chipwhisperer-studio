@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>How Studio builds and flashes firmware</title>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="120%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#0f172a" flood-opacity="0.10"/></filter>
+  </defs>
+  <rect width="1200" height="300" rx="16" fill="#f8fafc"/>
+  <text x="40" y="44" font-size="12.5" font-weight="600" fill="#475569" letter-spacing="0.6">BUILD AND PROGRAM, ONE CLICK</text>
+
+  <g filter="url(#sh)">
+    <rect x="30" y="70" width="200" height="190" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="265" y="70" width="200" height="190" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="500" y="70" width="200" height="190" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="735" y="70" width="200" height="190" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <rect x="970" y="70" width="200" height="190" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  </g>
+  <g font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">
+    <circle cx="62" cy="102" r="15" fill="#2f7de1"/><text x="62" y="107">1</text>
+    <circle cx="297" cy="102" r="15" fill="#12a383"/><text x="297" y="107">2</text>
+    <circle cx="532" cy="102" r="15" fill="#0f766e"/><text x="532" y="107">3</text>
+    <circle cx="767" cy="102" r="15" fill="#e07a12"/><text x="767" y="107">4</text>
+    <circle cx="1002" cy="102" r="15" fill="#7c3aed"/><text x="1002" y="107">5</text>
+  </g>
+  <g font-size="15.5" font-weight="600" fill="#0f172a">
+    <text x="86" y="108">Sources</text>
+    <text x="321" y="108">Compilers</text>
+    <text x="556" y="108">Plan</text>
+    <text x="791" y="108">Build</text>
+    <text x="1026" y="108">Program</text>
+  </g>
+  <g font-size="12.5" fill="#475569">
+    <text x="48" y="142">newaetech/chipwhisperer</text>
+    <text x="48" y="161">at develop, a release, a tag</text>
+    <text x="48" y="180">or a commit.</text>
+    <text x="48" y="208">Check for updates any time;</text>
+    <text x="48" y="227">no Studio release needed.</text>
+
+    <text x="283" y="142">GCC for Arm, AVR, RISC-V</text>
+    <text x="283" y="161">and clang 21, downloaded</text>
+    <text x="283" y="180">once from official releases.</text>
+    <text x="283" y="208">SHA-256 verified, works</text>
+    <text x="283" y="227">offline afterwards.</text>
+
+    <text x="518" y="142">Project + platform +</text>
+    <text x="518" y="161">compiler become one make</text>
+    <text x="518" y="180">command with the right</text>
+    <text x="518" y="199">tools, flags and programmer.</text>
+    <text x="518" y="227">Preview it as a dry run.</text>
+
+    <text x="753" y="142">ChipWhisperer's own</text>
+    <text x="753" y="161">makefiles. Clang compiles C,</text>
+    <text x="753" y="180">GCC assembles and links</text>
+    <text x="753" y="199">with newlib / avr-libc.</text>
+    <text x="753" y="227">Output streams live.</text>
+
+    <text x="988" y="142">The .hex is flashed with</text>
+    <text x="988" y="161">the platform's programmer:</text>
+    <text x="988" y="180">STM32F, XMEGA, AVR,</text>
+    <text x="988" y="199">SAM4S or NEORV32.</text>
+    <text x="988" y="227">Ready to capture.</text>
+  </g>
+  <g stroke="#475569" stroke-width="2" fill="none">
+    <path d="M232 165 H261" marker-end="url(#arr)"/>
+    <path d="M467 165 H496" marker-end="url(#arr)"/>
+    <path d="M702 165 H731" marker-end="url(#arr)"/>
+    <path d="M937 165 H966" marker-end="url(#arr)"/>
+  </g>
+</svg>

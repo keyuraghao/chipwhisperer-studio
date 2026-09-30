@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+        python: ["3.12"]
+        include:
+          - os: ubuntu-latest
+            python: "3.10"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[test]"
+      - run: python -m pytest -q
+
+  firmware:
+    # Exercises the real toolchain downloads and ChipWhisperer makefiles on every OS.
+    name: Firmware build (${{ matrix.os }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Install toolchains, fetch sources, build with GCC and clang
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import os, sys
+          from cwstudio.toolchains import ToolchainManager
+          from cwstudio.firmware import FirmwareManager
+          data = os.path.join(os.getcwd(), "build", "fw-ci")
+          tm = ToolchainManager(data)
+          fm = FirmwareManager(data, tm)
+          needed = ["arm-gcc", "avr-gcc", "clang"] + (["win-build-tools"] if os.name == "nt" else [])
+          for tc in needed:
+              st = tm.install(tc, wait=True)
+              print(tc, "installed" if st["installed"] else st["job"])
+              assert st["installed"], tc
+          src = fm.fetch_sources(wait=True)
+          print("sources", src["installed"]["commit"][:8], src["installed"]["ref"])
+          failed = []
+          for platform, compiler in [("CWLITEARM", "gcc"), ("CWLITEARM", "clang"), ("CWLITEXMEGA", "gcc"), ("CWLITEXMEGA", "clang"), ("CWHUSKY", "gcc")]:
+              r = fm.build({"project": "simpleserial-aes", "platform": platform, "compiler": compiler, "ss_ver": "SS_VER_2_1"}, wait=True)
+              print(f"{platform:12} {compiler:6} {r['state']:8} {r.get('size')} {r.get('error') or ''}")
+              if r["state"] != "ok":
+                  failed.append((platform, compiler))
+                  print("\n".join(fm.build_log()["lines"][-40:]))
+          sys.exit(1 if failed else 0)
+          EOF
+
+  bundle:
+    name: Bundle (${{ matrix.os }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build dependencies
+        run: pip install -e . "pyinstaller>=6.0" libusb-package
+      - name: Build bundle
+        run: python packaging/build.py --no-venv
+        shell: bash
+      - name: Smoke test bundle (simulator, MCP entry point, compiler wrapper)
+        shell: bash
+        run: |
+          set -e
+          if [ "${{ runner.os }}" = "Windows" ]; then EXE=dist/ChipWhispererStudio/ChipWhispererStudio.exe; else EXE=dist/ChipWhispererStudio/ChipWhispererStudio; fi
+          "$EXE" mcp --help | head -3
+          CWSTUDIO_CC='["python", "--version"]' "$EXE" --ccwrap
+          "$EXE" --no-browser --simulate --port 8799 &
+          PID=$!
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8799/api/status >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8799/api/meta | head -c 300; echo
+          curl -sf -X POST -H 'Content-Type: application/json' -d '{"kind":"sim"}' http://127.0.0.1:8799/api/scope/connect
+          curl -sf -X POST -H 'Content-Type: application/json' -d '{"kind":"sim"}' http://127.0.0.1:8799/api/target/connect
+          curl -sf -X POST -H 'Content-Type: application/json' -d '{"count":20}' http://127.0.0.1:8799/api/capture/start
+          sleep 3
+          curl -sf http://127.0.0.1:8799/api/traces
+          curl -sf http://127.0.0.1:8799/api/toolchains | head -c 300; echo
+          kill $PID || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChipWhispererStudio-${{ matrix.os }}
+          path: dist/*.zip
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, firmware, bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Release notes from CHANGELOG.md
+        run: python tools/release_notes.py --check "${GITHUB_REF_NAME}" > release-notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Build Python packages
+        run: pip install build && python -m build --outdir artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ChipWhisperer Studio ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: artifacts/*
