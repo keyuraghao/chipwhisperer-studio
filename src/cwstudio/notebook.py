@@ -268,6 +268,12 @@ def transform(code: str) -> str:
     return "\n".join(out)
 
 
+def split_args(arg: str) -> List[str]:
+    """Split magic arguments like a shell, keeping Windows backslashes and removing surrounding quotes on every platform."""
+    parts = shlex.split(arg, posix=False)
+    return [p[1:-1] if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'" else p for p in parts]
+
+
 def expand(cmd: str, ns: Dict[str, Any]) -> str:
     """IPython-style ``{expr}`` and ``$name`` expansion in shell commands (``{{`` and ``$$`` escape)."""
     def brace(m):
@@ -692,7 +698,7 @@ class Kernel:
 
     def _script(self, name: str, arg: str, body: str):
         """``%%bash [-s arg ...]``: run the cell body with bash (or sh), passing ``-s`` arguments as $1, $2, ... after {var}/$var expansion."""
-        args = shlex.split(expand(arg, self.ns)) if arg else []
+        args = split_args(expand(arg, self.ns)) if arg else []
         interp = None
         if name == "script" and args:
             interp = args.pop(0)
@@ -771,7 +777,7 @@ class Kernel:
         raise NameError(f"UsageError: line magic %{name} is not supported in Studio notebooks")
 
     def _magic_run(self, arg: str):
-        parts = shlex.split(arg, posix=os.name != "nt")
+        parts = split_args(arg)
         paths = [p for p in parts if not p.startswith("-")]
         if not paths:
             raise ValueError("%run needs a file")

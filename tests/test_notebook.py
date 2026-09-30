@@ -43,6 +43,7 @@ def test_transform_and_expand():
     assert "files = __studio_shell__('ls', capture=True)" in out
     assert "__studio_magic__('cd', '/tmp')" in out
     assert "help(len)" in out
+    assert notebook.split_args('"../../Setup Scripts/a.ipynb" -s \'x y\' C:\\fw\\b.hex') == ["../../Setup Scripts/a.ipynb", "-s", "x y", "C:\\fw\\b.hex"]
     ns = {"PLATFORM": "CWLITEARM", "n": 3}
     assert notebook.expand("make PLATFORM={PLATFORM} -j{n+1} $n {{x}}", ns) == "make PLATFORM=CWLITEARM -j4 3 {x}"
 
