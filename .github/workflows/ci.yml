@@ -44,6 +44,8 @@ jobs:
       - run: pip install -e .
       - name: Install toolchains, fetch sources, build with GCC and clang
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           python - <<'EOF'
           import os, sys
@@ -59,6 +61,7 @@ jobs:
               assert st["installed"], tc
           src = fm.fetch_sources(wait=True)
           print("sources", src["installed"]["commit"][:8], src["installed"]["ref"])
+          assert src["installed"]["message"] != "known good fallback", "GitHub lookup failed"
           failed = []
           for platform, compiler in [("CWLITEARM", "gcc"), ("CWLITEARM", "clang"), ("CWLITEXMEGA", "gcc"), ("CWLITEXMEGA", "clang"), ("CWHUSKY", "gcc")]:
               r = fm.build({"project": "simpleserial-aes", "platform": platform, "compiler": compiler, "ss_ver": "SS_VER_2_1"}, wait=True)

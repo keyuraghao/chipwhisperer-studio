@@ -211,7 +211,11 @@ class FirmwareManager:
 
     # GitHub lookups
     def _gh(self, path: str) -> Any:
-        req = urllib.request.Request("https://api.github.com" + path, headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"})
+        headers = {"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"}
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token:  # optional: lifts GitHub's 60 requests/hour limit for anonymous API calls
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request("https://api.github.com" + path, headers=headers)
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.loads(r.read().decode("utf-8"))
 
