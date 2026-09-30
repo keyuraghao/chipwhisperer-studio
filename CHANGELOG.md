@@ -6,6 +6,14 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 Nothing yet.
 
+## [0.2.1] - 2026-09-30
+
+### Fixed
+
+- HTTPS downloads failed with "certificate verify failed: unable to get local issuer certificate" when Python could not find CA certificates, which affected Refresh list, toolchain installs, firmware source downloads and update checks. This happens in the standalone bundles, with python.org Python on macOS and Windows, and on networks that inspect HTTPS. Studio now verifies certificates against the operating system's trust store (through `truststore`, including roots your IT department installed), falls back to Mozilla's CA bundle (`certifi`), and honours `SSL_CERT_FILE` and `SSL_CERT_DIR`. If verification still fails, the error explains how to fix it.
+- Installing a toolchain that is already installed no longer downloads it again.
+- Firmware source lookups use `GITHUB_TOKEN` when it is set, avoiding GitHub's limit of 60 anonymous API requests per hour.
+
 ## [0.2.0] - 2026-09-30
 
 First release as a standalone project. Studio now lives in its own repository and installs the official `chipwhisperer` package from PyPI instead of shipping inside a ChipWhisperer fork.
@@ -64,6 +72,7 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.2.0
 [0.1.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.1.0

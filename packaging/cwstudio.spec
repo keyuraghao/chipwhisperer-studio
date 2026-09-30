@@ -18,6 +18,8 @@ datas = []
 datas += collect_data_files("cwstudio", includes=["static/**/*", "resources/*"])
 # ChipWhisperer package data (bitstreams, firmware for programmers, etc.)
 datas += collect_data_files("chipwhisperer")
+# CA bundle fallback for HTTPS when the OS trust store is unavailable
+datas += collect_data_files("certifi")
 
 binaries = []
 # libusb: on Windows the libusb1 wheel ships libusb-1.0.dll next to usb1/ (hook handles it); on Linux/macOS copy the library from libusb-package into usb1/ where python-libusb1 looks first.
@@ -37,7 +39,7 @@ hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("websockets")
 hiddenimports += collect_submodules("mcp", filter=lambda name: not name.startswith("mcp.cli"))  # mcp.cli needs the optional typer extra
 datas += collect_data_files("mcp")
-hiddenimports += ["multipart", "python_multipart", "serial", "serial.tools.list_ports", "usb1", "configobj", "ecpy",
+hiddenimports += ["truststore", "certifi", "multipart", "python_multipart", "serial", "serial.tools.list_ports", "usb1", "configobj", "ecpy",
                   "anyio._backends._asyncio", "h11", "httptools", "watchfiles", "uvloop"]
 
 a = Analysis(

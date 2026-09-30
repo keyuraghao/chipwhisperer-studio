@@ -21,6 +21,8 @@ import urllib.request
 import zipfile
 from typing import Any, Callable, Dict, List, Optional
 
+from cwstudio import net
+
 log = logging.getLogger("cwstudio.toolchains")
 
 REGISTRY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "toolchains.json")
@@ -66,7 +68,7 @@ def download(url: str, dest: str, sha256: Optional[str] = None, progress: Option
     h = hashlib.sha256()
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     t0 = time.time()
-    with urllib.request.urlopen(req, timeout=30) as r, open(part, "wb") as f:
+    with net.urlopen(req, timeout=30) as r, open(part, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
         while True:
@@ -222,7 +224,7 @@ class ToolchainManager:
         if not url:
             raise RuntimeError("this registry has no update_url")
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with net.urlopen(req, timeout=20) as r:
             data = json.loads(r.read().decode("utf-8"))
         if data.get("schema") != self.registry.get("schema") or not isinstance(data.get("toolchains"), list):
             raise ValueError("the published toolchain list uses a format this version of Studio does not understand")

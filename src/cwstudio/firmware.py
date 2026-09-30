@@ -21,6 +21,7 @@ import urllib.request
 from typing import Any, Callable, Dict, List, Optional
 
 from cwstudio import ccwrap
+from cwstudio import net
 from cwstudio.toolchains import USER_AGENT, Cancelled, ToolchainManager, download, exe, extract
 
 log = logging.getLogger("cwstudio.firmware")
@@ -216,7 +217,7 @@ class FirmwareManager:
         if token:  # optional: lifts GitHub's 60 requests/hour limit for anonymous API calls
             headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request("https://api.github.com" + path, headers=headers)
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with net.urlopen(req, timeout=20) as r:
             return json.loads(r.read().decode("utf-8"))
 
     def resolve(self, channel: Optional[str] = None) -> Dict[str, Any]:
