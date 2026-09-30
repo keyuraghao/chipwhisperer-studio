@@ -56,6 +56,8 @@ cw-studio              # opens the UI in your browser
 cw-studio --simulate   # try it without hardware
 ```
 
+Use Python 3.10 to 3.12: `chipwhisperer` 6.0.0 on PyPI pins numpy 1.26, which has no wheels for newer Pythons.
+
 Options: `--port 8765`, `--host 0.0.0.0` (remote access), `--no-browser`, `--window` (native window, needs `pip install "chipwhisperer-studio[window]"`), `--data-dir DIR` (exports, firmware, toolchains; default `~/ChipWhispererStudio`).
 
 ## Walkthrough

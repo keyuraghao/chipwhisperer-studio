@@ -34,7 +34,7 @@ First release as a standalone project. Studio now lives in its own repository an
 ### Changed
 
 - Licensed under Apache 2.0, matching ChipWhisperer. See NOTICE for bundled third-party files.
-- Requires Python 3.10 or newer (needed by the MCP SDK).
+- Requires Python 3.10 or newer (needed by the MCP SDK). With `chipwhisperer` 6.0.0 from PyPI, which pins numpy 1.26, use Python 3.10 to 3.12 for pip installs; the standalone bundles are not affected.
 - `pip install chipwhisperer-studio` replaces `pip install "chipwhisperer[studio]"`.
 - Uploaded firmware files are stored in `<data dir>/firmware/uploads`.
 

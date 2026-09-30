@@ -11,7 +11,7 @@ import pytest
 
 from cwstudio import ccwrap
 from cwstudio.firmware import FirmwareManager, parse_platforms
-from cwstudio.toolchains import ToolchainManager, extract, load_registry
+from cwstudio.toolchains import ToolchainManager, exe, extract, load_registry
 
 
 def _tarball(path: pathlib.Path, files: dict, top: str = "tc-1.0") -> str:
@@ -45,13 +45,13 @@ def test_bundled_registry_is_pinned():
 
 def test_install_verify_alias_remove(tmp_path):
     arc = tmp_path / "fake.tar.gz"
-    sha = _tarball(arc, {"bin/fake-gcc": (b"#!/bin/sh\necho gcc\n", 0o755), "bin/fake-objcopy": (b"x", 0o755), "lib/readme": (b"hi", 0o644)})
+    sha = _tarball(arc, {"bin/" + exe("fake-gcc"): (b"#!/bin/sh\necho gcc\n", 0o755), "bin/" + exe("fake-objcopy"): (b"x", 0o755), "lib/readme": (b"hi", 0o644)})
     tm = ToolchainManager(str(tmp_path / "data"), registry=_registry(arc.as_uri(), sha, {"fake-": ["alias-"]}), host="linux-x64")
     st = tm.install("fake-gcc", wait=True)
     assert st["installed"], st
     b = pathlib.Path(st["bin"])
-    assert (b / "fake-gcc").exists() and (b / "alias-gcc").exists() and (b / "alias-objcopy").exists()
-    assert os.access(b / "fake-gcc", os.X_OK)
+    assert (b / exe("fake-gcc")).exists() and (b / exe("alias-gcc")).exists() and (b / exe("alias-objcopy")).exists()
+    assert os.name == "nt" or os.access(b / "fake-gcc", os.X_OK)
     found = tm.find("arm", "gcc")
     assert found and found["id"] == "fake-gcc" and found["use_bin"] == str(b)
     assert not tm.remove("fake-gcc")["installed"]
@@ -59,7 +59,7 @@ def test_install_verify_alias_remove(tmp_path):
 
 def test_mirror_fallback(tmp_path):
     arc = tmp_path / "fake.tar.gz"
-    sha = _tarball(arc, {"bin/fake-gcc": (b"x", 0o755)})
+    sha = _tarball(arc, {"bin/" + exe("fake-gcc"): (b"x", 0o755)})
     reg = _registry((tmp_path / "missing.tar.gz").as_uri(), sha)
     reg["toolchains"][0]["downloads"]["any"]["mirrors"] = [arc.as_uri()]
     tm = ToolchainManager(str(tmp_path / "data"), registry=reg, host="linux-x64")
@@ -68,7 +68,7 @@ def test_mirror_fallback(tmp_path):
 
 def test_checksum_mismatch_is_rejected(tmp_path):
     arc = tmp_path / "fake.tar.gz"
-    _tarball(arc, {"bin/fake-gcc": (b"x", 0o755)})
+    _tarball(arc, {"bin/" + exe("fake-gcc"): (b"x", 0o755)})
     tm = ToolchainManager(str(tmp_path / "data"), registry=_registry(arc.as_uri(), "0" * 64), host="linux-x64")
     st = tm.install("fake-gcc", wait=True)
     assert not st["installed"] and st["job"]["state"] == "error" and "checksum" in st["job"]["error"]
@@ -86,7 +86,7 @@ def test_extract_refuses_path_traversal(tmp_path):
 def test_custom_toolchain_from_folder(tmp_path):
     bin_dir = tmp_path / "mytc" / "bin"
     bin_dir.mkdir(parents=True)
-    (bin_dir / "tricore-elf-gcc").write_text("x")
+    (bin_dir / exe("tricore-elf-gcc")).write_text("x")
     tm = ToolchainManager(str(tmp_path / "data"), registry={"schema": 1, "revision": 1, "toolchains": []}, host="linux-x64")
     st = tm.add_custom({"name": "TriCore GCC", "compiler": "gcc", "arch": "tricore", "prefix": "tricore-elf-", "path": str(tmp_path / "mytc")})
     assert st["installed"] and st["custom"]
