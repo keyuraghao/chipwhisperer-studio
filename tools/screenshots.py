@@ -56,6 +56,16 @@ def prepare(api: Api, with_firmware: bool):
     sweep = [{"path": "glitch.ext_offset", "start": 0, "stop": 90, "step": 3}, {"path": "glitch.width", "start": -45, "stop": 45, "step": 3}]
     api("POST", "/api/glitch/start", {"parameters": sweep, "command": "g", "expected": "c4090000", "output_len": 4, "reset": "nrst"})
     api.wait("/api/status", idle)
+    tour = [
+        {"cell_type": "markdown", "source": "# Studio tour\n\nCells run **inside Studio**: `cw.scope()` and `cw.target()` use the devices connected in the Connect tab, and every trace captured here also appears in the **Capture** tab."},
+        {"cell_type": "code", "source": "import chipwhisperer as cw\nimport numpy as np\n\nscope = cw.scope()\ntarget = cw.target(scope)\nkey = bytearray.fromhex('2b7e151628aed2a6abf7158809cf4f3c')\nprint(type(scope).__name__, 'connected through Studio')"},
+        {"cell_type": "code", "source": "from tqdm.notebook import trange\nfor i in trange(200, desc='Capturing'):\n    cw.capture_trace(scope, target, bytearray(np.random.bytes(16)), key)\nprint(len(studio.traces), 'traces stored in Studio')"},
+        {"cell_type": "code", "source": "import matplotlib.pyplot as plt\nwaves = studio.traces.waves\nplt.figure(figsize=(10, 3))\nplt.plot(waves.mean(axis=0), lw=0.8)\nplt.title(f'Mean of {len(waves)} traces')\nplt.xlabel('sample'); plt.ylabel('power')"},
+        {"cell_type": "code", "source": "waves.shape, float(waves.std())"},
+    ]
+    api("PUT", "/api/notebooks/file", {"path": "Studio tour.ipynb", "notebook": {"cells": tour}})
+    api("POST", "/api/notebooks/run", {"path": "Studio tour.ipynb"})
+    api("PUT", "/api/notes/Lab%20notes.md", {"text": "# Lab notes\n\nCPA key (sbox_hw, 400 traces): 2b7e151628aed2a6abf7158809cf4f3c\n\nGlitch window: ext_offset 21 24 27 30 33 36 39, width 6 9 12 15\n\n- [x] simpleserial-aes built with clang for CWLITEARM\n- [ ] try CW308_STM32F4 next\n"})
     if not with_firmware:
         return
     for tc in ("arm-gcc", "clang"):
@@ -119,6 +129,28 @@ async def shoot(base: str, out: str, width: int, height: int):
                 await snap("glitch.png")
                 await tab("help", 420)
                 await snap("mcp.png")
+                await tab("notebook")
+                loc = page.locator(".nb-file", has_text="Studio tour")
+                await loc.first.click()
+                await page.wait_for_timeout(1500)
+                await page.locator(".nb-scroll").evaluate("e => e.scrollTop = 0")
+                await snap("notebook.png")
+                await tab("notes")
+                await page.evaluate("() => { const s = document.querySelector('#panel-notes select'); s.value = 'Lab notes.md'; s.dispatchEvent(new Event('change')); }")
+                await page.wait_for_timeout(800)
+                await page.evaluate("() => { const t = document.querySelector('.notes-text'); t.focus(); const i = t.value.indexOf('21 24'); t.setSelectionRange(i, i + 20); document.dispatchEvent(new Event('selectionchange')); }")
+                await page.wait_for_timeout(600)
+                await snap("notes.png")
+                await tab("calc")
+                for expr in ("0x2b ^ 0x7e", "hw(0xff) + sbox(0x53)", "3.3 / 4096 * 1000"):
+                    await page.fill(".calc-in", expr)
+                    await page.keyboard.press("Enter")
+                    await page.wait_for_timeout(300)
+                await page.click("#wave-plot", position={"x": 300, "y": 300})
+                await page.click("#wave-plot", position={"x": 700, "y": 300}, modifiers=["Shift"])
+                await page.select_option("#panel-calc select", "cursors")
+                await page.wait_for_timeout(600)
+                await snap("calc.png")
             else:
                 await tab("capture")
                 await page.click("#btn-single")

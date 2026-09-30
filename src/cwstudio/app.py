@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from cwstudio import __version__, hardware
 from cwstudio.analysis import MODELS
+from cwstudio import tools
 from cwstudio.firmware import CRYPTO_TARGETS, SS_VERSIONS
 from cwstudio.session import Session
 
@@ -475,6 +476,184 @@ def create_app(session: Session) -> FastAPI:
         p = await body(req)
         try:
             return await run(session.program_build, p.get("path") or None, p.get("programmer") or None)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    # ----- notebooks --------------------------------------------------------------
+    @app.get("/api/notebooks")
+    async def notebooks_list():
+        return {"root": session.notebooks.root, "notebooks": await run(session.notebooks.list), "tutorials": session.tutorials.status()}
+
+    @app.get("/api/notebooks/file")
+    async def notebook_get(path: str):
+        try:
+            return await run(session.notebooks.load, path)
+        except Exception as e:  # noqa: BLE001
+            err(e, 404 if isinstance(e, FileNotFoundError) else 400)
+
+    @app.put("/api/notebooks/file")
+    async def notebook_put(req: Request):
+        p = await body(req)
+        try:
+            return await run(session.notebooks.save, p["path"], p["notebook"])
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.delete("/api/notebooks/file")
+    async def notebook_delete(path: str):
+        try:
+            await run(session.notebooks.delete, path)
+            return {"ok": True}
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/notebooks/new")
+    async def notebook_new(req: Request):
+        p = await body(req)
+        try:
+            return await run(session.notebooks.create, p.get("name") or "Untitled")
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/notebooks/import")
+    async def notebook_import(file: UploadFile = File(...)):
+        try:
+            return await run(session.notebooks.import_bytes, file.filename or "imported.ipynb", await file.read())
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.get("/api/notebooks/download")
+    async def notebook_download(path: str):
+        try:
+            full = session.notebooks.path(path)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+        if not os.path.isfile(full):
+            raise HTTPException(status_code=404, detail="no such notebook")
+        return FileResponse(full, filename=os.path.basename(full), media_type="application/x-ipynb+json")
+
+    @app.get("/api/notebooks/asset")
+    async def notebook_asset(path: str):
+        """Images referenced by notebook markdown (relative to the notebooks folder)."""
+        try:
+            full = session.notebooks.path(path)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+        if not os.path.isfile(full) or os.path.splitext(full)[1].lower() not in (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"):
+            raise HTTPException(status_code=404, detail="no such image")
+        return FileResponse(full)
+
+    @app.post("/api/notebooks/tutorials/fetch")
+    async def tutorials_fetch():
+        return await run(session.tutorials.fetch)
+
+    @app.get("/api/kernel")
+    async def kernel_status():
+        return session.kernel.status()
+
+    @app.get("/api/kernel/variables")
+    async def kernel_variables():
+        return session.kernel.variables()
+
+    @app.post("/api/kernel/execute")
+    async def kernel_execute(req: Request):
+        p = await body(req)
+        cells = p.get("cells") or ([{"id": p.get("id"), "code": p.get("code", "")}] if "code" in p else [])
+        if not cells:
+            err(ValueError("nothing to run"))
+        return session.kernel.execute(cells, p.get("path"))
+
+    @app.post("/api/kernel/run")
+    async def kernel_run(req: Request):
+        """Run one cell and wait for its outputs (for scripts and the MCP server)."""
+        p = await body(req)
+        try:
+            return await run(session.kernel.execute_wait, p.get("code", ""), p.get("path"), float(p.get("timeout") or 600))
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/notebooks/run")
+    async def notebook_run(req: Request):
+        p = await body(req)
+        try:
+            return await run(session.run_notebook, p["path"], float(p.get("timeout") or 1800), bool(p.get("stop_on_error", True)))
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/kernel/interrupt")
+    async def kernel_interrupt():
+        return session.kernel.interrupt()
+
+    @app.post("/api/kernel/restart")
+    async def kernel_restart():
+        return await run(session.kernel.restart)
+
+    # ----- notes and calculator -----------------------------------------------------------
+    @app.get("/api/notes")
+    async def notes_list():
+        return await run(session.notes.list)
+
+    @app.post("/api/notes")
+    async def notes_create(req: Request):
+        p = await body(req)
+        try:
+            return await run(session.notes.create, p.get("name"))
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.get("/api/notes/{name}")
+    async def note_get(name: str):
+        try:
+            return await run(session.notes.get, name)
+        except Exception as e:  # noqa: BLE001
+            err(e, 404)
+
+    @app.put("/api/notes/{name}")
+    async def note_put(name: str, req: Request):
+        p = await body(req)
+        try:
+            if p.get("rename") and p["rename"] != name:
+                name = (await run(session.notes.rename, name, p["rename"]))["name"]
+            return await run(session.notes.put, name, p.get("text", ""))
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.delete("/api/notes/{name}")
+    async def note_delete(name: str):
+        try:
+            await run(session.notes.delete, name)
+            return {"ok": True}
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/calc")
+    async def calc(req: Request):
+        p = await body(req)
+        try:
+            return tools.calc(p.get("expr", ""), session.calc_vars)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.get("/api/calc/variables")
+    async def calc_vars():
+        return {k: (v if isinstance(v, (int, float, str, list)) else str(v)) for k, v in session.calc_vars.items()}
+
+    @app.post("/api/calc/stats")
+    async def calc_stats(req: Request):
+        """Statistics of explicit values, of samples start..end of one stored trace, or of one sample across stored traces."""
+        p = await body(req)
+        try:
+            if "values" in p:
+                return tools.stats(p["values"])
+            if p.get("source") == "trace":
+                wave, *_ = session.store.get(int(p.get("index", -1)) if int(p.get("index", -1)) >= 0 else len(session.store) - 1)
+                a, b = int(p.get("start") or 0), p.get("end")
+                return tools.stats(wave[a:None if b is None else int(b)])
+            if p.get("source") == "sample":
+                waves = session.store.as_arrays(int(p.get("trace_start") or 0), p.get("trace_end"))[0]
+                s0, s1 = int(p["sample"]), int(p.get("sample_end") or int(p["sample"]) + 1)
+                return tools.stats(waves[:, s0:s1].mean(axis=1) if s1 - s0 > 1 else waves[:, s0])
+            raise ValueError("give values, or source=trace/sample")
         except Exception as e:  # noqa: BLE001
             err(e)
 

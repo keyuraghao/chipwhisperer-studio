@@ -18,6 +18,8 @@ export function initHelp(ctx, el) {
       h('li', {}, h('b', {}, 'Capture'), ': choose a trace count and press Run. The waveform updates live and traces are stored in memory.'),
       h('li', {}, h('b', {}, 'Analysis'), ': run a CPA attack. With a fixed key the PGE (partial guessing entropy) plot shows every byte converging to 0.'),
       h('li', {}, h('b', {}, 'Glitch'), ': define parameter ranges and sweep. Successes light up in the scatter plot.'),
+      h('li', {}, h('b', {}, 'Notebook'), ': run your own Python cell by cell, or NewAE\'s tutorials, against the same hardware. Captured traces appear in the Capture tab.'),
+      h('li', {}, h('b', {}, 'Notes'), ' and ', h('b', {}, 'Calc'), ': keep notes, do quick maths, and select numbers anywhere to see their statistics in the log bar.'),
       h('li', {}, 'Export traces as a ChipWhisperer project (.cwp) or .npz to continue in Python or Jupyter.'))),
     h('h2', {}, 'No hardware?'),
     h('div', { class: 'card' }, 'Choose "Simulator" as the device. It behaves like a CW-Lite attached to an unprotected AES target: traces leak the S-box output, CPA recovers the key in a few hundred traces and glitch sweeps find a success window around ext_offset 20 to 60 with width 5 to 40.'),

@@ -28,6 +28,7 @@ INSTRUCTIONS = (
     "Typical flow: studio_status, then scope_connect (kind='sim' when no hardware), target_connect, optionally toolchains_list, toolchain_install, firmware_fetch_sources, firmware_build and firmware_program, "
     "then capture_start with wait=true, traces_summary, cpa_start with wait=true and cpa_result. For fault injection configure glitch.* with scope_set_setting, then glitch_start and glitch_results. "
     "Settings are addressed by dotted paths from scope_get_settings / target_get_settings (e.g. 'gain.db', 'adc.samples', 'clock.clkgen_freq', 'glitch.width'). "
+    "For custom experiments, notebook_run_code runs Python in Studio's notebook kernel with cw bound to the connected hardware; notebook_run runs a whole stored notebook (e.g. NewAE's tutorials after tutorials_fetch). "
     "Long jobs (capture, glitch, CPA, builds, downloads) run in the background; pass wait=true or poll the matching status tool. Only one hardware job runs at a time; capture_stop stops it."
 )
 
@@ -520,6 +521,130 @@ def build_server(client: StudioClient, url_note: str = ""):
     def firmware_program(path: Optional[str] = None, programmer: Optional[Literal["STM32F", "XMEGA", "AVR", "SAM4S", "NEORV32"]] = None) -> Dict[str, Any]:
         """Program the target with the last successful build (or path) using the platform's programmer (or the one given). Needs a connected scope."""
         return client.post("/api/firmware/program", {"path": path, "programmer": programmer}, timeout=900)
+
+    # ----- notebooks ----------------------------------------------------------------------
+    def _summarise_outputs(outputs: List[Dict[str, Any]], max_chars: int = 4000) -> Dict[str, Any]:
+        text, images, errors = [], 0, []
+        for o in outputs or []:
+            t = o.get("output_type")
+            if t == "stream":
+                text.append(o.get("text", ""))
+            elif t == "error":
+                errors.append(f"{o.get('ename')}: {o.get('evalue')}")
+                text.append("".join(o.get("traceback") or [])[-1500:])
+            else:
+                d = o.get("data") or {}
+                if "image/png" in d or "image/jpeg" in d or "image/svg+xml" in d:
+                    images += 1
+                if "text/plain" in d:
+                    text.append(d["text/plain"] + "\n")
+        joined = "".join(text)
+        if len(joined) > max_chars:
+            joined = joined[:max_chars // 2] + "\n...\n" + joined[-max_chars // 2:]
+        return {"text": joined, "images": images, "errors": errors}
+
+    @mcp.tool(annotations=HW)
+    def notebook_run_code(code: str, notebook_path: Optional[str] = None, timeout_s: float = 600) -> Dict[str, Any]:
+        """Run Python in Studio's notebook kernel (one persistent namespace, same one the Notebook tab uses) and return its output. Inside it, `import chipwhisperer as cw` gives cw.scope()/cw.target() bound to Studio's connected devices, cw.capture_trace() stores traces in the Capture tab, IPython magics and !shell commands work, and `studio` offers studio.traces, studio.add_trace(), studio.build_firmware(), studio.program(). notebook_path sets the working directory (relative paths as in that notebook)."""
+        r = client.post("/api/kernel/run", {"code": code, "path": notebook_path, "timeout": timeout_s}, timeout=timeout_s + 30)
+        return {"ok": r.get("ok"), "execution_count": r.get("execution_count"), **_summarise_outputs(r.get("outputs"))}
+
+    @mcp.tool(annotations=RO)
+    def notebook_list() -> Dict[str, Any]:
+        """Notebooks stored in Studio (paths relative to the notebooks folder) and the state of the ChipWhisperer tutorial download."""
+        return client.get("/api/notebooks")
+
+    @mcp.tool(annotations=RO)
+    def notebook_read(path: str, include_outputs: bool = True) -> Dict[str, Any]:
+        """A notebook's cells (type, source and, optionally, a text summary of the outputs)."""
+        nb = client.get("/api/notebooks/file", path=path)
+        cells = []
+        for i, c in enumerate(nb.get("cells", [])):
+            item = {"index": i, "id": c["id"], "type": c["cell_type"], "source": c["source"]}
+            if include_outputs and c["cell_type"] == "code":
+                item["execution_count"] = c.get("execution_count")
+                item["outputs"] = _summarise_outputs(c.get("outputs"), 1500)
+            cells.append(item)
+        return {"path": path, "cells": cells}
+
+    @mcp.tool(annotations=HW)
+    def notebook_write(path: str, cells: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Create or overwrite a notebook from a list of cells, each {"type": "code" or "markdown", "source": "..."}; the user sees it in the Notebook tab."""
+        nb = {"cells": [{"cell_type": c.get("type") or c.get("cell_type") or "code", "source": c.get("source", "")} for c in cells]}
+        return client.put("/api/notebooks/file", {"path": path, "notebook": nb})
+
+    @mcp.tool(annotations=HW)
+    def notebook_run(path: str, stop_on_error: bool = True, timeout_s: float = 1800) -> Dict[str, Any]:
+        """Run every code cell of a stored notebook in order (like Run all), save the outputs into the notebook and return a per-cell summary."""
+        r = client.post("/api/notebooks/run", {"path": path, "stop_on_error": stop_on_error, "timeout": timeout_s}, timeout=timeout_s + 60)
+        cells = []
+        for c in r["notebook"]["cells"]:
+            if c["cell_type"] == "code" and c.get("execution_count") is not None:
+                cells.append({"id": c["id"], "first_line": (c["source"].strip().splitlines() or [""])[0][:80], **_summarise_outputs(c.get("outputs"), 800)})
+        return {"path": path, "ok": r["ok"], "cells_run": r["cells_run"], "failed_cell": r["failed_cell"], "cells": cells}
+
+    @mcp.tool(annotations=RO)
+    def kernel_variables() -> List[Dict[str, Any]]:
+        """Variables currently defined in the notebook kernel (name, type, shape, short repr)."""
+        return client.get("/api/kernel/variables")
+
+    @mcp.tool(annotations=HW)
+    def kernel_interrupt() -> Dict[str, Any]:
+        """Interrupt the running notebook cell and drop queued cells."""
+        return client.post("/api/kernel/interrupt")
+
+    @mcp.tool(annotations=DESTRUCTIVE)
+    def kernel_restart() -> Dict[str, Any]:
+        """Restart the notebook kernel: clears all notebook variables (Studio's hardware connection is kept)."""
+        return client.post("/api/kernel/restart")
+
+    @mcp.tool(annotations=NET)
+    def tutorials_fetch(wait: bool = True, timeout_s: float = 900) -> Dict[str, Any]:
+        """Download NewAE's tutorial notebooks (chipwhisperer-jupyter, matched to the installed firmware sources) into the notebooks folder, with firmware paths linked so their build cells work."""
+        r = client.post("/api/notebooks/tutorials/fetch")
+        end = time.time() + timeout_s
+        while wait and time.time() < end:
+            r = client.get("/api/notebooks")["tutorials"]
+            if (r.get("job") or {}).get("state") not in ("resolving", "downloading", "extracting"):
+                break
+            time.sleep(1)
+        return r
+
+    # ----- notes and calculator -------------------------------------------------------------
+    @mcp.tool(annotations=RO)
+    def notes_list() -> List[Dict[str, Any]]:
+        """Text notes in Studio's notes pad."""
+        return client.get("/api/notes")
+
+    @mcp.tool(annotations=RO)
+    def note_read(name: str) -> Dict[str, Any]:
+        """Read one note."""
+        return client.get(f"/api/notes/{urllib.parse.quote(name, safe='')}")
+
+    @mcp.tool(annotations=HW)
+    def note_write(name: str, text: str, append: bool = True) -> Dict[str, Any]:
+        """Write to a note (created if missing); append=true adds the text at the end, for example to record a recovered key or working glitch settings."""
+        try:
+            cur = client.get(f"/api/notes/{urllib.parse.quote(name, safe='')}")["text"]
+        except StudioError:
+            client.post("/api/notes", {"name": name})
+            cur = ""
+        new = (cur.rstrip("\n") + "\n" + text if cur and append else text)
+        return client.put(f"/api/notes/{urllib.parse.quote(name, safe='')}", {"text": new})
+
+    @mcp.tool(annotations=RO)
+    def calculate(expression: str) -> Dict[str, Any]:
+        """Evaluate a calculator expression: arithmetic, bitwise (^ is XOR), hex/bin, math functions, mean/median/std/rms, and side-channel helpers hw(x), hd(a, b), sbox(x). Variables persist (x = 3), ans is the last result."""
+        return client.post("/api/calc", {"expr": expression})
+
+    @mcp.tool(annotations=RO)
+    def selection_stats(values: Optional[List[float]] = None, trace_index: Optional[int] = None, start: Optional[int] = None, end: Optional[int] = None, sample: Optional[int] = None) -> Dict[str, Any]:
+        """Statistics (count, sum, mean, median, min, max, peak to peak, std, variance, RMS) of explicit values, of samples start..end of a stored trace (trace_index, -1 = newest), or of one sample index across all stored traces."""
+        if values is not None:
+            return client.post("/api/calc/stats", {"values": values})
+        if sample is not None:
+            return client.post("/api/calc/stats", {"source": "sample", "sample": sample})
+        return client.post("/api/calc/stats", {"source": "trace", "index": -1 if trace_index is None else trace_index, "start": start, "end": end})
 
     # ----- resources and prompts --------------------------------------------------------------
     @mcp.resource("studio://status", mime_type="application/json")

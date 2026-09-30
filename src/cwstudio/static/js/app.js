@@ -8,6 +8,8 @@ import { initAnalysis } from './analysis.js';
 import { initGlitch } from './glitch.js';
 import { initHelp } from './help.js';
 import { initFirmware } from './firmware.js';
+import { initNotebook } from './notebook.js';
+import { initNotes, initCalc, initSelectionStats } from './tools.js';
 
 const ctx = new Emitter();
 ctx.status = null;
@@ -21,7 +23,10 @@ const PANELS = {
   firmware: ['Firmware', 'Build ChipWhisperer firmware with GCC or clang, no toolchain setup needed.'],
   capture: ['Capture', 'Record power traces while the waveform updates live.'],
   analysis: ['Analysis', 'Recover the AES key with correlation power analysis.'],
+  notebook: ['Notebook', 'Run Python cell by cell with the connected hardware; traces land in the Capture tab.'],
   glitch: ['Glitch', 'Sweep glitch parameters and map where the target misbehaves.'],
+  notes: ['Notes', 'A text pad for keys, settings that worked and to-dos. Saved automatically.'],
+  calc: ['Calculator', 'Quick maths plus statistics of whatever you select.'],
   help: ['Help', 'Quick start, shortcuts, remote use and AI agent (MCP) setup.'],
 };
 for (const [k, [title, sub]] of Object.entries(PANELS)) {
@@ -49,6 +54,9 @@ themeBtn.addEventListener('click', () => {
 ctx.showTab = (name) => {
   document.querySelectorAll('#tabs .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('#sidebar .panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + name));
+  const nbMode = name === 'notebook';
+  const main = document.getElementById('main');
+  if (main.classList.contains('nb-mode') !== nbMode) { main.classList.toggle('nb-mode', nbMode); if (!nbMode && ctx.wave) setTimeout(() => ctx.wave.resize(), 30); }
   try { localStorage.setItem('cw.tab', name); } catch (e) { /* ignore */ }
   ctx.emit('tab', name);
 };
@@ -167,6 +175,10 @@ async function boot() {
   ctx.capture = initCapture(ctx, document.getElementById('panel-capture'));
   initAnalysis(ctx, document.getElementById('panel-analysis'));
   initGlitch(ctx, document.getElementById('panel-glitch'));
+  ctx.notebook = initNotebook(ctx, document.getElementById('panel-notebook'), document.getElementById('nb-view'));
+  initNotes(ctx, document.getElementById('panel-notes'));
+  initCalc(ctx, document.getElementById('panel-calc'));
+  initSelectionStats(ctx, document.getElementById('sel-stats'));
   initHelp(ctx, document.getElementById('panel-help'));
 
   document.getElementById('btn-single').addEventListener('click', () => ctx.capture.single());
@@ -198,7 +210,7 @@ async function boot() {
   sock.on('cpa', (ev) => ctx.emit('cpa', ev));
   sock.on('glitch', (ev) => { ctx.emit('glitch', ev); if (ev.state !== 'running') ctx.refreshStatus(); });
   sock.on('glitch_result', (ev) => ctx.emit('glitch_result', ev));
-  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log']) sock.on(k, (ev) => ctx.emit(k, ev));
+  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials']) sock.on(k, (ev) => ctx.emit(k, ev));
 
   // Restore last tab; fall back to Connect.
   let tab = 'connect';

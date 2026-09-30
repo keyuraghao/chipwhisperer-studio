@@ -43,8 +43,11 @@
     <button data-tab="firmware" class="tab" title="Build firmware"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16"/></svg></span>Firmware</button>
     <button data-tab="capture" class="tab" title="Capture traces"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg></span>Capture</button>
     <button data-tab="analysis" class="tab" title="CPA key recovery"><span class="ico"><svg class="i" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2M16 7l3 3M19 4l2 2"/></svg></span>Analysis</button>
+    <button data-tab="notebook" class="tab" title="Python notebooks that run inside Studio"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5z"/><path d="M8.5 10l-2 2 2 2M12.5 10l2 2-2 2"/></svg></span>Notebook</button>
     <button data-tab="glitch" class="tab" title="Fault injection sweep"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg></span>Glitch</button>
     <div class="spacer"></div>
+    <button data-tab="notes" class="tab" title="Text pad"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>Notes</button>
+    <button data-tab="calc" class="tab" title="Calculator and selection statistics"><span class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h2M8 15h2M12 15h2M16 11v6"/></svg></span>Calc</button>
     <button data-tab="help" class="tab" title="Help, shortcuts and AI agent (MCP) setup"><span class="ico"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></span>Help</button>
   </nav>
 
@@ -55,7 +58,10 @@
     <section id="panel-firmware" class="panel"></section>
     <section id="panel-capture" class="panel"></section>
     <section id="panel-analysis" class="panel"></section>
+    <section id="panel-notebook" class="panel"></section>
     <section id="panel-glitch" class="panel"></section>
+    <section id="panel-notes" class="panel"></section>
+    <section id="panel-calc" class="panel"></section>
     <section id="panel-help" class="panel"></section>
   </aside>
 
@@ -63,6 +69,7 @@
     <div id="wave-toolbar" class="toolbar"></div>
     <div id="wave-plot"></div>
     <div id="wave-footer"></div>
+    <div id="nb-view"></div>
   </main>
 
   <footer id="bottom">
@@ -70,6 +77,7 @@
       <button id="log-toggle" class="link">Log</button>
       <span id="log-count" class="muted"></span>
       <div class="spacer"></div>
+      <span id="sel-stats" class="sel-stats" style="display:none"></span>
       <input id="log-filter" placeholder="Filter log" class="small">
       <button id="log-clear" class="btn ghost sm">Clear</button>
     </div>
@@ -78,6 +86,8 @@
   <div id="toasts"></div>
 </div>
 <script src="/static/vendor/uPlot.iife.min.js"></script>
+<script src="/static/vendor/marked.umd.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
 <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

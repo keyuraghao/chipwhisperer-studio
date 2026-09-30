@@ -15,6 +15,8 @@ from cwstudio.analysis import CPAAttack, MODELS
 from cwstudio.capture import CaptureJob
 from cwstudio.events import EventBus, trace_event
 from cwstudio.firmware import FirmwareManager
+from cwstudio.notebook import Kernel, NotebookStore, Tutorials
+from cwstudio.tools import NotesStore
 from cwstudio.glitch import GlitchJob
 from cwstudio.toolchains import ToolchainManager
 from cwstudio.traces import TraceStore
@@ -75,7 +77,12 @@ class Session:
         publish = lambda kind, payload: self.bus.publish(kind, payload)  # noqa: E731
         self.toolchains = ToolchainManager(self.data_dir, publish=publish)
         self.firmware = FirmwareManager(self.data_dir, self.toolchains, publish=publish)
+        self.notebooks = NotebookStore(os.path.join(self.data_dir, "notebooks"))
+        self.tutorials = Tutorials(self.notebooks, self.firmware, publish)
+        self.notes = NotesStore(os.path.join(self.data_dir, "notes"))
+        self.calc_vars: Dict[str, Any] = {}
         self.worker.start()
+        self.kernel = Kernel(self, self.notebooks.root)
         self.worker.add_periodic("serial-poll", self._poll_serial, 0.1, only_idle=True)
         self.worker.add_periodic("status", self._push_status, 2.0, only_idle=False)
 
@@ -256,6 +263,24 @@ class Session:
         res = self.program(programmer, path)
         res.update({"path": path, "programmer": programmer})
         return res
+
+    def run_notebook(self, path: str, timeout: float = 1800, stop_on_error: bool = True) -> Dict[str, Any]:
+        """Run every code cell of a stored notebook in order, save the outputs into it, and summarise."""
+        nb = self.notebooks.load(path)
+        ran, failed = 0, None
+        end = time.time() + timeout
+        for c in nb["cells"]:
+            if c["cell_type"] != "code" or not c["source"].strip():
+                continue
+            r = self.kernel.execute_wait(c["source"], path, timeout=max(5.0, end - time.time()))
+            c["outputs"], c["execution_count"] = r["outputs"], r["execution_count"]
+            ran += 1
+            if not r["ok"]:
+                failed = c["id"]
+                if stop_on_error:
+                    break
+        self.notebooks.save(path, nb)
+        return {"path": path, "cells_run": ran, "failed_cell": failed, "ok": failed is None, "notebook": nb}
 
     def save_upload(self, filename: str, content: bytes) -> str:
         d = os.path.join(self.data_dir, "firmware", "uploads")

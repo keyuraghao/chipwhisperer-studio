@@ -20,6 +20,8 @@ dependencies = [
     "mcp>=2.2",
     "truststore>=0.9",
     "certifi",
+    "matplotlib>=3.7",
+    "tqdm",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

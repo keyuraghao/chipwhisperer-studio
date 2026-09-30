@@ -53,6 +53,11 @@ class TraceStore:
             self.keys.append(bytes(key) if key is not None else b"")
             return len(self.waves) - 1
 
+    def set_textout(self, i: int, textout: bytes) -> None:
+        with self._lock:
+            if 0 <= i < len(self.textouts):
+                self.textouts[i] = bytes(textout or b"")
+
     def get(self, i: int) -> Tuple[np.ndarray, bytes, bytes, bytes]:
         with self._lock:
             return self.waves[i], self.textins[i], self.textouts[i], self.keys[i]

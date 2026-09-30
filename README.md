@@ -1,6 +1,6 @@
 # ChipWhisperer Studio
 
-A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chipwhisperer) side-channel and fault-injection hardware. Connect a scope, build and flash target firmware, capture power traces while the waveform updates live, recover AES keys with CPA and sweep glitch parameters, all without writing Python or setting up Jupyter. An MCP server lets AI agents drive the same features.
+A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chipwhisperer) side-channel and fault-injection hardware. Connect a scope, build and flash target firmware, capture power traces while the waveform updates live, recover AES keys with CPA and sweep glitch parameters without writing Python or setting up Jupyter. When you do want code, a built-in notebook runs Python cell by cell against the same hardware, including NewAE's own tutorial notebooks. An MCP server lets AI agents drive all of it.
 
 [![CI](https://github.com/keyuraghao/chipwhisperer-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/keyuraghao/chipwhisperer-studio/actions/workflows/ci.yml) ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)
 
@@ -33,7 +33,9 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 | Capture | Single, N traces or continuous; fixed, random or counter keys and plaintexts; trigger-only mode; rate limiting; export to `.npz`, `.cwp` (ChipWhisperer project) or `.csv`. |
 | Analysis | Progressive CPA with five AES leakage models, per-byte ranking, PGE convergence and correlation plots. |
 | Glitch | Cartesian or random sweeps over any `glitch.*` parameters with target reset handling and a live result scatter plot. |
-| AI agents | `cw-studio mcp`: a Model Context Protocol server with 54 tools covering all of the above. |
+| Notebook | Jupyter-style `.ipynb` notebooks that run inside Studio and share its hardware connection; captured traces land in the Capture tab. Runs NewAE's tutorial notebooks unmodified. |
+| Notes and Calc | A text pad, a calculator with side-channel helpers (`hw`, `hd`, `sbox`, XOR), and live statistics of whatever you select. |
+| AI agents | `cw-studio mcp`: a Model Context Protocol server with 68 tools covering all of the above. |
 | Everywhere | Light and dark themes, a documented HTTP API (`/api/docs`), and remote use from any browser on the network. |
 
 ## Install
@@ -98,6 +100,24 @@ Configure the glitch module in the Scope tab, then sweep parameters such as `gli
 
 ![Glitch sweep scatter plot](docs/images/glitch.png)
 
+### 7. Work in a notebook
+
+The **Notebook** tab is a Jupyter-style editor that runs inside Studio. Write Python cell by cell (Shift+Enter runs a cell), mix in Markdown text cells, and see output, errors and matplotlib figures inline. Cells share Studio's hardware connection: `cw.scope()` and `cw.target()` return the devices you connected, and every trace captured with `cw.capture_trace()` or a manual `scope.arm()` / `scope.capture()` loop shows up live in the waveform view. Press **View traces** to jump to the Capture tab with them.
+
+![Notebook running a capture and plotting the mean trace](docs/images/notebook.png)
+
+Notebooks are standard `.ipynb` files: import your own, or export them to use with Jupyter. **Download tutorials** fetches NewAE's chipwhisperer-jupyter courses (SCA101, Fault101 and more) at the version that matches your firmware sources. They run unmodified: `%run` setup scripts, `%%bash` build cells using Studio's compilers, programming and capture loops all work. The `studio` object adds shortcuts such as `studio.traces`, `studio.build_firmware()` and `studio.program()`.
+
+### 8. Take notes and do the maths
+
+**Notes** is a text pad for keys, glitch settings that worked and to-dos, saved automatically as Markdown files. **Calc** evaluates expressions with side-channel helpers (`0x2b ^ 0x7e`, `hw(x)`, `hd(a, b)`, `sbox(x)`, `mean(...)`) and computes count, sum, mean, median, min, max, peak to peak, standard deviation and RMS of the current selection: the waveform between cursors or in the zoomed range, one sample across all traces, or any selected text.
+
+![Notes with live selection statistics in the log bar](docs/images/notes.png)
+
+Select numbers anywhere in Studio (a note, notebook output, the log or the serial console) and the log bar shows their count, sum, mean, min and max immediately.
+
+![Calculator with statistics between the waveform cursors](docs/images/calc.png)
+
 ## Building firmware
 
 The **Firmware** tab builds ChipWhisperer's own firmware projects (simpleserial-aes, simpleserial-glitch, simpleserial-ecc and the others) with ChipWhisperer's makefiles, for any of the 38 platforms they support. Choose a project, a platform and GCC or clang, then press **Build & program**: Studio compiles the firmware and flashes the connected target with the right programmer.
@@ -132,7 +152,7 @@ Every Arm, AVR and RISC-V platform in ChipWhisperer builds with GCC, apart from 
 
 ## AI agents (MCP)
 
-`cw-studio mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server with tools for everything in the UI: connecting, every scope and target setting, programming, serial and SimpleSerial I/O, capture with all its options, trace access and export, CPA, glitch sweeps, toolchains, firmware sources and builds. It also offers guided prompts (a CPA attack and a glitch search) and live status resources.
+`cw-studio mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server with tools for everything in the UI: connecting, every scope and target setting, programming, serial and SimpleSerial I/O, capture with all its options, trace access and export, CPA, glitch sweeps, toolchains, firmware sources and builds, running notebook code and whole notebooks (including NewAE's tutorials), notes and the calculator. It also offers guided prompts (a CPA attack and a glitch search) and live status resources.
 
 If Studio is already running, the MCP server attaches to it, so you can watch the agent capture and analyse in the browser. Otherwise it starts a headless Studio in the background.
 

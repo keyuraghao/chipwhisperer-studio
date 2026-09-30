@@ -110,6 +110,8 @@ jobs:
           sleep 3
           curl -sf http://127.0.0.1:8799/api/traces
           curl -sf http://127.0.0.1:8799/api/toolchains | head -c 300; echo
+          curl -sf -X POST -H 'Content-Type: application/json' -d '{"code":"import chipwhisperer as cw\nimport matplotlib.pyplot as plt\ns = cw.scope()\nplt.plot(studio.traces.waves[0])\nprint(len(studio.traces))"}' http://127.0.0.1:8799/api/kernel/run > nb.json
+          python -c "import json; r = json.load(open('nb.json')); assert r['ok'], r; assert any('image/png' in o.get('data', {}) for o in r['outputs']), r; print('notebook ok')"
           kill $PID || true
       - uses: actions/upload-artifact@v4
         with:

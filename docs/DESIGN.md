@@ -56,6 +56,12 @@ Every scope and target sub-object in `chipwhisperer` implements `_dict_repr()`. 
 
 A build runs ChipWhisperer's own makefiles. `plan()` computes the whole build (make command, `PATH`, environment, output file, programmer) without side effects, which the UI and MCP expose as a dry run. GCC builds pass the tool names explicitly and add compatibility flags that ChipWhisperer's older HALs need with current compilers (`-fcommon`, relaxed implicit declaration errors, RISC-V `-misa-spec=2.2`). Clang builds set `CC` to `ccwrap.py`, which compiles C with clang (using GCC's newlib or avr-libc headers), strips GCC-only options, spells out RISC-V extensions, and hands hand-written assembly to GCC; GCC links (`LINK_COMPILER`), so the firmware uses the same C library and linker scripts as a GCC build. In the frozen bundle the Studio executable itself acts as the wrapper (`ChipWhispererStudio --ccwrap`).
 
+### Notebooks
+
+`notebook.py` implements a small in-process kernel instead of Jupyter's, because a separate kernel process could not share the USB device Studio already owns. Cells are queued by a dispatcher thread and executed on the hardware worker, one at a time, in one persistent namespace; output written from that thread is routed to the running cell and streamed to the browser, and matplotlib figures are converted to PNG outputs when a cell finishes. Interrupt raises `KeyboardInterrupt` in the worker thread. IPython line magics, `!shell` escapes and cell magics are rewritten into calls to kernel helpers before the cell is compiled, so they also work inside loops and `if` blocks.
+
+Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real module. `cw.scope()` and `cw.target()` return stand-ins that forward every attribute to whatever Studio is connected to at that moment and report the real class (so the library's `isinstance` checks pass). The scope stand-in records every trace read with `get_last_trace()` into the trace store, paired with the plaintext and key last sent through the target stand-in and the response read afterwards; `cw.capture_trace()` records its result the same way. That is how tutorial capture loops fill Studio's Capture tab without any changes.
+
 ### MCP server
 
 `mcp_server.py` is a Model Context Protocol server built on the official Python SDK. Each tool is a thin wrapper around an HTTP API route, so the agent sees exactly the features and options of the UI, and one session can be shared between a person in the browser and an agent. If no Studio answers at `--url`, the server starts a headless one in the same process. Long operations accept `wait=true` so an agent can run "capture 500 traces" or "build and flash" as a single call.
@@ -79,6 +85,9 @@ A build runs ChipWhisperer's own makefiles. `plan()` computes the whole build (m
 | `firmware.py` | Firmware sources from GitHub, project and platform catalogue, builds. |
 | `ccwrap.py` | Compiler wrapper that lets GCC-oriented makefiles build with clang. |
 | `mcp_server.py` | MCP server exposing every feature to AI agents. |
+| `notebook.py` | Notebook kernel (cells on the hardware thread, IPython syntax, ChipWhisperer stand-ins), `.ipynb` storage, tutorial download. |
+| `tools.py` | Notes storage, the safe calculator and statistics. |
+| `net.py` | HTTPS with the operating system's trust store (certifi fallback) for every download. |
 | `events.py` | Thread-safe event bus fanning out to WebSocket clients. |
 | `static/` | Frontend (vanilla ES modules and uPlot) with light and dark themes. |
 

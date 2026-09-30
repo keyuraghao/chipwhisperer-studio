@@ -34,7 +34,7 @@ async def _session(tmp_path):
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = {t.name for t in (await s.list_tools()).tools}
-            call = lambda name, **a: s.call_tool(name, a)  # noqa: E731
+            call = lambda tool_name, **a: s.call_tool(tool_name, a)  # noqa: E731
             assert {"scope_connect", "capture_start", "cpa_start", "glitch_start", "firmware_build", "toolchain_install", "firmware_check_updates"} <= tools
             assert len(tools) >= 50
             _result(await call("scope_connect", kind="sim"))
@@ -54,6 +54,15 @@ async def _session(tmp_path):
             assert len(gl["results"]) == 4
             cat = _result(await call("firmware_catalogue"))
             assert "sources" in cat and "platforms" in cat
+            nb = _result(await call("notebook_run_code", code="import chipwhisperer as cw\ns2 = cw.scope()\nprint(len(studio.traces))\n6 * 7"))
+            assert nb["ok"] and "42" in nb["text"] and "60" in nb["text"], nb
+            assert _result(await call("calculate", expression="hw(0xff) ^ 1"))["value"] == 9
+            assert _result(await call("selection_stats", values=[1, 2, 3]))["mean"] == 2
+            _result(await call("note_write", name="agent", text="key found"))
+            assert "key found" in _result(await call("note_read", name="agent.md"))["text"]
+            _result(await call("notebook_write", path="agent/demo.ipynb", cells=[{"type": "markdown", "source": "# Demo"}, {"type": "code", "source": "print('hi from agent')"}]))
+            ran = _result(await call("notebook_run", path="agent/demo.ipynb"))
+            assert ran["ok"] and ran["cells"][0]["text"] == "hi from agent\n", ran
             prompts = {p.name for p in (await s.list_prompts()).prompts}
             assert {"cpa_attack", "glitch_search"} <= prompts
             status = await s.read_resource("studio://status")

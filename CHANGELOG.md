@@ -6,13 +6,30 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 Nothing yet.
 
-## [0.2.1] - 2026-09-30
+## [0.3.0] - 2026-09-30
+
+### Added
+
+- **Notebook tab:** Jupyter-style notebooks that run inside Studio. Write Python cell by cell (Shift+Enter to run, Run all, Stop, Restart), with text (Markdown) cells, inline matplotlib figures, rich outputs and a variables panel. Notebooks are standard `.ipynb` files: create them in Studio, import your own, export them back to Jupyter.
+  - Cells share Studio's hardware connection: inside a notebook `cw.scope()` and `cw.target()` return the devices connected in the Connect tab (or connect them), and traces captured with `cw.capture_trace()` or a manual `scope.arm()` / `scope.capture()` / `scope.get_last_trace()` loop appear live in the waveform view and the Capture tab, with their plaintext, ciphertext and key.
+  - IPython features used by ChipWhisperer's tutorials work: `%run other.ipynb`, `!make ...` and `%%bash -s` with Studio's downloaded compilers on `PATH` and `{var}` / `$var` expansion, `%cd`, `%env`, `%time`, `%%writefile`, `display()`, `IPython.display`, `tqdm.notebook` progress bars.
+  - **ChipWhisperer tutorials:** one click downloads NewAE's chipwhisperer-jupyter notebooks (SCA101, Fault101 and more) at the version matching your firmware sources, with the firmware folder linked so their build cells work. NewAE's Lab 3_3 (DPA on firmware AES) runs unmodified: setup, firmware build, programming and a 2500 trace capture into the Capture tab.
+  - A `studio` helper in every notebook: `studio.traces`, `studio.add_trace()`, `studio.show()`, `studio.build_firmware()`, `studio.program()`.
+- **Notes tab:** a text pad with multiple notes, Markdown preview and autosave, plus buttons to insert the latest CPA key or selection statistics.
+- **Calc tab:** a calculator for quick maths and side-channel work (bitwise XOR, hex and binary, `hw()`, `hd()`, AES `sbox()`, `mean()`, `std()`, variables) and statistics (count, sum, mean, median, min, max, peak to peak, standard deviation, variance, RMS) of the current selection: selected text anywhere in Studio, the waveform between cursors or in the zoomed range, the whole trace, one sample across all stored traces, or typed numbers.
+- **Live selection statistics:** select numbers anywhere in Studio and the log bar shows count, sum, mean, min and max instantly, like a spreadsheet status bar.
+- MCP tools for the new features (68 tools in total): `notebook_run_code`, `notebook_run`, `notebook_read`, `notebook_write`, `notebook_list`, `kernel_variables`, `kernel_interrupt`, `kernel_restart`, `tutorials_fetch`, `note_read`, `note_write`, `notes_list`, `calculate`, `selection_stats`.
 
 ### Fixed
 
 - HTTPS downloads failed with "certificate verify failed: unable to get local issuer certificate" when Python could not find CA certificates, which affected Refresh list, toolchain installs, firmware source downloads and update checks. This happens in the standalone bundles, with python.org Python on macOS and Windows, and on networks that inspect HTTPS. Studio now verifies certificates against the operating system's trust store (through `truststore`, including roots your IT department installed), falls back to Mozilla's CA bundle (`certifi`), and honours `SSL_CERT_FILE` and `SSL_CERT_DIR`. If verification still fails, the error explains how to fix it.
 - Installing a toolchain that is already installed no longer downloads it again.
 - Firmware source lookups use `GITHUB_TOKEN` when it is set, avoiding GitHub's limit of 60 anonymous API requests per hour.
+
+### Changed
+
+- matplotlib and tqdm are now dependencies, and matplotlib is included in the standalone bundles.
+- Bundles `marked` (MIT) and `DOMPurify` (Apache 2.0 or MPL 2.0) for safe Markdown rendering; HTML outputs of imported notebooks are shown in a script-free sandbox.
 
 ## [0.2.0] - 2026-09-30
 
@@ -72,7 +89,7 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.1...HEAD
-[0.2.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.0...v0.2.1
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.2.0
 [0.1.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.1.0
