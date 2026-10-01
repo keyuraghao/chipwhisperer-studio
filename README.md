@@ -2,7 +2,7 @@
 
 A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chipwhisperer) side-channel and fault-injection hardware. Connect a scope, build and flash target firmware, capture power traces while the waveform updates live, recover AES keys with CPA and sweep glitch parameters without writing Python or setting up Jupyter. When you do want code, a built-in notebook runs Python cell by cell against the same hardware, including NewAE's own tutorial notebooks. An MCP server lets AI agents drive all of it.
 
-[![CI](https://github.com/keyuraghao/chipwhisperer-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/keyuraghao/chipwhisperer-studio/actions/workflows/ci.yml) ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)
+[![CI](https://github.com/keyuraghao/chipwhisperer-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/keyuraghao/chipwhisperer-studio/actions/workflows/ci.yml) ![Python 3.10 to 3.12](https://img.shields.io/badge/python-3.10%20to%203.12-blue) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)
 
 **Documentation:** the [ChipWhisperer Studio wiki](https://github.com/keyuraghao/chipwhisperer-studio/wiki) explains every feature, option and setup step in detail, from [installation](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Installation) and a [quick start](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Quick-Start) to the [MCP server](https://github.com/keyuraghao/chipwhisperer-studio/wiki/MCP-Server) and [troubleshooting](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Troubleshooting).
 

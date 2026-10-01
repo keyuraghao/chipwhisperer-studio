@@ -24,7 +24,7 @@ jobs:
       - name: Check the wiki source
         run: |
           set -e
-          if grep -rn $'—' docs/wiki --include=*.md; then echo "em dash found in the wiki"; exit 1; fi
+          if grep -rn $'\u2014' docs/wiki --include=*.md; then echo "em dash found in the wiki"; exit 1; fi
           python3 - <<'EOF'
           import os, re, sys
           root = "docs/wiki"

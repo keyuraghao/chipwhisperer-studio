@@ -24,8 +24,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install -e ".[test-mcp]"
+      # The Python 3.10 job installs only the plain test extra, so an accidental import of the MCP SDK or its dependencies fails CI; the others also run the official MCP client interop test.
+      - run: pip install -e ".[${{ matrix.python == '3.10' && 'test' || 'test-mcp' }}]"
       - run: python -m pytest -q
+
+  docs:
+    # README and DESIGN links and images resolve, and no em dashes anywhere in the text (the project's style rule).
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check links and style
+        run: |
+          set -e
+          if git grep -nI $'\u2014'; then echo "em dash found"; exit 1; fi
+          python3 - <<'EOF'
+          import os, re, sys
+          bad = []
+          for doc in ("README.md", "docs/DESIGN.md", "CHANGELOG.md", "packaging/BUNDLE_README.md"):
+              base = os.path.dirname(doc)
+              for target in re.findall(r"\]\(([^)\s#]+)(?:#[^)]*)?\)", open(doc, encoding="utf-8").read()):
+                  if not target.startswith(("http://", "https://", "mailto:")) and not os.path.exists(os.path.join(base, target)):
+                      bad.append(f"{doc}: missing {target}")
+          print("\n".join(bad) or "links ok")
+          sys.exit(1 if bad else 0)
+          EOF
 
   firmware:
     # Exercises the real toolchain downloads and ChipWhisperer makefiles on every OS.

@@ -202,13 +202,15 @@ async function boot() {
   sock.on('hello', (ev) => applyStatus(ev.status));
   sock.on('status', applyStatus);
   sock.on('log', addLog);
-  sock.on('capture', (ev) => { ctx.emit('capture', ev); if (ev.state !== 'running') { ctx.refreshStatus(); if (ctx.wave.showMean || ctx.wave.showEnv) ctx.wave.onNeedStats(); } });
+  // A job started from another window, a script or an agent: make sure the header shows it and Stop is enabled.
+  const ensureRunning = () => { if (document.getElementById('btn-stop').disabled) ctx.refreshStatus(); };
+  sock.on('capture', (ev) => { ctx.emit('capture', ev); if (ev.state === 'running') { ensureRunning(); if (ev.done != null) setChip('chip-job', 'busy', `capture: ${ev.done}${ev.target ? '/' + ev.target : ''}${ev.rate ? ' · ' + ev.rate + '/s' : ''}`); } if (ev.state !== 'running') { ctx.refreshStatus(); if (ctx.wave.showMean || ctx.wave.showEnv) ctx.wave.onNeedStats(); } });
   sock.on('trace', (header, samples) => { ctx.wave.pushLive(samples, header); if (header.stored !== false && header.index >= 0) { document.getElementById('trace-count').textContent = `${header.index + 1} traces`; ctx.wave.setTraceCount(header.index + 1); } });
   sock.on('traces', (ev) => { ctx.emit('traces', ev); ctx.wave.setTraceCount(ev.count); });
   sock.on('serial', (ev) => ctx.emit('serial', ev));
   sock.on('setting', (ev) => ctx.emit('setting', ev));
   sock.on('cpa', (ev) => ctx.emit('cpa', ev));
-  sock.on('glitch', (ev) => { ctx.emit('glitch', ev); if (ev.state !== 'running') ctx.refreshStatus(); });
+  sock.on('glitch', (ev) => { ctx.emit('glitch', ev); if (ev.state === 'running') ensureRunning(); else ctx.refreshStatus(); });
   sock.on('glitch_result', (ev) => ctx.emit('glitch_result', ev));
   for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials']) sock.on(k, (ev) => ctx.emit(k, ev));
 

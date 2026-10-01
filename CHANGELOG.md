@@ -4,6 +4,32 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-01
+
+A full review of 0.4.0 against 0.3.0 (every HTTP route, all 68 MCP tools on three transports, every tab in the browser, the numerics and the published packages) found the issues below. They are fixed here, together with several older bugs it uncovered.
+
+### Fixed
+
+- **macOS bundle without libusb:** the 0.3.0 and 0.4.0 macOS bundles did not contain libusb, so they could only reach real hardware when Homebrew's libusb was installed. The bundle build now includes it on every OS and fails if it cannot.
+- **MCP arguments:** `null` for a parameter that is not optional is rejected again, as in 0.3.0. In 0.4.0 `capture_start(count=null)` reported an error but left an endless capture running, and `scope_connect(kind=null)` disconnected the scope. List items are validated and converted again (`bytes=["0"]`), and numbers, booleans and strings convert as leniently as before.
+- **MCP results:** structured results are wrapped as `{"result": ...}` with an output schema again, exactly as 0.3.0 sent them, and lists come as one text block per item. NaN and infinity are sent as `null` instead of invalid JSON.
+- **MCP concurrency:** every request runs on its own thread, so `ping`, `capture_stop` and status calls answer at once even while many long calls wait (0.4.0 had a pool of 8).
+- **MCP over HTTP:** the streamable HTTP transport checks the Host header (DNS rebinding), Accept, Content-Type, session ids and the protocol version header again, `DELETE` ends a session, and request bodies are bounded. A lone surrogate character in a request no longer stops the stdio server, and on Windows child processes can no longer write into the protocol stream.
+- **Uploads:** a request without a file is rejected with 422 as in 0.3.0 (0.4.0 programmed an empty firmware file), filenames containing `;` or escaped quotes are kept intact, file content that happens to contain the boundary text is no longer cut short, and multipart uploads need about half the memory.
+- **API errors:** invalid or missing parameters return FastAPI's 422 format again (`{"detail": [{"type", "loc", "msg", "input"}]}`), whole numbers like `3.0` are accepted for integer parameters, `HEAD` requests are refused as before instead of running an export, and `/openapi.json` is back (a compact description of every route). Values that JSON cannot represent (infinity, NaN, numpy keys, dates, enums) no longer cause a 500 (`/api/calc` with `1e308*10`, trace meta of a trace containing NaN).
+- **CPA results are bit-identical to 0.3.0 again:** 0.4.0 rearranged the correlation formula, which changed the last bit of some values and, with ties, the reported sample. The formula is restored inside the faster blocked computation.
+- **Live view:** the WebSocket loop sends queued events without per-event task overhead (0.4.0 was slower than 0.3.0 when events backed up) and cleans up its pending read when a window closes.
+- **Header Stop button:** a capture or glitch sweep started from the panel, a notebook, a script or an agent now shows in the header right away with live progress, and the header Stop button works during it. Before, the header said Idle and Stop stayed disabled until the job ended.
+- **`plt.show()` in the first cell** that imports pyplot now shows the figure at that point too, without a warning (Studio has its own matplotlib backend for notebooks). Figures can also be saved as SVG, PDF and PS in the bundles, and common standard modules (`zoneinfo`, `tomllib`, `sqlite3` and others) import there again.
+- **ChipWhisperer project download:** **Download in browser** for `.cwp` now gives a zip with the project and its data folder (it was a 264 byte file that could not be opened), and importing such a zip works.
+- **Notebook import** never overwrites an earlier import with the same name, `notebook_read` over MCP works, relative paths for trace import resolve inside the data folder like export, `python -m cwstudio mcp --no-embed` exits with status 1 when Studio is not running, and **reset FPGA** on a scope without an FPGA says so.
+- **Markdown:** tabs in code blocks are kept, SVG images given as data URLs show again, and inline styles can no longer pin content over the whole window.
+- **Packaging:** README images that went missing with the wiki move are back, the Python badge says 3.10 to 3.12, the sdist includes the test helpers, the package metadata uses the SPDX licence expression, and CI checks README links and the plain (MCP SDK free) install.
+
+### Performance
+
+CPA with live progress (5000 traces of 5000 samples, progress every 50 traces) takes 13 to 15 s against 24 to 26 s in 0.3.0, about 1.8 times faster, with bit-identical results. The 0.4.0 table below listed 3.0 times from one run; independent runs of 0.4.0 measured 2.1 times.
+
 ## [0.4.0] - 2026-10-01
 
 This release makes Studio smaller and faster. Heavy libraries that Studio used only a small part of are replaced by compact built-in code, so a pip install pulls in about 25 fewer packages and the standalone bundles shrink by a third, while CPA, the simulator and live streaming get several times faster. The HTTP API, the MCP tools and the file formats are unchanged.
@@ -21,7 +47,7 @@ This release makes Studio smaller and faster. Heavy libraries that Studio used o
 - **Fewer dependencies:** `fastapi`, `mcp`, `python-multipart` and the `uvicorn[standard]` extras are gone, and with them pydantic, pydantic-core, jsonschema, rpds, httpx2, opentelemetry, pyjwt, cryptography, uvloop, httptools, watchfiles and PyYAML. Studio now needs Starlette, uvicorn, websockets, numpy, matplotlib and a few small packages.
 - **Smaller bundles:** the Linux bundle zip shrinks from 108 MB to 64 MB (macOS 80 MB to 61 MB, Windows 67 MB to 49 MB). Besides the dependencies above, the bundles leave out Cython, setuptools, matplotlib's GUI backends and sample data, and Pillow's AVIF, WebP and colour management codecs, and strip debug symbols on Linux.
 - **Smaller frontend:** the notebook and notes Markdown renderer and HTML sanitizer are now one 14 KB module (`markdown.js`) instead of marked and DOMPurify (76 KB). It renders NewAE's tutorial notebooks like before, leaves LaTeX math untouched, and keeps notebook output safe from scripts.
-- **Faster CPA:** about 3 times faster with live progress (5000 traces of 5000 samples: 27 s to 9 s) and 1.6 times faster without, with identical results; progress reports no longer allocate hundreds of MB.
+- **Faster CPA:** about 2 to 3 times faster with live progress (5000 traces of 5000 samples) and up to 1.6 times faster without; progress reports no longer allocate hundreds of MB.
 - **Faster capture and simulator:** the simulator synthesises traces 3 times faster and AES runs 7 times faster, so simulated captures run about 2.7 times faster. The same seed still gives the same traces.
 - **Faster live view:** each WebSocket event is encoded once for all open windows instead of once per window, the WebSocket loop sleeps until there is an event instead of waking every second, the trace store keeps running counters for its summary, and the waveform view reuses buffers instead of allocating them for every frame.
 - The Connect tab now preselects SimpleSerial v2, which current ChipWhisperer firmware uses, instead of the legacy v1 protocol.
@@ -36,7 +62,7 @@ Measured before and after on the same machine (about 15% noise); results are ide
 |---|---|---|---|
 | Live update encoding (500 events, 8 open windows) | 30.6 ms | 3.8 ms | 8.1x |
 | AES encryption (5000 blocks) | 650 ms | 93 ms | 7.0x |
-| CPA, 5000 traces of 5000 samples, progress every 50 traces | 26.6 s | 8.8 s | 3.0x |
+| CPA, 5000 traces of 5000 samples, progress every 50 traces | 26.6 s | 8.8 to 14 s | 2.1x to 3.0x |
 | Simulator trace generation (5000 traces) | 1340 ms | 441 ms | 3.0x |
 | Simulated capture loop (1000 traces) | 460 ms | 168 ms | 2.7x |
 | Trace export as arrays | 33 ms | 20 ms | 1.65x |
@@ -136,7 +162,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.2.0

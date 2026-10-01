@@ -71,8 +71,8 @@ class StudioClient:
             return json.loads(raw.decode("utf-8")) if raw else None
         return raw
 
-    def get(self, path, **params):
-        return self._request("GET", path, params=params)
+    def get(self, _path, **params):  # positional name chosen so a query parameter called "path" does not clash
+        return self._request("GET", _path, params=params)
 
     def post(self, path, body=None, timeout=None):
         return self._request("POST", path, body if body is not None else {}, timeout=timeout)

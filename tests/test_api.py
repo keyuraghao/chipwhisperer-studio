@@ -217,16 +217,66 @@ def test_download_npy_set_as_zip(client):
 
 
 def test_web_layer(client):
-    """Uploads (multipart with binary content, or the raw body), query conversion, JSON errors and the docs page of the routing layer."""
+    """Uploads (multipart with binary content, or the raw body), parameter conversion, FastAPI-compatible errors, docs and openapi of the routing layer."""
     from cwstudio.web import _multipart
-    blob = bytes(range(256)) * 4 + b"\r\n--x\r\n\r\n"
-    body = b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"C:\\\\fw\\\\a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n" + blob + b"\r\n--B--\r\n"
-    assert _multipart(body, "multipart/form-data; boundary=B")["file"] == ("a.bin", blob, "application/octet-stream")
+    blob = bytes(range(256)) * 4 + b"\r\n--x\r\n\r\nX--B--Bx\r\n\r\n--Bx"
+    body = b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"C:\\\\fw\\\\a;b.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n" + blob + b"\r\n--B--\r\n"
+    assert _multipart(body, "multipart/form-data; boundary=B")["file"] == ("a;b.bin", blob, "application/octet-stream")
+    quoted = b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a\\\"b.npz\"\r\n\r\nx\r\n--B--"
+    assert _multipart(quoted, 'multipart/form-data; boundary="B"')["file"][0] == 'a"b.npz'
+    with pytest.raises(Exception):
+        _multipart(b"--B\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\nno closing boundary", "multipart/form-data; boundary=B")
     r = client.post("/api/target/program/upload?programmer=STM32F&filename=raw.hex", content=b":00000001FF\n", headers={"Content-Type": "application/octet-stream"})
     assert r.status_code == 200 and r.json()["path"].endswith("raw.hex")
-    assert client.get("/api/traces/notanumber").status_code == 422
+    r = client.post("/api/target/program/upload")
+    assert r.status_code == 422 and r.json()["detail"][0]["loc"] == ["body", "file"]
+    assert client.post("/api/notebooks/import", files={"file": (None, b"not a file")}).status_code == 422
+    r = client.get("/api/traces/notanumber")
+    assert r.status_code == 422 and r.json()["detail"][0]["type"] == "int_parsing" and r.json()["detail"][0]["loc"] == ["path", "index"]
     r = client.get("/api/traces/99999")
     assert r.status_code == 404 and r.json() == {"detail": "no such trace"}
-    assert client.get("/api/notebooks/file").json()["detail"].startswith("missing parameter")
+    assert client.get("/api/notebooks/file").json()["detail"] == [{"type": "missing", "loc": ["query", "path"], "msg": "Field required", "input": None}]
+    assert client.get("/api/logs?since=1.0").status_code == 200
+    assert client.get("/api/logs?since=1.5").status_code == 422
+    assert client.head("/api/status").status_code == 405
+    assert client.post("/api/calc", json={"expr": "1e308*10"}).status_code == 200
     docs = client.get("/api/docs")
     assert docs.status_code == 200 and "/api/capture/start" in docs.text
+    spec = client.get("/openapi.json").json()
+    assert spec["paths"]["/api/traces/{index}"]["get"]["parameters"][0] == {"name": "index", "in": "path", "required": True, "schema": {"type": "integer"}}
+
+
+def test_notebook_import_never_overwrites(client):
+    nb = json.dumps({"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}).encode()
+    a = client.post("/api/notebooks/import", files={"file": ("x;y", nb)}).json()["path"]
+    b = client.post("/api/notebooks/import", files={"file": ("x;y", nb)}).json()["path"]
+    assert a == "imported/x;y.ipynb" and b == "imported/x;y 2.ipynb"
+
+
+def test_cwp_download_roundtrip_and_job_status(client):
+    """A ChipWhisperer project downloads as one zip (project file plus data folder) that imports back; starting a job announces it at once."""
+    import io
+    import zipfile
+    client.post("/api/scope/connect", json={"kind": "sim"})
+    client.post("/api/target/connect", json={"kind": "sim"})
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_text()  # hello
+        client.post("/api/capture/start", json={"count": 5, "clear": True})
+        seen_running = False
+        for _ in range(200):
+            msg = ws.receive()
+            if msg.get("text"):
+                ev = json.loads(msg["text"])
+                if ev["type"] == "status" and (ev.get("job") or {}).get("running"):
+                    seen_running = True
+                    break
+        assert seen_running
+    wait_job(client)
+    r = client.get("/api/traces/download/cwp")
+    assert r.status_code == 200
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert "traces.cwp" in names and any(n.startswith("traces_data/traces/") for n in names)
+    up = client.post("/api/traces/import/upload?replace=true", files={"file": ("traces_cwp.zip", r.content)})
+    assert up.status_code == 200 and up.json()["imported"] == 5
+    path = client.post("/api/traces/export", json={"path": "rel_export", "format": "npz"}).json()["path"]
+    assert client.post("/api/traces/import", json={"path": "rel_export.npz"}).json()["imported"] == 5, path

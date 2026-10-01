@@ -17,7 +17,7 @@ This page explains every part of the Studio window: the top bar, the navigation,
 
 ## Top bar
 
-- **Logo, name and version.** The small badge shows the version you are running, for example `v0.4.0`.
+- **Logo, name and version.** The small badge shows the version you are running, for example `v0.4.1`.
 - **Status chips.** Three rounded chips show the scope, the target and the current job:
   - The **scope** chip shows the device name and serial number (for example `ChipWhisperer-Simulator · SIM000001`) with a green dot when connected, or **No scope**.
   - The **target** chip shows the target type (for example `SimpleSerial2`) or **No target**.

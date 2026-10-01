@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "chipwhisperer-studio"
 dynamic = ["version"]
 description = "Desktop app for ChipWhisperer hardware: live waveforms, capture, CPA, glitching and firmware builds"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{name = "Keyur Aghao"}]
 requires-python = ">=3.10"
 dependencies = [
@@ -23,7 +24,6 @@ dependencies = [
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Topic :: Scientific/Engineering",

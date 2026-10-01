@@ -207,29 +207,23 @@ class CPAAttack:
         with np.errstate(divide="ignore", invalid="ignore"):
             var_h = n * sum_h2 - sum_h ** 2                     # (nb,256)
             var_t = n * sum_t2 - sum_t ** 2                     # (S,)
-            # corr = (n*sum_ht - sum_h*sum_t) / sqrt(var_h*var_t), rearranged as (sum_ht - sum_h/n * sum_t) * (n/sd_h) * (1/sd_t)
-            mean_h = sum_h / n
-            scale_h = n / np.sqrt(var_h)
-            scale_t = 1.0 / np.sqrt(var_t)
-        # |corr| is built a few guesses at a time in a small reused buffer: the full (nb,256,S) num/den/corr arrays of a naive version cost several passes over hundreds of MB per report
+        # corr = (n*sum_ht - sum_h*sum_t) / sqrt(var_h*var_t), evaluated with exactly the same operations as before (so results are bit-identical) but a few guesses at a time in small reused buffers: full (nb,256,S) num/den/corr arrays cost several passes over hundreds of MB per report
         rows = max(1, min(256, _REPORT_BLOCK // max(S, 1)))
         blk = np.empty((rows, S), np.float64)
+        den = np.empty((rows, S), np.float64)
         pge = []
         for i, b in enumerate(self.bytes_to_attack):
             for g0 in range(0, 256, rows):
                 g1 = min(256, g0 + rows)
-                c = blk[:g1 - g0]
+                c, d = blk[:g1 - g0], den[:g1 - g0]
                 with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-                    np.multiply(mean_h[i, g0:g1, None], sum_t[None, :], out=c)
-                    np.subtract(sum_ht[i, g0:g1], c, out=c)
-                    c *= scale_h[i, g0:g1, None]
-                    c *= scale_t[None, :]
+                    np.multiply(sum_h[i, g0:g1, None], sum_t[None, :], out=c)
+                    np.subtract(n * sum_ht[i, g0:g1], c, out=c)
+                    np.multiply(var_h[i, g0:g1, None], var_t[None, :], out=d)
+                    np.sqrt(d, out=d)
+                    np.divide(c, d, out=c)
                     np.abs(c, out=c)
-                    am = c.argmax(axis=1)
-                    mx = c[np.arange(g1 - g0), am]
-                if not np.all(np.isfinite(mx)):
-                    # zero variance (constant sample or hypothesis) or non-finite input: those correlations count as 0
-                    c[~np.isfinite(c)] = 0.0
+                    c[~np.isfinite(c)] = 0.0  # zero variance (constant sample or hypothesis) or non-finite input: those correlations count as 0
                     am = c.argmax(axis=1)
                     mx = c[np.arange(g1 - g0), am]
                 r.corr_max[b, g0:g1] = mx

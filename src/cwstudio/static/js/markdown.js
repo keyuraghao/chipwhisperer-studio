@@ -122,7 +122,9 @@ function blocks(lines, st) {
     } else if ((m = FENCE.exec(l)) && !(m[2][0] === '`' && m[3].includes('`'))) {
       const lang = unesc(m[3].trim().split(/\s+/)[0]), body = [], cut = new RegExp(`^ {0,${m[1].length}}`);
       const close = new RegExp(`^ {0,3}${m[2][0]}{${m[2].length},}[ \\t]*$`);
-      for (i++; i < n && !close.test(lines[i]); i++) body.push(lines[i].replace(cut, ''));
+      // Code keeps its tabs: at the top level the lines before tab expansion are used (tabs only matter for block structure).
+      const text = lines === topLines ? rawLines : lines;
+      for (i++; i < n && !close.test(lines[i]); i++) body.push(text[i].replace(cut, ''));
       i++;
       out += `<pre><code${lang ? ` class="language-${esc(lang)}"` : ''}>${esc(body.join('\n'))}${body.length ? '\n' : ''}</code></pre>\n`;
     } else if (/^ {0,3}\$\$/.test(l) && !l.trim().slice(2).includes('$$')) {
@@ -168,10 +170,12 @@ function blocks(lines, st) {
   return out;
 }
 
+let topLines = null, rawLines = null; // the document's lines after and before tab expansion
+
 // Markdown to HTML. The result is NOT safe to insert as is (raw HTML passes through); use renderMarkdown for that.
 export function markdownToHtml(src) {
-  const lines = String(src || '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0004]/g, '').split('\n')
-    .map((l) => l.replace(/^[ \t]+/, (w) => w.replace(/ {0,3}\t/g, '    ')));
+  rawLines = String(src || '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0004]/g, '').split('\n');
+  const lines = topLines = rawLines.map((l) => l.replace(/^[ \t]+/, (w) => w.replace(/ {0,3}\t/g, '    ')));
   refs = {};
   for (const l of lines) {
     const m = DEF.exec(l);
@@ -193,10 +197,12 @@ const SVG_TAGS = set('svg g path defs use clipPath symbol rect circle ellipse li
 const DROP = set('script style iframe object embed form input button select textarea option noscript template math svg frame frameset applet base link meta title head audio video source canvas noembed noframes xmp plaintext');
 const DATA_IMG = /^data:image\/(png|jpeg|gif|webp)[;,]/i;
 const safeUrl = (v) => { const u = v.replace(/[\x00-\x20\x7f-\xa0]/g, ''), m = /^([a-z][a-z\d+.-]*):/i.exec(u); return !m || /^(https?|mailto|tel|ftp)$/i.test(m[1]) || DATA_IMG.test(u); };
-const safeCss = (v) => !/[\\]|@import|expression\s*\(|behavior|binding|javascript:/i.test(v) && !/url\(\s*(?!['"]?#)/i.test(v);
+// Inline styles may format content but not load anything or escape their container (position: fixed overlays could cover and block the whole UI).
+const safeCss = (v) => !/[\\]|@import|expression\s*\(|behavior|binding|javascript:|image-set|position\s*:\s*(fixed|sticky)/i.test(v) && !/url\(\s*(?!['"]?#)/i.test(v);
 
 function keepAttr(el, name, v, svg) {
   if (svg ? /^on/i.test(name) || !/^[\w:-]+$/.test(name) : !HTML_ATTRS.has(name)) return false;
+  if (!svg && name === 'src' && el.localName === 'img' && /^data:image\/svg\+xml[;,]/i.test(v)) return true; // an SVG shown through <img> cannot run scripts
   if (name === 'href' || name === 'src' || name === 'xlink:href' || name === 'cite') return svg ? v.startsWith('#') || (el.localName === 'image' && DATA_IMG.test(v)) : safeUrl(v);
   if (name === 'style' || /url\(/i.test(v)) return safeCss(v);
   if (name === 'type' && el.localName !== 'ol' && el.localName !== 'li' && el.localName !== 'input') return false;

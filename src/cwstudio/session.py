@@ -195,6 +195,8 @@ class Session:
                 self.scope.arm()
                 to = self.scope.capture()
                 return {"timeout": bool(to)}
+            elif action in ("reset_fpga", "glitch_disable"):
+                raise ValueError(f"this scope does not support {action}")
             else:
                 raise ValueError(f"unknown action {action}")
             return {"ok": True}
@@ -362,6 +364,7 @@ class Session:
         if not self.worker.start_long_job(job):
             raise RuntimeError("another job is running")
         self.last_job = job
+        self._push_status()  # windows show the running job (header chip, Stop button) right away, not only when it ends
         return {"started": True, **job.progress()}
 
     def stop_job(self) -> Dict[str, Any]:
@@ -410,6 +413,9 @@ class Session:
         return out
 
     def import_traces(self, path: str, replace: bool = True) -> int:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path) and not os.path.exists(path):
+            path = os.path.join(self.data_dir, path)  # relative paths resolve like export_traces: inside the data folder
         n = self.store.import_file(path, replace)
         self.bus.publish("traces", self.store.summary())
         return n
@@ -470,6 +476,7 @@ class Session:
             raise RuntimeError("another job is running")
         self.last_glitch = job
         self.last_job = job
+        self._push_status()
         return {"started": True}
 
     def glitch_results(self) -> Dict[str, Any]:

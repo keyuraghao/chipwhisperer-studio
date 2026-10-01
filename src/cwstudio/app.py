@@ -303,6 +303,17 @@ def create_app(session: Session) -> App:
                     for f in sorted(glob.glob(path)):
                         z.write(f, os.path.basename(f))
                 path = zpath
+            elif path.endswith(".cwp"):  # a ChipWhisperer project is the .cwp file plus its _data folder: send both as one zip
+                import zipfile
+                base, data = os.path.dirname(path), path[:-4] + "_data"
+                zpath = path[:-4] + "_cwp.zip"
+                with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+                    z.write(path, os.path.basename(path))
+                    for root, _dirs, files in os.walk(data):
+                        for f in files:
+                            full = os.path.join(root, f)
+                            z.write(full, os.path.relpath(full, base))
+                path = zpath
             return FileResponse(path, filename=os.path.basename(path))
         except Exception as e:  # noqa: BLE001
             err(e)
@@ -682,21 +693,27 @@ def create_app(session: Session) -> App:
                     pass
 
             rtask = asyncio.ensure_future(reader())
+            get = None
             try:
-                while True:
-                    # Sleep until an event arrives or the client goes away, instead of waking up on a timer.
-                    get = asyncio.ensure_future(sub.queue.get())
-                    await asyncio.wait({get, rtask}, return_when=asyncio.FIRST_COMPLETED)
-                    if not get.done():
-                        get.cancel()
-                        break
-                    frame = get.result().frame()
+                while not rtask.done():
+                    # Send what is queued without extra scheduling; when the queue is empty, sleep until an event arrives or the client goes away (no timer wake-ups).
+                    try:
+                        ev = sub.queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        get = asyncio.ensure_future(sub.queue.get())
+                        await asyncio.wait({get, rtask}, return_when=asyncio.FIRST_COMPLETED)
+                        if not get.done():
+                            break
+                        ev, get = get.result(), None
+                    frame = ev.frame()
                     if isinstance(frame, (bytes, bytearray)):
                         await sock.send_bytes(frame)
                     else:
                         await sock.send_text(frame)
             finally:
                 rtask.cancel()
+                if get is not None and not get.done():
+                    get.cancel()
         except WebSocketDisconnect:
             pass
         except Exception as e:  # noqa: BLE001

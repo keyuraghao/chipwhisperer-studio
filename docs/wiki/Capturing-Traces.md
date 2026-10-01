@@ -66,7 +66,7 @@ Traces are stored in memory as 32 bit floats, up to a limit of 200 000 traces pe
 Choose a format and a name, then:
 
 - **Save on Studio machine** writes the file on the computer running Studio. A plain name like `traces` is saved inside the Studio data directory (by default `~/ChipWhispererStudio`); an absolute path is used as is.
-- **Download in browser** creates the file in the data directory's `exports` folder and downloads it through your browser. For the NumPy `.npy` set, which consists of four files, the download is a single `traces_npy.zip` containing all of them.
+- **Download in browser** creates the file in the data directory's `exports` folder and downloads it through your browser. For the NumPy `.npy` set, which consists of four files, the download is a single `traces_npy.zip` containing all of them. A ChipWhisperer project downloads as `traces_cwp.zip` with the `.cwp` file and its `traces_data` folder; unzip it to open it with `cw.open_project()`, or import the zip into Studio as it is.
 
 | Format | What you get | Best for |
 |--------|--------------|----------|
@@ -95,7 +95,7 @@ Import brings a previously saved trace set back into Studio, replacing the trace
 1. Choose a file with the **Import** file picker (it is uploaded to the data directory's `imports` folder), or type a path on the Studio machine into the box below it.
 2. Press **Import**.
 
-Supported files are `.npz` (Studio's own format, or any file with a `waves` array and optional `textins`, `textouts`, `keys`), `.cwp` (ChipWhisperer projects) and `.npy` (a single array of waveforms; plaintexts are then empty, so CPA is not possible on them).
+Supported files are `.npz` (Studio's own format, or any file with a `waves` array and optional `textins`, `textouts`, `keys`), `.cwp` (ChipWhisperer projects, with their `_data` folder next to them), `.zip` (a ChipWhisperer project as **Download in browser** saves it) and `.npy` (a single array of waveforms; plaintexts are then empty, so CPA is not possible on them).
 
 **Clear traces** deletes all stored traces from memory after asking for confirmation. Exported files are not touched.
 

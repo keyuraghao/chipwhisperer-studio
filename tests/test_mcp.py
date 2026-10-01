@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Literal, Optional
 
@@ -93,6 +94,11 @@ def _demo_server() -> Server:
         """Always fails."""
         raise RuntimeError("bad")
 
+    @srv.tool()
+    def nan() -> Dict[str, Any]:
+        """Returns a NaN."""
+        return {"x": float("nan"), "y": [1.0, float("inf")]}
+
     @srv.prompt()
     def plan(n: int = 3) -> str:
         """A plan."""
@@ -116,8 +122,17 @@ def test_mcplite_protocol():
     sch = tool["inputSchema"]
     assert tool["annotations"] == {"readOnlyHint": True} and tool["description"] == "Add or subtract."
     assert sch["required"] == ["a"] and sch["properties"]["mode"]["enum"] == ["sum", "diff"] and sch["properties"]["tags"]["anyOf"][0]["items"] == {"type": "string"}
+    assert tool["outputSchema"]["properties"]["result"]["type"] == "object" and tool["outputSchema"]["required"] == ["result"]
     res = rpc("tools/call", {"name": "add", "arguments": {"a": "5", "mode": "diff"}})["result"]
-    assert not res["isError"] and res["structuredContent"] == {"value": 3, "tags": None} and json.loads(res["content"][0]["text"])["value"] == 3
+    assert not res["isError"] and res["structuredContent"] == {"result": {"value": 3, "tags": None}} and json.loads(res["content"][0]["text"])["value"] == 3
+    # null is only accepted for Optional parameters; list items are validated; bools and numbers convert like pydantic's lax mode
+    assert "must not be null" in rpc("tools/call", {"name": "add", "arguments": {"a": None}})["result"]["content"][0]["text"]
+    assert rpc("tools/call", {"name": "add", "arguments": {"a": 1, "tags": None}})["result"]["structuredContent"]["result"]["tags"] is None
+    assert rpc("tools/call", {"name": "add", "arguments": {"a": 1, "tags": ["x", 2]}})["result"]["isError"]
+    assert rpc("tools/call", {"name": "add", "arguments": {"a": "3.0", "b": True}})["result"]["structuredContent"]["result"]["value"] == 4
+    assert rpc("tools/call", {"name": "add", "arguments": [1]})["result"]["isError"]
+    assert rpc("tools/list", "nope")["error"]["code"] == -32602
+    assert srv.handle({"jsonrpc": "2.0", "id": None, "method": "ping"})["error"]["code"] == -32600
     assert rpc("tools/call", {"name": "add", "arguments": {"b": 1}})["result"]["isError"]
     assert "must be one of" in rpc("tools/call", {"name": "add", "arguments": {"a": 1, "mode": "x"}})["result"]["content"][0]["text"]
     bad = rpc("tools/call", {"name": "boom"})["result"]
@@ -126,6 +141,8 @@ def test_mcplite_protocol():
     assert rpc("nope/nope")["error"]["code"] == -32601
     assert rpc("prompts/get", {"name": "plan", "arguments": {"n": "5"}})["result"]["messages"][0]["content"]["text"] == "do 5 things"
     assert json.loads(rpc("resources/read", {"uri": "demo://x"})["result"]["contents"][0]["text"]) == {"x": 1}
+    nan = rpc("tools/call", {"name": "nan"})["result"]
+    assert nan["structuredContent"] == {"result": {"x": None, "y": [1.0, None]}} and "NaN" not in json.dumps(nan)
     batch = srv.handle_raw(json.dumps([{"jsonrpc": "2.0", "id": 1, "method": "ping"}, {"jsonrpc": "2.0", "method": "notifications/cancelled"}]).encode())
     assert batch == [{"jsonrpc": "2.0", "id": 1, "result": {}}]
     assert srv.handle_raw(b"{oops")["error"]["code"] == -32700
@@ -135,10 +152,16 @@ def test_mcplite_streamable_http():
     srv, port = _demo_server(), _free_port()
     threading.Thread(target=srv.run, args=("streamable-http", "127.0.0.1", port), daemon=True).start()
 
-    def post(msg):
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/mcp", data=json.dumps(msg).encode(), headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status, r.headers, r.read()
+    sid = {}
+
+    def post(msg, **extra):
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", **sid, **extra}
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/mcp", data=json.dumps(msg).encode(), headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
     for _ in range(50):
         try:
             status, headers, raw = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
@@ -146,9 +169,14 @@ def test_mcplite_streamable_http():
         except OSError:
             time.sleep(0.1)
     assert status == 200 and headers["Mcp-Session-Id"] and json.loads(raw)["result"]["serverInfo"]["name"] == "demo"
+    assert post({"jsonrpc": "2.0", "id": 9, "method": "ping"})[0] == 400  # no session id yet
+    sid["Mcp-Session-Id"] = headers["Mcp-Session-Id"]
+    assert post({"jsonrpc": "2.0", "id": 9, "method": "ping"}, Origin="http://evil.example")[0] == 403
+    assert post({"jsonrpc": "2.0", "id": 9, "method": "ping"}, Host="evil.example")[0] == 421
+    assert post({"jsonrpc": "2.0", "id": 9, "method": "ping"}, **{"Mcp-Session-Id": "bogus"})[0] == 404
     assert post({"jsonrpc": "2.0", "method": "notifications/initialized"})[0] == 202
     out = json.loads(post({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "add", "arguments": {"a": 1, "b": 2}}})[2])
-    assert out["result"]["structuredContent"]["value"] == 3
+    assert out["result"]["structuredContent"]["result"]["value"] == 3
 
 
 def test_mcp_stdio_raw(tmp_path):
@@ -159,14 +187,28 @@ def test_mcp_stdio_raw(tmp_path):
         def ask(i, method, params=None):
             p.stdin.write((json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params or {}}) + "\n").encode())
             p.stdin.flush()
-            return json.loads(p.stdout.readline())
+            while True:  # replies to earlier background calls may arrive first
+                msg = json.loads(p.stdout.readline())
+                if msg.get("id") == i:
+                    return msg
         assert ask(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})["result"]["serverInfo"]["name"] == "chipwhisperer-studio"
         p.stdin.write(b'{"jsonrpc": "2.0", "method": "notifications/initialized"}\n')
         assert len(ask(2, "tools/list")["result"]["tools"]) >= 60
         r = ask(3, "tools/call", {"name": "scope_connect", "arguments": {"kind": "sim"}})["result"]
         assert not r["isError"], r
         r = ask(4, "tools/call", {"name": "notebook_run_code", "arguments": {"code": "print('noise on stdout')\n1 + 1"}})["result"]
-        assert not r["isError"] and "noise on stdout" in r["structuredContent"]["text"]
+        assert not r["isError"] and "noise on stdout" in r["structuredContent"]["result"]["text"]
+        # a long call must not delay others: during a continuous capture, twelve 3 s job waits, then a validation error and ping answer at once
+        assert not ask(8, "tools/call", {"name": "target_connect", "arguments": {"kind": "sim"}})["result"]["isError"]
+        assert not ask(9, "tools/call", {"name": "capture_start", "arguments": {"count": 0, "wait": False}})["result"]["isError"]
+        for i in range(12):
+            p.stdin.write((json.dumps({"jsonrpc": "2.0", "id": 100 + i, "method": "tools/call", "params": {"name": "job_wait", "arguments": {"timeout_s": 3}}}) + "\n").encode())
+        p.stdin.flush()
+        t0 = time.time()
+        r = ask(6, "tools/call", {"name": "capture_start", "arguments": {"count": None}})["result"]
+        assert r["isError"] and "must not be null" in r["content"][0]["text"]
+        assert ask(7, "ping")["id"] == 7 and time.time() - t0 < 2
+        assert not ask(10, "tools/call", {"name": "capture_stop", "arguments": {}})["result"]["isError"]
         assert ask(5, "ping") == {"jsonrpc": "2.0", "id": 5, "result": {}}
     finally:
         p.stdin.close()

@@ -25,9 +25,12 @@ binaries = []
 # libusb: on Windows the libusb1 wheel ships libusb-1.0.dll next to usb1/ (hook handles it); on Linux/macOS copy the library from libusb-package into usb1/ where python-libusb1 looks first.
 try:
     import libusb_package
-    lib = libusb_package.find_library("usb-1.0")
-    if lib and os.path.isfile(lib):
-        binaries.append((lib, "usb1"))
+    # get_library_path() returns the bundled file on every OS; find_library("usb-1.0") misses libusb-1.0.dylib on macOS, which left the 0.3.0 and 0.4.0 macOS bundles without libusb.
+    lib = libusb_package.get_library_path()
+    if lib and os.path.isfile(str(lib)):
+        binaries.append((str(lib), "usb1"))
+    elif sys.platform != "win32":
+        raise SystemExit("libusb-package has no libusb library for this platform; the bundle would not reach the hardware")
 except Exception as e:  # noqa: BLE001
     print("WARNING: libusb-package not available, relying on system libusb:", e)
 binaries += collect_dynamic_libs("usb1")
@@ -47,6 +50,10 @@ hiddenimports += collect_submodules("cwstudio")
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("websockets")
 hiddenimports += ["truststore", "certifi", "serial", "serial.tools.list_ports", "usb1", "configobj", "ecpy", "anyio._backends._asyncio", "h11"]
+# Notebooks can save figures as SVG and PDF, and user code may import any common standard module even though Studio itself does not.
+hiddenimports += ["matplotlib.backends.backend_svg", "matplotlib.backends.backend_pdf", "matplotlib.backends.backend_ps"]
+hiddenimports += ["zoneinfo", "tomllib", "optparse", "sqlite3", "statistics", "fractions", "decimal", "difflib", "pprint", "timeit", "cProfile", "pstats", "bisect", "heapq",
+                  "secrets", "hmac", "binascii", "colorsys", "gzip", "bz2", "lzma", "pickle", "copy", "textwrap", "string", "dataclasses", "functools", "itertools", "configparser", "getpass", "unittest", "doctest"]
 
 # Matplotlib draws notebook figures with the Agg backend only; GUI toolkits and their backends are left out.
 MPL_EXCLUDES = ["matplotlib.backends.backend_" + b for b in ("tkagg", "tkcairo", "qtagg", "qtcairo", "qt5agg", "qt5cairo", "gtk3agg", "gtk3cairo", "gtk4agg", "gtk4cairo", "wxagg", "wxcairo", "wx", "macosx", "webagg", "webagg_core", "nbagg")]

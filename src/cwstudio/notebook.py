@@ -140,7 +140,9 @@ class NotebookStore:
 
     def import_bytes(self, filename: str, content: bytes) -> Dict[str, Any]:
         nb = normalize(json.loads(content.decode("utf-8")))
-        name = os.path.basename(filename or "imported.ipynb")
+        name = os.path.basename((filename or "").replace("\\", "/")) or "imported.ipynb"
+        if not name.lower().endswith(".ipynb"):
+            name += ".ipynb"  # before the collision check, so a second import never overwrites the first
         rel, n = "imported/" + name, 1
         while os.path.exists(self.path(rel)):
             n += 1
@@ -154,6 +156,10 @@ class NotebookStore:
 # ----------------------------------------------------------------------------
 # output capture
 # ----------------------------------------------------------------------------
+# Called by cwstudio.mplbackend when a notebook cell runs plt.show(); set by the kernel.
+SHOW_HOOK: Optional[Callable[[], None]] = None
+
+
 class _Router(io.TextIOBase):
     """sys.stdout/stderr replacement: writes from the thread running a cell go to that cell, everything else to the real stream."""
 
@@ -319,7 +325,7 @@ class Kernel:
         self._last_trace: Optional[tuple] = None
         self.ns: Dict[str, Any] = {}
         _install_routers()
-        os.environ.setdefault("MPLBACKEND", "Agg")
+        os.environ.setdefault("MPLBACKEND", "module://cwstudio.mplbackend")  # Agg rendering with a plt.show() that displays figures
         self.restart(publish=False)
         self._thread = threading.Thread(target=self._dispatch, name="notebook-kernel", daemon=True)
         self._thread.start()
@@ -646,7 +652,9 @@ class Kernel:
                 self._emit_to(e, {"output_type": "execute_result", "execution_count": e.count, "data": rich_bundle(val), "metadata": {}})
 
     def _patch_pyplot(self):
-        """Make plt.show() display the current figures right away (it is a no-op with the Agg backend)."""
+        """Make plt.show() display the current figures right away (it is a no-op with the Agg backend). Studio's own backend does this from the first cell; the patch covers code that switched to another backend."""
+        global SHOW_HOOK
+        SHOW_HOOK = self._flush_figures
         plt = sys.modules.get("matplotlib.pyplot")
         if plt is not None and not getattr(plt.show, "_studio", False):
             show = lambda *a, **kw: self._flush_figures()  # noqa: E731
@@ -667,6 +675,8 @@ class Kernel:
     # --- shell and magics ------------------------------------------------------------
     def _shell_env(self) -> Dict[str, str]:
         env = dict(os.environ)
+        if env.get("MPLBACKEND") == "module://cwstudio.mplbackend":
+            env["MPLBACKEND"] = "Agg"  # child processes (!python ...) may not be able to import cwstudio
         extra = []
         try:
             for t in self.session.toolchains.list()["toolchains"]:

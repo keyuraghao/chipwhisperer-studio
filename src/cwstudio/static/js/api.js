@@ -1,5 +1,11 @@
 // REST + WebSocket client for ChipWhisperer Studio.
 
+/** Error detail as text: a string, or FastAPI-style validation items ({loc, msg}). */
+function errorText(detail) {
+  if (!Array.isArray(detail)) return detail;
+  return detail.map((d) => (d && d.msg ? `${(d.loc || []).slice(1).join('.') || 'request'}: ${d.msg}` : String(d))).join('; ');
+}
+
 export async function api(method, path, body) {
   const opts = { method, headers: {} };
   if (body !== undefined) {
@@ -9,7 +15,7 @@ export async function api(method, path, body) {
   const r = await fetch(path, opts);
   if (!r.ok) {
     let detail = r.statusText;
-    try { detail = (await r.json()).detail || detail; } catch (e) { /* ignore */ }
+    try { detail = errorText((await r.json()).detail) || detail; } catch (e) { /* ignore */ }
     throw new Error(detail);
   }
   const ct = r.headers.get('content-type') || '';
@@ -28,7 +34,7 @@ export async function upload(path, file, fields = {}) {
   const r = await fetch(path + (qs ? '?' + qs : ''), { method: 'POST', body: fd });
   if (!r.ok) {
     let detail = r.statusText;
-    try { detail = (await r.json()).detail || detail; } catch (e) { /* ignore */ }
+    try { detail = errorText((await r.json()).detail) || detail; } catch (e) { /* ignore */ }
     throw new Error(detail);
   }
   return r.json();
@@ -51,7 +57,7 @@ export async function getBinary(path) {
   const r = await fetch(path);
   if (!r.ok) {
     let detail = r.statusText;
-    try { detail = (await r.json()).detail || detail; } catch (e) { /* ignore */ }
+    try { detail = errorText((await r.json()).detail) || detail; } catch (e) { /* ignore */ }
     throw new Error(detail);
   }
   return decodeFrame(await r.arrayBuffer());

@@ -18,7 +18,7 @@ export function initCapture(ctx, el) {
   const fmtSel = h('select', {}, h('option', { value: 'npz' }, 'NumPy .npz'), h('option', { value: 'cwp' }, 'ChipWhisperer project .cwp'), h('option', { value: 'csv' }, 'CSV'), h('option', { value: 'npy' }, 'NumPy .npy set'));
   const pathIn = h('input', { class: 'flex mono', value: 'traces', placeholder: 'file name or absolute path' });
   const importPath = h('input', { class: 'flex mono', placeholder: 'path to .npz / .cwp on the Studio machine' });
-  const importFile = h('input', { type: 'file', accept: '.npz,.npy,.cwp', class: 'flex' });
+  const importFile = h('input', { type: 'file', accept: '.npz,.npy,.cwp,.zip', class: 'flex' });
 
   function params(extra) {
     return Object.assign({

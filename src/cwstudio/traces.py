@@ -165,6 +165,8 @@ class TraceStore:
 
     def import_file(self, path: str, replace: bool = True) -> int:
         path = os.path.expanduser(path)
+        if path.lower().endswith(".zip"):
+            path = _unzip_project(path)
         if path.endswith(".npz"):
             d = np.load(path, allow_pickle=False)
             W = d["waves"]
@@ -184,7 +186,7 @@ class TraceStore:
             W = np.load(path)
             rows = [(W[i], b"", b"", b"") for i in range(W.shape[0])]
         else:
-            raise ValueError("supported: .npz, .cwp, .npy")
+            raise ValueError("supported: .npz, .cwp, .npy, or a .zip holding a ChipWhisperer project or .npz")
         with self._lock:
             if replace:
                 self.clear()
@@ -225,3 +227,21 @@ def _bytes_matrix(items: List[bytes]) -> np.ndarray:
         if n:
             out[i, :n] = np.frombuffer(b[:n], dtype=np.uint8)
     return out
+
+
+def _unzip_project(path: str) -> str:
+    """Extract a zip (as made by Download in browser for a ChipWhisperer project) next to it and return the .cwp or .npz inside."""
+    import zipfile
+    dest = path[:-4] + "_extracted"
+    with zipfile.ZipFile(path) as z:
+        root = os.path.realpath(dest)
+        for name in z.namelist():
+            if not os.path.realpath(os.path.join(dest, name)).startswith(root + os.sep):
+                raise ValueError(f"unsafe path in zip: {name}")
+        z.extractall(dest)
+    for ext in (".cwp", ".npz"):
+        for d, _dirs, files in os.walk(dest):
+            for f in sorted(files):
+                if f.endswith(ext):
+                    return os.path.join(d, f)
+    raise ValueError("the zip holds no .cwp project or .npz file")

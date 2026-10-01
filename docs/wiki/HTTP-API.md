@@ -5,10 +5,10 @@ Everything the Studio window does goes through a local HTTP API and one WebSocke
 ## Basics
 
 - **Base URL:** `http://127.0.0.1:8765` by default (the host and port you started Studio with; see [Command Line and Configuration](Command-Line-and-Configuration)).
-- **Endpoint list:** open `http://127.0.0.1:8765/api/docs` for a list of every route the running server offers, with its method, parameters and notes.
+- **Endpoint list:** open `http://127.0.0.1:8765/api/docs` for a list of every route the running server offers, with its method, parameters and notes. `http://127.0.0.1:8765/openapi.json` has the same list as an OpenAPI 3 document for tools.
 - **Requests:** `POST` and `PUT` bodies are JSON (`Content-Type: application/json`). Uploads use `multipart/form-data` with a `file` field, or send the file itself as the request body with `?filename=NAME` (for example `curl --data-binary @fw.hex "http://127.0.0.1:8765/api/target/program/upload?programmer=STM32F&filename=fw.hex"`).
 - **Responses:** JSON, except trace data, which uses the binary frame format below, and file downloads.
-- **Errors:** a non-2xx status with `{"detail": "ExceptionType: message"}`. Most failures (wrong parameter, no scope connected, build failed to start) return status 400.
+- **Errors:** a non-2xx status with `{"detail": "ExceptionType: message"}`. Most failures (no scope connected, build failed to start) return status 400. A missing or malformed query, path or file parameter returns 422 with a list instead, as FastAPI does: `{"detail": [{"type": "missing", "loc": ["query", "path"], "msg": "Field required", "input": null}]}`.
 - **Long jobs:** captures, glitch sweeps, CPA, builds and downloads start in the background and return immediately. Poll the matching status endpoint or listen on the WebSocket.
 - **One hardware job at a time:** a capture and a glitch sweep cannot run together. Starting a second one returns an error.
 
@@ -114,9 +114,9 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `GET /api/traces/stats?start=&end=` | Per-sample mean, std, min, max (binary frame). |
 | `GET /api/traces/block?start=&end=&step=` | Several traces in one binary frame. |
 | `POST /api/traces/export` | Body: `path`, `format` (npz, npy, csv, cwp). Relative paths go into the data folder. |
-| `GET /api/traces/download/{fmt}` | Export and download in one step. |
+| `GET /api/traces/download/{fmt}` | Export and download in one step. `npy` and `cwp` come as one zip (`cwp` holds the project file and its `_data` folder). |
 | `POST /api/traces/import` | Body: `path` (.npz or .cwp on the Studio machine), `replace`. |
-| `POST /api/traces/import/upload?replace=true` | Multipart `file`: upload and import. |
+| `POST /api/traces/import/upload?replace=true` | Multipart `file`: upload and import a `.npz`, `.npy`, `.cwp`, or a `.zip` holding a ChipWhisperer project (as downloaded above). |
 
 ### Analysis and glitching
 
