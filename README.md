@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/wiki/images/logo.png" alt="ChipWhisperer Studio" width="120"></p>
+
 # ChipWhisperer Studio
 
 A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chipwhisperer) side-channel and fault-injection hardware. Connect a scope, build and flash target firmware, capture power traces while the waveform updates live, recover AES keys with CPA and sweep glitch parameters without writing Python or setting up Jupyter. When you do want code, a built-in notebook runs Python cell by cell against the same hardware, including NewAE's own tutorial notebooks. An MCP server lets AI agents drive all of it.
@@ -8,9 +10,9 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/capture-light.png"><img alt="ChipWhisperer Studio capturing traces with a live waveform" src="docs/wiki/images/capture.png"></picture>
 
-**See it in action:** every section below has a short clip that plays by itself. There is also a full [video walkthrough of every feature](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer-studio-demo.mp4) (under three minutes, made with the built-in simulator), with chapters listed on the [Video Tour](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Video-Tour) wiki page. Screenshots on this page follow your GitHub theme.
+**See it in action:** every section below has a short clip that plays by itself. There is also a full [video walkthrough of every feature](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer-studio-demo.mp4) (under three minutes, made with the built-in simulator), with chapters listed on the [Video Tour](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Video-Tour) wiki page. Screenshots on this page follow your GitHub theme.
 
-[![Video walkthrough: click to watch](docs/wiki/images/demo-poster.png)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer-studio-demo.mp4)
+[![Video walkthrough: click to watch](docs/wiki/images/demo-poster.png)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer-studio-demo.mp4)
 
 > ChipWhisperer Studio is an independent community project. It is not affiliated with or endorsed by NewAE Technology Inc.; it uses their open source `chipwhisperer` Python library for all hardware access.
 
@@ -34,7 +36,7 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 
 | Area | What you get |
 |------|--------------|
-| Connect | Auto-detect ChipWhisperer Nano, Lite, Pro and Husky, pick a device by serial number, and follow platform-specific driver and udev help. A built-in **simulator** lets you try everything without hardware. |
+| Connect | Auto-detect ChipWhisperer Nano, Lite, Pro, Husky and Husky Plus, pick a device by serial number, and follow platform-specific driver and udev help. A built-in **simulator** lets you try everything without hardware. |
 | Scope | Every setting of the connected scope (gain, ADC, clock, trigger, IO, glitch, Husky extras) as an editable tree with inline documentation and hardware read-back after each change. |
 | Target | Program STM32F, XMEGA, AVR, SAM4S and NEORV32 targets, use a serial console (text or hex), send SimpleSerial commands, and edit target interface settings. |
 | Firmware | Build any ChipWhisperer firmware project for any platform with **GCC or clang**. Compilers download on demand and sources come straight from NewAE's GitHub. |
@@ -54,22 +56,22 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 Download `ChipWhispererStudio-<os>-<arch>.zip` from the [latest release](https://github.com/keyuraghao/chipwhisperer-studio/releases/latest), unzip it and run:
 
 - **Windows:** `ChipWhispererStudio.exe`. If the device is not detected, install the NewAE WinUSB driver.
-- **macOS:** `ChipWhispererStudio` (right-click and choose Open the first time).
-- **Linux:** `./chipwhisperer-studio.sh`. Install the udev rule once; the Connect tab shows the exact command.
+- **macOS:** `ChipWhisperer Studio.app` (right-click and choose Open the first time).
+- **Linux:** `./chipwhisperer-studio.sh`. Install the udev rule once; the Connect tab shows the exact command. `./ChipWhispererStudio --install-desktop` adds Studio with its icon to the applications menu.
 
 Your browser opens `http://127.0.0.1:8765/` automatically.
 
 ### With Python
 
 ```bash
-pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.4/chipwhisperer_studio-0.4.4-py3-none-any.whl
+pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer_studio-0.4.5-py3-none-any.whl
 cw-studio              # opens the UI in your browser
 cw-studio --simulate   # try it without hardware
 ```
 
 The wheel is attached to every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases) (Studio is not on PyPI yet). Use Python 3.10 to 3.12: `chipwhisperer` 6.0.0 on PyPI pins numpy 1.26, which has no wheels for newer Pythons.
 
-Options: `--port 8765`, `--host 0.0.0.0` (remote access), `--no-browser`, `--window` (native window, needs `pip install "chipwhisperer-studio[window]"`), `--data-dir DIR` (exports, firmware, toolchains; default `~/ChipWhispererStudio`).
+Options: `--simulate` (pre-select the simulator), `--port 8765`, `--host 0.0.0.0` (remote access), `--no-browser`, `--window` (native window, needs `pip install "pywebview>=5"`), `--data-dir DIR` (exports, firmware, toolchains, notebooks and notes; default `~/ChipWhispererStudio`), `--log-level debug|info|warning|error`.
 
 ## Walkthrough
 
@@ -147,7 +149,7 @@ Notebooks are standard `.ipynb` files: import your own, or export them to use wi
 
 ![Calculator expressions and statistics between the waveform cursors (animated)](docs/wiki/images/clips/calculator.webp)
 
-<picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/notes-light.png"><img alt="Notes with live selection statistics in the log bar" src="docs/wiki/images/notes.png"></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/notes-light.png"><img alt="Notes tab with the Markdown preview of a lab note" src="docs/wiki/images/notes.png"></picture>
 
 Select numbers anywhere in Studio (a note, notebook output, the log or the serial console) and the log bar shows their count, sum, mean, min and max immediately.
 
@@ -177,7 +179,7 @@ Studio does not bundle compilers, which would add hundreds of MB to every downlo
 
 Clang builds compile every C file with clang and let GCC assemble the startup files and link against newlib or avr-libc, so the firmware uses the same C library and linker scripts as a GCC build. For targets without a free pinned toolchain (TriCore, PowerPC, RX) or to pin a specific compiler, add a **custom toolchain** from an archive URL or an existing folder. Compilers already on your `PATH` are detected and used as a fallback.
 
-<picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/toolchains-light.png"><img alt="Toolchains and firmware sources" src="docs/wiki/images/toolchains.png"></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/toolchains-light.png"><img alt="Toolchains with their versions, sizes and install state" src="docs/wiki/images/toolchains.png"></picture>
 
 ### Sources come from NewAE, not from Studio
 
@@ -271,19 +273,19 @@ cw-studio --simulate --log-level debug
 python -m pytest
 ```
 
-The frontend has no build step: edit `src/cwstudio/static/**` and reload the browser. The architecture is described in [docs/DESIGN.md](docs/DESIGN.md).
+The frontend has no build step: edit `src/cwstudio/static/**` and reload the browser.
 
 | Task | Command |
 |------|---------|
 | Standalone bundle for this OS | `python packaging/build.py` (PyInstaller; produces `dist/ChipWhispererStudio-<os>-<arch>.zip`) |
-| Regenerate README screenshots | `pip install playwright && playwright install chromium && python tools/screenshots.py` |
-| Release notes for a version | `python tools/release_notes.py 0.2.0` |
+| Regenerate the screenshots (dark and light) | `pip install playwright && playwright install chromium && python tools/screenshots.py` |
+| Release notes for a version | `python tools/release_notes.py 0.4.4` |
 
 Pinned toolchain versions and checksums live in `src/cwstudio/resources/toolchains.json`. To publish a new compiler version, update that file and bump its `revision`; running Studios pick it up with **Refresh list**.
 
 ## Releases
 
-Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). To cut a release, move the Unreleased notes under a new version heading, bump `__version__` in `src/cwstudio/__init__.py` and push a tag such as `v0.2.0`. CI then runs the tests and firmware builds on all three operating systems, builds the standalone bundles and the Python packages, and publishes a GitHub release using the matching CHANGELOG section as its description.
+Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). To cut a release, move the Unreleased notes under a new version heading, bump `__version__` in `src/cwstudio/__init__.py` and push a tag such as `v0.4.4`. CI then runs the tests and firmware builds on all three operating systems, builds the standalone bundles and the Python packages, and publishes a GitHub release using the matching CHANGELOG section as its description.
 
 ## License
 

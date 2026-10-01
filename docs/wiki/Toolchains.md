@@ -1,6 +1,6 @@
 # Toolchains
 
-Studio does not ship compilers inside its download, because they would add hundreds of megabytes for every platform. Instead it downloads official compiler releases the first time a [firmware build](Firmware-Builds) needs them, checks each download against a pinned SHA-256 checksum, and works offline from then on. This page explains the pinned toolchains, how installation works, and how to add your own.
+ChipWhisperer Studio does not ship compilers inside its download, because they would add hundreds of megabytes for every platform. Instead it downloads official compiler releases the first time a [firmware build](Firmware-Builds) needs them, checks each download against a pinned SHA-256 checksum, and works offline from then on. This page explains the pinned toolchains, how installation works, and how to add your own.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/toolchains-light.png"><img alt="The Toolchains card on the Firmware tab" src="images/toolchains.png"></picture>
 
@@ -13,7 +13,7 @@ Studio does not ship compilers inside its download, because they would add hundr
 | GNU Arm GCC (`arm-none-eabi`) | 15.2.1-1.1 | Arm Cortex-M: CW-Lite Arm, Nano, Husky, STM32, SAM4S, K82F and more | [xPack](https://xpack-dev-tools.github.io/arm-none-eabi-gcc-xpack/) | 294 to 336 MB | about 1.1 GB |
 | GNU AVR GCC + avr-libc | 7.3.0-atmel3.6.1-arduino7 | AVR and XMEGA: CW-Lite XMEGA, CW304 and more | [Arduino](https://github.com/arduino/toolchain-avr) | 37 to 53 MB | about 214 MB |
 | GNU RISC-V GCC (`riscv-none-elf`) | 15.2.0-1 | RISC-V: NEORV32, Ibex, FE310 | [xPack](https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/) | 401 to 465 MB | about 1.6 GB |
-| LLVM clang 21 (Zig 0.16.0 toolchain) | zig-0.16.0 | Arm, AVR and RISC-V, for [clang builds](Firmware-Builds#gcc-and-clang-builds) | [ziglang.org](https://ziglang.org/download/) and its mirrors | 51 to 97 MB | about 390 MB |
+| LLVM clang 21 (Zig 0.16.0 toolchain) | zig-0.16.0 | Arm, AVR and RISC-V, for [clang builds](Firmware-Builds#gcc-and-clang-builds) | [ziglang.org](https://ziglang.org/download/) and its mirrors | 51 to 97 MB | about 400 MB |
 | GNU make + sh | 4.4.1-3 | Windows only: the `make` and shell that ChipWhisperer's makefiles need | [xPack](https://xpack-dev-tools.github.io/windows-build-tools-xpack/) | 3 MB | a few MB |
 
 Downloads exist for Linux (x64 and arm64), macOS (Intel and Apple Silicon) and Windows (x64). Exact download sizes per platform:
@@ -22,8 +22,8 @@ Downloads exist for Linux (x64 and arm64), macOS (Intel and Apple Silicon) and W
 |-----------|-----------|-------------|-------------|---------------------|-------------|
 | GNU Arm GCC | 307 MB | 303 MB | 298 MB | 294 MB | 336 MB |
 | GNU AVR GCC | 38 MB | 38 MB | 37 MB | uses the Intel build (Rosetta) | 53 MB |
-| GNU RISC-V GCC | 434 MB | 425 MB | 406 MB | 401 MB | 465 MB |
-| LLVM clang (Zig) | 56 MB | 51 MB | 57 MB | 52 MB | 97 MB (also Windows arm64: 93 MB) |
+| GNU RISC-V GCC | 433 MB | 425 MB | 406 MB | 401 MB | 465 MB |
+| LLVM clang (Zig) | 55 MB | 51 MB | 57 MB | 52 MB | 97 MB (also Windows arm64: 93 MB) |
 | GNU make + sh | not needed | not needed | not needed | not needed | 3 MB |
 
 > **Note:** The clang toolchain is Zig's bundled clang, used through its `zig clang` command. It is a complete clang 21 with the Arm, AVR and RISC-V back ends, in a much smaller download than an official LLVM release (which is 1 to 2 GB and has no Intel macOS build). A clang build also needs the GCC toolchain for the same architecture, which provides the C library and does the linking.
@@ -32,7 +32,7 @@ Downloads exist for Linux (x64 and arm64), macOS (Intel and Apple Silicon) and W
 
 ## Statuses
 
-Each row shows the toolchain name, a status badge, the version, the architectures it serves, the download size and the source.
+Each row shows the toolchain name, a status badge, the version, the architectures it serves, the download size (until it is installed) and the source.
 
 | Badge | Meaning |
 |-------|---------|

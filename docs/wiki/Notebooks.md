@@ -1,12 +1,10 @@
 # Notebooks
 
-The **Notebook** tab is a Jupyter-style editor built into Studio. You write Python cell by cell, run each cell and see its output, errors and plots underneath. Unlike a separate Jupyter server, notebook code shares Studio's hardware connection: `cw.scope()` and `cw.target()` give you the devices connected on the [Connect](Connecting-Hardware) tab, and every trace you capture appears live in the waveform view and the [Capture](Capturing-Traces) tab. NewAE's own tutorial notebooks run unmodified.
+The **Notebook** tab is a Jupyter-style editor built into ChipWhisperer Studio. You write Python cell by cell, run each cell and see its output, errors and plots underneath. Unlike a separate Jupyter server, notebook code shares Studio's hardware connection: `cw.scope()` and `cw.target()` give you the devices connected on the [Connect](Connecting-Hardware) tab, and every trace you capture appears live in the waveform view and the [Capture](Capturing-Traces) tab. NewAE's own tutorial notebooks run unmodified.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/notebook-light.png"><img alt="A notebook capturing traces and plotting their mean" src="images/notebook.png"></picture>
 
 *The Notebook tab: files, tutorials and variables on the left, the notebook itself in the main area.*
-
-> **Note:** Notebooks have been tested with the built-in [Simulator](Simulator) and in CI. They use the same `chipwhisperer` library calls as Jupyter, but have not yet been verified on physical hardware.
 
 ![Running a notebook that captures through Studio and plots the mean (animated)](images/clips/notebooks.webp)
 
@@ -160,7 +158,7 @@ Also available: `display()`, `from IPython.display import display, HTML, Markdow
 The **ChipWhisperer tutorials** card downloads NewAE's tutorial notebooks, the [chipwhisperer-jupyter](https://github.com/newaetech/chipwhisperer-jupyter) repository with the SCA101, SCA201, Fault101 and other courses plus demos. Press **Download tutorials**.
 
 - Studio downloads the version of chipwhisperer-jupyter that matches your [firmware sources](Firmware-Sources): the commit the ChipWhisperer repository pins for its `jupyter` submodule. If you have no firmware sources yet, it uses your channel's current commit.
-- The notebooks go into `<data dir>/notebooks/chipwhisperer-jupyter/` and appear in the Notebooks list.
+- The notebooks go into `<data dir>/notebooks/chipwhisperer-jupyter/` and appear in the **Notebooks** list.
 - Studio links `<data dir>/notebooks/firmware/mcu` to the firmware sources (a symbolic link, or a directory junction on Windows), because the tutorials build firmware from `../../../firmware/mcu`. If the firmware sources are not downloaded yet, the card reminds you to download them first.
 - Downloading again replaces the folder. Save changes you make to a tutorial under a new name (or in another folder) first.
 

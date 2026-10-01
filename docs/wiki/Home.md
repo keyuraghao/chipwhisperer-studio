@@ -1,8 +1,10 @@
+<p align="center"><img src="images/logo.png" alt="ChipWhisperer Studio" width="120"></p>
+
 # ChipWhisperer Studio
 
 ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chipwhisperer) side-channel and fault-injection hardware. It lets you connect a scope, build and flash target firmware, capture power traces while the waveform updates live, recover AES keys with correlation power analysis (CPA) and sweep glitch parameters, all from one window and without setting up Python or Jupyter.
 
-<picture><source media="(prefers-color-scheme: light)" srcset="images/overview-light.png"><img alt="ChipWhisperer Studio capturing traces with a live waveform" src="images/overview.png"></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="images/overview-light.png"><img alt="ChipWhisperer Studio with the waveform view and the Capture tab" src="images/overview.png"></picture>
 *The main window: navigation on the left, the panel for the current tab in the middle, and the live waveform on the right.*
 
 > **Note:** ChipWhisperer Studio is an independent community project. It is not affiliated with or endorsed by NewAE Technology Inc. It uses NewAE's open source `chipwhisperer` Python library for all hardware access. "ChipWhisperer" is a trademark of NewAE Technology Inc.
@@ -13,7 +15,7 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 - **Lab and workshop instructors** who need something that installs in one step on Windows, macOS and Linux, and that works with a built-in simulator when there is not enough hardware for everyone.
 - **Researchers and engineers** who want a fast interactive tool for tuning a capture setup, plus notebooks, an HTTP API and an MCP server for automation.
 
-> **Note:** Version 0.4.4 has been tested extensively with the built-in [simulator](Simulator) and in continuous integration on Windows, macOS and Linux. It has not yet been tested on physical ChipWhisperer hardware. Please [report](https://github.com/keyuraghao/chipwhisperer-studio/issues) anything that behaves differently on your device.
+> **Note:** Studio has been tested extensively with the built-in [simulator](Simulator) and in continuous integration on Windows, macOS and Linux, but not yet on physical ChipWhisperer hardware. Please [report](https://github.com/keyuraghao/chipwhisperer-studio/issues) anything that behaves differently on your device.
 
 ## What you can do
 
@@ -27,9 +29,9 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 
 **Capture traces and watch them live.** Capture single traces, a fixed number or continuously, with fixed, random or counter keys and plaintexts, and export to NumPy, CSV or a ChipWhisperer project. See [Capturing Traces](Capturing-Traces) and [Waveform Viewer](Waveform-Viewer).
 
-**Recover keys with CPA.** Run a progressive correlation power analysis attack with five AES leakage models and watch every key byte converge.
+**Recover keys with CPA.** In the **Analysis** tab, run a progressive correlation power analysis attack with five AES leakage models and watch every key byte converge. The [Quick Start](Quick-Start) walks through a full attack.
 
-**Find glitches.** Sweep any glitch parameters, reset the target when it crashes and map successes on a live scatter plot.
+**Find glitches.** In the **Glitch** tab, sweep any glitch parameters, reset the target when it crashes and map successes on a live scatter plot.
 
 **Write code when you want to.** A Jupyter-style notebook runs Python cell by cell against the same connected hardware, and runs NewAE's own tutorial notebooks unmodified. See [Notebooks](Notebooks).
 

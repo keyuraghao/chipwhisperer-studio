@@ -48,7 +48,7 @@ Open the Firmware tab and press **Check for updates**, then **Update now**. Stud
 
 ### Can I try it without hardware?
 
-Yes. Choose **Simulator** on the Connect tab or start with `--simulate`. The simulator behaves like a CW-Lite with an unprotected AES target, so capture, CPA and glitching all work. See [Simulator](Simulator).
+Yes. Set **Device** to **Simulator (no hardware)** on the Connect tab or start with `--simulate`. The simulator behaves like a CW-Lite with an unprotected AES target, so capture, CPA and glitching all work. See [Simulator](Simulator).
 
 ### Can two people use it at the same time?
 

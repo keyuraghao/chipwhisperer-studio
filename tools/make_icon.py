@@ -5,7 +5,8 @@ The logo is the 32 x 32 SVG in static/index.html: a rounded square with a teal t
 
 - packaging/icon.ico: Windows executable icon, 16 to 256 px
 - packaging/icon.icns: macOS icon
-- packaging/icon.png: 512 px PNG (Linux desktop entries, README use)
+- packaging/icon.png and src/cwstudio/resources/icon.png: 512 px PNG (Linux desktop entries made by ``cw-studio --install-desktop``)
+- docs/wiki/images/logo.png: the same PNG, shown at the top of the README and the wiki
 
     python tools/make_icon.py
 """
@@ -52,7 +53,10 @@ def main() -> int:
     frames = [draw(s) for s in sizes]
     frames[-1].save(os.path.join(OUT, "icon.ico"), format="ICO", sizes=[(s, s) for s in sizes], append_images=frames[:-1])
     master.save(os.path.join(OUT, "icon.icns"), format="ICNS")
-    master.resize((512, 512), Image.LANCZOS).save(os.path.join(OUT, "icon.png"), optimize=True)
+    png = master.resize((512, 512), Image.LANCZOS)
+    png.save(os.path.join(OUT, "icon.png"), optimize=True)
+    png.save(os.path.join(ROOT, "src", "cwstudio", "resources", "icon.png"), optimize=True)
+    png.save(os.path.join(ROOT, "docs", "wiki", "images", "logo.png"), optimize=True)
     for name in ("icon.ico", "icon.icns", "icon.png"):
         print(f"wrote packaging/{name} ({os.path.getsize(os.path.join(OUT, name)) / 1024:.0f} KB)")
     return 0

@@ -1,3 +1,5 @@
+<img src="images/logo.png" alt="" width="48">
+
 ### [ChipWhisperer Studio](Home)
 
 **Getting started**

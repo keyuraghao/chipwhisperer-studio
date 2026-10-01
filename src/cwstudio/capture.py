@@ -151,7 +151,7 @@ class CaptureJob(LongJob):
         return {
             "done": self.done_count, "target": self.count, "timeouts": self.timeouts,
             "rate": round(self.rate, 1), "stored": len(self.store), "mode": self.mode,
-            "elapsed": round(time.time() - (self.started_at or time.time()), 1),
+            "elapsed": round((getattr(self, "ended_at", None) or time.time()) - (self.started_at or time.time()), 1),  # frozen once the job has ended
         }
 
     # --- capture primitives ------------------------------------------------

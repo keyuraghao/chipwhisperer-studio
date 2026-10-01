@@ -5,8 +5,8 @@ This folder is a self-contained build of ChipWhisperer Studio, a desktop applica
 ## Run
 
 - **Windows:** double-click `ChipWhispererStudio.exe`. Devices need the WinUSB driver; install the NewAE driver package if the scope is not detected (https://chipwhisperer.readthedocs.io/en/latest/windows-install.html).
-- **macOS:** double-click `ChipWhispererStudio` (or run `./chipwhisperer-studio.sh`). Gatekeeper: right-click and choose Open the first time.
-- **Linux:** run `./chipwhisperer-studio.sh`. Install the udev rule once so you can use the device without root; the Connect tab shows the exact command, which uses the bundled `50-newae.rules`.
+- **macOS:** double-click `ChipWhisperer Studio.app` (it opens Studio in Terminal), or run `./chipwhisperer-studio.sh`. Gatekeeper: right-click and choose Open the first time.
+- **Linux:** run `./chipwhisperer-studio.sh`. Install the udev rule once so you can use the device without root; the Connect tab shows the exact command, which uses the bundled `50-newae.rules`. To add Studio with its icon to the applications menu, run `./ChipWhispererStudio --install-desktop` once (`--remove-desktop` takes it out).
 
 A console window shows the URL (default http://127.0.0.1:8765/) and your browser opens automatically.
 

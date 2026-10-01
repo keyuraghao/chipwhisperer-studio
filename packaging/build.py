@@ -64,6 +64,8 @@ def main():
         with open(sh, "w") as f:
             f.write("#!/bin/sh\ncd \"$(dirname \"$0\")\" && exec ./ChipWhispererStudio \"$@\"\n")
         os.chmod(sh, 0o755)
+    if sys.platform == "darwin":
+        make_app(bundle)
 
     if not args.skip_zip:
         osname = {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}.get(platform.system(), platform.system().lower())
@@ -81,6 +83,49 @@ def main():
                         z.writestr(info, fh.read())
         print("built", zpath)
     print("done:", bundle)
+
+
+APP_SCRIPT = """#!/bin/sh
+# Opens ChipWhisperer Studio in Terminal (so its address and messages stay visible); the executable sits next to this app.
+HERE="$(cd "$(dirname "$0")/../../.." && pwd)"
+exec open -a Terminal "$HERE/ChipWhispererStudio"
+"""
+
+INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>ChipWhisperer Studio</string>
+  <key>CFBundleDisplayName</key><string>ChipWhisperer Studio</string>
+  <key>CFBundleIdentifier</key><string>io.github.keyuraghao.chipwhisperer-studio</string>
+  <key>CFBundleVersion</key><string>{version}</string>
+  <key>CFBundleShortVersionString</key><string>{version}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>ChipWhisperer Studio</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+"""
+
+
+def make_app(bundle: str) -> None:
+    """macOS shows icons only for .app bundles, not for plain executables: add a small "ChipWhisperer Studio.app" with the icon that starts the executable next to it."""
+    sys.path.insert(0, os.path.join(ROOT, "src"))
+    from cwstudio import __version__
+    app = os.path.join(bundle, "ChipWhisperer Studio.app", "Contents")
+    os.makedirs(os.path.join(app, "MacOS"), exist_ok=True)
+    os.makedirs(os.path.join(app, "Resources"), exist_ok=True)
+    with open(os.path.join(app, "Info.plist"), "w") as f:
+        f.write(INFO_PLIST.format(version=__version__))
+    exe = os.path.join(app, "MacOS", "ChipWhisperer Studio")
+    with open(exe, "w") as f:
+        f.write(APP_SCRIPT)
+    os.chmod(exe, 0o755)
+    shutil.copy(os.path.join(HERE, "icon.icns"), os.path.join(app, "Resources", "icon.icns"))
+    if shutil.which("codesign"):  # ad-hoc signature, as PyInstaller gives the executable
+        run(["codesign", "--force", "--sign", "-", os.path.dirname(app)])
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ This page is for developers who want to understand how Studio is built before ch
 
 ## One process, several threads
 
-Studio is a single Python process running a Starlette application under uvicorn, with a small built-in router (`web.py`) instead of FastAPI so no pydantic is needed. The same server delivers the web UI (static files), the REST API and one WebSocket.
+Studio is a single Python process running a Starlette application under uvicorn, with a small built-in router (`web.py`). The same server delivers the web UI (static files), the REST API and one WebSocket.
 
 | Thread | Job |
 |--------|-----|
@@ -46,13 +46,14 @@ Every scope and target sub-object in `chipwhisperer` implements `_dict_repr()`. 
 |--------|----------------|
 | `cli.py` | Entry point: arguments, uvicorn, browser or native window, the `mcp` and `--ccwrap` modes. |
 | `app.py` | Web application: REST routes, WebSocket, static files. |
-| `web.py` | Routing layer on Starlette: FastAPI-style decorators, parameter conversion, uploads, JSON errors and the `/api/docs` page. |
+| `web.py` | Routing layer on Starlette: route decorators, parameter conversion, uploads, JSON errors and the `/api/docs` page. |
 | `mcplite.py` | Studio's own compact MCP server: JSON-RPC over stdio, streamable HTTP and SSE, tool schemas from type hints. |
 | `compat.py` | Stand-in for `pkg_resources` (removed in setuptools 81), which ChipWhisperer's TraceWhisperer imports. |
 | `session.py` | The single application state: scope, target, jobs, trace store, and the toolchain, firmware, notebook and notes managers. |
 | `worker.py` | Hardware thread, futures and long job scheduling. |
 | `hardware.py` | Connect, detect and program real hardware; platform help (drivers, udev). |
 | `simulator.py` | `SimScope` and `SimTarget`: AES leakage and glitch behaviour without hardware. |
+| `aes.py` | Small AES-128 implementation used by the simulator, the leakage models and the calculator's `sbox()`. |
 | `settings.py` | Settings tree introspection and typed assignment. |
 | `capture.py` | `CaptureJob`: key and text generation, capture loop, publication. |
 | `glitch.py` | `GlitchJob`: parameter sweep, target reset, result classification. |
@@ -62,6 +63,7 @@ Every scope and target sub-object in `chipwhisperer` implements `_dict_repr()`. 
 | `firmware.py` | Firmware sources from GitHub, project and platform catalogue, builds. |
 | `ccwrap.py` | Compiler wrapper that lets GCC-oriented makefiles build with clang. |
 | `notebook.py` | Notebook kernel, IPython syntax, ChipWhisperer stand-ins, `.ipynb` storage, tutorial download. |
+| `mplbackend.py` | matplotlib backend for notebooks: `plt.show()` sends open figures to the running cell. |
 | `tools.py` | Notes storage, safe calculator and statistics. |
 | `net.py` | HTTPS using the operating system trust store (certifi fallback). |
 | `mcp_server.py` | MCP server that exposes every feature to AI agents through the HTTP API. |
@@ -93,7 +95,7 @@ Studio uses a small in-process kernel instead of a Jupyter kernel, because a sep
 
 ## MCP server
 
-`mcp_server.py` builds an MCP server with `mcplite.py`, a compact implementation of the protocol that ships with Studio, so the MCP SDK and its dependencies are not needed. Each tool is a small function that calls the HTTP API, so the MCP server is just another API client. It attaches to a running Studio or starts one headless in the same process. Long operations accept `wait=true` and poll the API, so an agent can do "capture 500 traces" or "build and flash" in one call. See [MCP Server](MCP-Server).
+`mcp_server.py` builds an MCP server with `mcplite.py`, a compact implementation of the protocol that ships with Studio. Each tool is a small function that calls the HTTP API, so the MCP server is just another API client. It attaches to a running Studio or starts one headless in the same process. Long operations accept `wait=true` and poll the API, so an agent can do "capture 500 traces" or "build and flash" in one call. See [MCP Server](MCP-Server).
 
 ## Frontend
 

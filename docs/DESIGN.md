@@ -22,11 +22,11 @@ Everything runs in one Python process. Clients (the browser UI, AI agents throug
 - One code path for Windows, macOS and Linux with no GUI toolkit system dependencies (no WebKitGTK, no Qt platform plugins).
 - The bundle stays small and the build needs only Python and PyInstaller, no Node toolchain: the frontend is plain ES modules served as is.
 - Remote use for free: run Studio on the lab machine or a Raspberry Pi next to the target and open it from a laptop (`--host 0.0.0.0`).
-- uPlot renders traces with 100k+ samples at 60 fps on a canvas.
+- uPlot draws traces of 100,000 samples and more on a canvas, fast enough to follow a live capture (measured frame rates are on the [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance) wiki page).
 
 ### Concurrency model
 
-`chipwhisperer` objects are not thread-safe and the USB transport is stateful, so exactly one thread (`HardwareWorker`) touches the scope and target. The asyncio server hands every hardware request to that thread and awaits a future. Long-running operations (a 10 000 trace capture, a glitch sweep) are long jobs: objects with a `step()` method that the worker calls repeatedly, servicing queued short jobs between steps. That keeps the UI responsive (you can read settings, poll the serial console and stop the capture) without ever running two hardware calls at once.
+`chipwhisperer` objects are not thread-safe and the USB transport is stateful, so exactly one thread (`HardwareWorker`) touches the scope and target. The asyncio server hands every hardware request to that thread and awaits a future. Long-running operations (a 10,000 trace capture, a glitch sweep) are long jobs: objects with a `step()` method that the worker calls repeatedly, servicing queued short jobs between steps. That keeps the UI responsive (you can read settings, poll the serial console and stop the capture) without ever running two hardware calls at once.
 
 CPA analysis is pure numpy over an in-memory trace array and runs on its own thread with progressive reporting. Toolchain downloads and firmware builds also run on their own threads because they never touch the hardware; only the final "program target" step goes through the hardware worker.
 
@@ -72,7 +72,7 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 |------|----------------|
 | `cli.py` | Entry point: argument parsing, uvicorn, browser or native window, and the `mcp` / `--ccwrap` subcommands. |
 | `app.py` | Web app: REST endpoints, WebSocket, static files. |
-| `web.py` | Small routing layer on Starlette: FastAPI-style decorators, query and upload parameters, JSON errors, the `/api/docs` page. |
+| `web.py` | Small routing layer on Starlette: `@app.get` / `@app.post` style route decorators, query and upload parameters, JSON errors, the `/api/docs` page and `/openapi.json`. |
 | `mcplite.py` | Compact MCP protocol server (tools, resources, prompts; stdio, streamable HTTP and SSE transports). |
 | `compat.py` | Stand-in for `pkg_resources`, which ChipWhisperer's TraceWhisperer imports but setuptools 81 removed. |
 | `session.py` | The single application state: scope, target, jobs, trace store, toolchain and firmware managers. |
@@ -83,12 +83,14 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 | `capture.py` | `CaptureJob`: key and text generation, capture loop, publication. |
 | `glitch.py` | `GlitchJob`: parameter sweep, target reset, result classification. |
 | `traces.py` | `TraceStore`: in-memory traces, statistics, import and export (npz, cwp, csv). |
-| `analysis.py` | Progressive CPA with several AES leakage models. |
+| `analysis.py` | Progressive CPA with five AES leakage models. |
+| `aes.py` | Small AES-128 implementation used by the simulator and the leakage models. |
 | `toolchains.py` | Pinned, checksummed, on-demand compiler downloads and custom toolchains. |
 | `firmware.py` | Firmware sources from GitHub, project and platform catalogue, builds. |
 | `ccwrap.py` | Compiler wrapper that lets GCC-oriented makefiles build with clang. |
 | `mcp_server.py` | MCP server exposing every feature to AI agents. |
 | `notebook.py` | Notebook kernel (cells on the hardware thread, IPython syntax, ChipWhisperer stand-ins), `.ipynb` storage, tutorial download. |
+| `mplbackend.py` | Matplotlib backend for notebooks: `plt.show()` sends figures to the running cell. |
 | `tools.py` | Notes storage, the safe calculator and statistics. |
 | `net.py` | HTTPS with the operating system's trust store (certifi fallback) for every download. |
 | `events.py` | Thread-safe event bus fanning out to WebSocket clients. |
@@ -104,7 +106,7 @@ USB access on a machine without Python:
 - **macOS:** `libusb-1.0.dylib` from `libusb-package` is copied next to `usb1`.
 - **Linux:** the same `.so` copy plus the bundled `50-newae.rules`; the Connect tab shows the command that installs the udev rule.
 
-## Non-goals (for now)
+## Non-goals
 
-- Replacing the analysis and notebook ecosystem for research: Studio exports ChipWhisperer projects so advanced analysis can continue in Python.
+- Replacing the Python analysis ecosystem for research: Studio's notebook covers everyday scripting, and traces export as ChipWhisperer projects or `.npz` files so advanced analysis can continue in Python or Jupyter.
 - A dedicated UI for FPGA targets (CW305, CW310); they work through the generic settings tree.

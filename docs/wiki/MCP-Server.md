@@ -81,7 +81,7 @@ Clients that connect to a URL instead of launching a process can use the streama
 cw-studio mcp --transport streamable-http --mcp-host 127.0.0.1 --mcp-port 8766
 ```
 
-The older `sse` transport is also available with `--transport sse`.
+The server then listens on `http://127.0.0.1:8766/mcp`. The older `sse` transport is also available with `--transport sse` (endpoint `/sse`).
 
 ## Command line options
 
@@ -158,7 +158,7 @@ Every tool carries MCP annotations that clients can use to decide when to ask yo
 | `traces_stats` | Per-sample mean, std, min and max over stored traces, each decimated. Useful to find where the target computes. | `start=0`, `end=None`, `max_points=1000` | read only |
 | `traces_clear` | Deletes all stored traces from memory (files on disk are kept). | none | destructive |
 | `traces_export` | Saves stored traces as `npz`, `cwp` (ChipWhisperer project) or `csv`. Relative paths go into the data folder. | `path="traces"`, `format="npz"` | hardware |
-| `traces_import` | Loads traces from an `.npz` or `.cwp` file on the Studio machine. | `path`, `replace=True` | hardware |
+| `traces_import` | Loads traces from an `.npz`, `.npy` or `.cwp` file (or a `.zip` holding a ChipWhisperer project) on the Studio machine; `replace=False` appends. | `path`, `replace=True` | hardware |
 
 ### Analysis
 

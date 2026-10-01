@@ -1,12 +1,10 @@
 # Scope settings
 
-The **Scope** tab shows every setting of the connected ChipWhisperer scope as an editable tree, read directly from the hardware. This page explains how the tree works and which settings matter most for a first capture.
+The **Scope** tab of ChipWhisperer Studio shows every setting of the connected ChipWhisperer scope as an editable tree, read directly from the hardware. This page explains how the tree works and which settings matter most for a first capture.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/scope-light.png"><img alt="The Scope tab with the gain, adc and clock groups expanded" src="images/scope.png"></picture>
 
 *The settings tree: groups on the left, current values on the right, documentation on hover.*
-
-> **Note:** ChipWhisperer Studio has so far been tested with its built-in [Simulator](Simulator) and in CI, not yet on physical ChipWhisperer hardware. The settings tree is generic (it reads whatever the `chipwhisperer` library exposes), so it should work with every scope, but please report anything that behaves differently on your device.
 
 ![Browsing and searching the scope settings (animated)](images/clips/scope-settings.webp)
 
@@ -38,7 +36,7 @@ Studio converts what you type to the type of the current value: `5000` becomes a
 ### Filter and refresh
 
 - The **filter settings** box at the top narrows the tree to settings whose path or current value contains your text, for example `glitch`, `trig` or `serial`. Matching groups open automatically.
-- The **refresh** button (↻) reloads the whole tree from the scope. Values are also re-read automatically after every change you make, when you switch to the Scope tab, and after scope actions.
+- The **refresh** button (↻) reloads the whole tree from the scope. Values are also re-read automatically after every change you make, when you switch to the **Scope** tab, and after scope actions.
 
 ### Scope actions
 
@@ -46,7 +44,7 @@ Three buttons above the tree run common scope operations:
 
 | Button | What it does |
 |--------|--------------|
-| `default_setup()` | Runs ChipWhisperer's `scope.default_setup()`, which restores sensible defaults for capturing from a standard target (see the table below). Studio also runs this automatically when you connect with **default_setup()** ticked on the Connect tab. |
+| `default_setup()` | Runs ChipWhisperer's `scope.default_setup()`, which restores sensible defaults for capturing from a standard target (see the table below). Studio also runs this automatically when you connect with **default_setup()** ticked on the **Connect** tab. |
 | test trigger | Arms the scope and waits for one trigger without talking to the target, then reports whether it captured or timed out. Use it to check your trigger wiring and settings when you are using your own target firmware. A pop-up says "arm+capture done" or "arm+capture (timeout)". |
 | reset FPGA | Calls `scope.reset_fpga()` when the connected scope supports it. This is a recovery step if the scope stops responding correctly. Scopes without this function report an error. |
 
@@ -91,7 +89,7 @@ If captures stop working after experimenting, press `default_setup()` to get bac
 | `adc.offset` | How many samples to skip after the trigger before recording starts. Use it to move the capture window to a later part of the operation. | 0 |
 | `adc.presamples` | How many samples to keep from before the trigger. | 0 |
 | `adc.basic_mode` | Which trigger condition starts a capture: `rising_edge`, `falling_edge`, `low` or `high`. | `rising_edge` |
-| `adc.timeout` | How long (in seconds) the scope waits for a trigger before giving up. Captures that time out are counted as timeouts in the Capture tab. | as set by the library |
+| `adc.timeout` | How long (in seconds) the scope waits for a trigger before giving up. Captures that time out are counted as timeouts in the **Capture** tab. | as set by the library |
 | `adc.decimate` | Keep only every Nth sample, to record a longer time span with the same number of samples. | 1 |
 | `adc.trig_count` | Read-only: how long the trigger line was active during the last capture, in ADC clock cycles. Useful to see how long the target's operation takes. | read only |
 
@@ -126,7 +124,7 @@ Studio reads the ADC sample rate from the clock settings to label the waveform's
 | `io.target_pwr` | Switch the target's power on or off. Turning it off and on is a hard reset. | `True` |
 | `io.glitch_hp`, `io.glitch_lp` | Enable the high power and low power crowbar MOSFETs used for voltage glitching. Leave them off unless you are voltage glitching. | `False` |
 
-> **Tip:** To reset the target by hand, set `io.nrst` to `low`, then back to `high_z`. The Glitching sweep can do this automatically after a crash.
+> **Tip:** To reset the target by hand, set `io.nrst` to `low`, then back to `high_z`. A sweep in the **Glitch** tab can do this automatically after a crash.
 
 ### glitch: the fault injection module
 
@@ -149,7 +147,7 @@ The `glitch` group is closed by default. Open it, or filter for `glitch`, when y
 | `glitch.repeat` | How many consecutive clock cycles receive a glitch. |
 | `glitch.width_fine`, `glitch.offset_fine` | Fine adjustment of width and offset. |
 
-The Husky's glitch module works differently in the details (it uses a PLL and different units). Check the ChipWhisperer documentation for your scope. Studio's Glitching page explains how to sweep these values automatically.
+The Husky's glitch module works differently in the details (it uses a PLL and different units). Check the ChipWhisperer documentation for your scope. To sweep these values automatically, use the **Glitch** tab.
 
 ### Husky extras
 

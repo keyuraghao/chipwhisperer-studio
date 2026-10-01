@@ -4,7 +4,7 @@
 Starts a Studio with the simulator in a temporary data folder, runs a realistic session through the HTTP API (400 captured traces, a CPA attack, a glitch sweep and a clang firmware build), then photographs every scene with Playwright twice: ``name.png`` in the dark theme and ``name-light.png`` in the light theme. The README and the wiki show whichever matches the reader's GitHub theme.
 
     pip install -e ".[test]" playwright && playwright install chromium
-    python tools/screenshots.py [--data-dir DIR] [--out docs/images]
+    python tools/screenshots.py [--data-dir DIR] [--out docs/wiki/images]
 
 Firmware screenshots need the Arm GCC and clang toolchains; they are downloaded into --data-dir on the first run (about 360 MB), so reuse the same folder to make later runs fast.
 """
@@ -119,7 +119,10 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
                 await page.locator("#sidebar").evaluate(f"e => e.scrollTop = {scroll}")
                 await page.wait_for_timeout(300)
 
-            async def snap(name: str, element: str = None):
+            async def snap(name: str, element: str = None, keep_focus: bool = False):
+                if not keep_focus:  # no focus ring left on the last control clicked
+                    await page.evaluate("() => document.activeElement && document.activeElement.blur && document.activeElement.blur()")
+                    await page.wait_for_timeout(100)
                 if scheme == "light":
                     name = name[:-4] + "-light.png"
                 path = os.path.join(out, name)
@@ -128,6 +131,17 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
                 else:
                     await page.screenshot(path=path)
                 print("wrote", name)
+
+            async def expand(group: str):
+                """Open a settings-tree group or a <details> section only if it is closed (clicking an open one would collapse it)."""
+                loc = page.locator(".tree .ghead", has_text=group).first
+                if await loc.count() and not await loc.evaluate("e => e.parentElement.classList.contains('open')"):
+                    await loc.click()
+
+            async def open_details(scope: str, text: str):
+                loc = page.locator(f"{scope} summary", has_text=text).first
+                if await loc.count() and not await loc.evaluate("e => e.parentElement.open"):
+                    await loc.click()
 
             async def run_capture(count=300):
                 await page.fill("#panel-capture input[type=number] >> nth=0", str(count))
@@ -145,16 +159,12 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             # Scope
             await tab("scope")
             for group in ("gain", "adc", "clock"):
-                loc = page.locator(".tree .ghead", has_text=group).first
-                if await loc.count():
-                    await loc.click()
+                await expand(group)
             await page.wait_for_timeout(400)
             await snap("scope.png")
             await page.fill("#panel-scope input.flex >> nth=0", "glitch")
             await page.wait_for_timeout(400)
-            loc = page.locator(".tree .ghead", has_text="glitch").first
-            if await loc.count():
-                await loc.click()
+            await expand("glitch")
             await page.wait_for_timeout(400)
             await snap("scope-glitch.png")
             await page.fill("#panel-scope input.flex >> nth=0", "")
@@ -172,16 +182,17 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             # Firmware
             await tab("firmware")
             await page.wait_for_timeout(600)
+            await page.locator("#panel-firmware .seg button[data-v='clang']").first.click()  # the result box shows a clang build
+            await page.wait_for_timeout(400)
             await snap("firmware.png")
             for summ in ("Advanced options", "Build output"):
-                loc = page.locator("#panel-firmware summary", has_text=summ)
-                if await loc.count():
-                    await loc.first.click()
+                await open_details("#panel-firmware", summ)
+            await page.locator("#panel-firmware .console.build").evaluate("e => e.scrollTop = e.scrollHeight")
             await page.wait_for_timeout(400)
             await snap("firmware-build-output.png", "#panel-firmware .card")
             await snap("firmware-sources.png", "#panel-firmware .card:has(.card-head .title:text-is('Firmware sources'))")
             await snap("toolchains.png", "#panel-firmware .card:has(.card-head .title:text-is('Toolchains'))")
-            await page.locator("#panel-firmware summary", has_text="Add a custom toolchain").click()
+            await open_details("#panel-firmware", "Add a custom toolchain")
             fields = {"Name, e.g. TriCore GCC 11": "TriCore GCC 11", "arch, e.g. tricore or arm,riscv": "tricore", "tool prefix, e.g. tricore-elf-": "tricore-elf-", "or an existing install folder": "/opt/tricore-gcc"}
             for ph, val in fields.items():
                 await page.fill(f'#panel-firmware input[placeholder="{ph}"]', val)
@@ -189,15 +200,20 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             await snap("toolchains-custom.png", "#panel-firmware .card:has(.card-head .title:text-is('Toolchains'))")
             # Capture and waveform
             await tab("capture")
-            await run_capture()
+            await page.locator("#wave-toolbar label", has_text="mean").locator("input").check()
+            await page.fill("#panel-capture input[type=number] >> nth=0", "0")  # continuous, so the photo shows a capture in progress
+            await page.click("#btn-run")
+            await page.wait_for_timeout(2500)
             await snap("capture.png")
             await snap("capture-panel.png", "#sidebar")
+            await page.click("#btn-stop")
+            await page.wait_for_timeout(1500)
+            await page.fill("#panel-capture input[type=number] >> nth=0", "300")
+            await page.locator("#wave-toolbar label", has_text="mean").locator("input").uncheck()
             await page.select_option("#wave-toolbar select >> nth=1", value="10")
-            await page.locator("#wave-toolbar label", has_text="min/max").locator("input").check()
-            await page.wait_for_timeout(1200)
+            await run_capture()
             await snap("waveform-overlay.png")
             await page.select_option("#wave-toolbar select >> nth=1", value="0")
-            await page.locator("#wave-toolbar label", has_text="min/max").locator("input").uncheck()
             await page.locator("#wave-toolbar label", has_text="mean").locator("input").check()
             await page.locator("#wave-toolbar label", has_text="time axis").locator("input").check()
             await page.click("#btn-single")
@@ -236,11 +252,14 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             await tab("notebook")
             await page.locator(".nb-file", has_text="Studio tour").first.click()
             await page.wait_for_timeout(1500)
+            await page.locator(".nb-scroll").evaluate("e => e.scrollTop = e.scrollHeight")  # the mean-trace figure is in the last cells
+            await page.wait_for_timeout(500)
             await snap("notebook.png")
             if with_firmware:
                 folder = page.locator(".nb-folder > summary", has_text="courses/sca101")
                 if await folder.count():
-                    await folder.first.click()
+                    if not await folder.first.evaluate("e => e.parentElement.open"):
+                        await folder.first.click()
                     await page.locator(".nb-file", has_text="Lab 3_3 - DPA on Firmware Implementation of AES (HARDWARE)").first.click()
                     await page.wait_for_timeout(2000)
                     target = page.locator(".nb-cell", has_text="Capturing traces").first
@@ -255,7 +274,7 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             await page.wait_for_timeout(800)
             await page.evaluate("() => { const t = document.querySelector('.notes-text'); t.focus(); const i = t.value.indexOf('21 24'); t.setSelectionRange(i, i + 20); document.dispatchEvent(new Event('selectionchange')); }")
             await page.wait_for_timeout(600)
-            await snap("selection-stats.png")
+            await snap("selection-stats.png", keep_focus=True)
             await page.locator("#panel-notes button", has_text="Preview").click()
             await page.wait_for_timeout(500)
             await snap("notes.png")
@@ -301,7 +320,7 @@ def main() -> int:
     os.makedirs(args.out, exist_ok=True)
     width, height = (int(v) for v in args.size.split("x"))
     port = args.port or _free_port()
-    env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "src") + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    env = dict(os.environ, PYTHONPATH=neutral_pythonpath() + os.pathsep + os.environ.get("PYTHONPATH", ""))
     proc = subprocess.Popen([sys.executable, "-m", "cwstudio", "--simulate", "--no-browser", "--port", str(port), "--data-dir", args.data_dir], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
     api = Api(base)
@@ -319,6 +338,15 @@ def main() -> int:
             proc.wait(10)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def neutral_pythonpath(folder: str = "/tmp/ChipWhispererStudio-app/_internal") -> str:
+    """Copy the package to a neutral folder and return it for PYTHONPATH, so paths Studio shows (such as the udev rule in the Connect tab) look like an installed bundle instead of the developer's checkout."""
+    import shutil
+    dest = os.path.join(folder, "cwstudio")
+    shutil.rmtree(dest, ignore_errors=True)
+    shutil.copytree(os.path.join(ROOT, "src", "cwstudio"), dest, ignore=shutil.ignore_patterns("__pycache__"))
+    return folder
 
 
 def _free_port() -> int:

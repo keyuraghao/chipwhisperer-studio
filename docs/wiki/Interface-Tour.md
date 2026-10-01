@@ -19,7 +19,7 @@ This page explains every part of the Studio window: the top bar, the navigation,
 
 ## Top bar
 
-- **Logo, name and version.** The small badge shows the version you are running, for example `v0.4.4`.
+- **Logo, name and version.** The small badge next to the name shows the version you are running.
 - **Status chips.** Three rounded chips show the scope, the target and the current job:
   - The **scope** chip shows the device name and serial number (for example `ChipWhisperer-Simulator · SIM000001`) with a green dot when connected, or **No scope**.
   - The **target** chip shows the target type (for example `SimpleSerial2`) or **No target**.
@@ -40,9 +40,9 @@ Each tab has an icon and a short label. Hover over a tab to see a description. S
 | Target | Program firmware, serial console, SimpleSerial commands, target settings | [Target and Programming](Target-and-Programming) |
 | Firmware | Build ChipWhisperer firmware, manage firmware sources and compilers | [Firmware Builds](Firmware-Builds) |
 | Capture | Capture traces, export and import trace sets | [Capturing Traces](Capturing-Traces) |
-| Analysis | CPA key recovery and its plots | CPA Analysis |
+| Analysis | CPA key recovery and its plots | [Quick Start](Quick-Start#4-recover-the-key-with-cpa) |
 | Notebook | Python notebooks that share Studio's hardware connection | [Notebooks](Notebooks) |
-| Glitch | Glitch parameter sweeps and their results | Glitching |
+| Glitch | Glitch parameter sweeps and their results | [Scope Settings](Scope-Settings#glitch-the-fault-injection-module) |
 | Notes | A text pad that saves automatically | [Notes and Calculator](Notes-and-Calculator) |
 | Calc | Calculator and statistics of the current selection | [Notes and Calculator](Notes-and-Calculator) |
 | Help | Quick start, shortcuts, remote use and AI agent (MCP) setup | [MCP Server](MCP-Server) |

@@ -4,6 +4,22 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-10-01
+
+### Added
+
+- **Application icon** on every platform, drawn from Studio's logo (`tools/make_icon.py`):
+  - **Windows:** the executable has the Studio icon instead of PyInstaller's default, plus version information, so Explorer, the taskbar and Task Manager show "ChipWhisperer Studio" and its version.
+  - **macOS:** the bundle includes `ChipWhisperer Studio.app`, which shows the icon in Finder and the Dock and opens Studio in Terminal (a plain executable cannot have an icon on macOS).
+  - **Linux:** `cw-studio --install-desktop` (or `./ChipWhispererStudio --install-desktop` in the bundle) adds Studio with its icon to the applications menu; `--remove-desktop` takes it out. The bundle also includes the icon as `ChipWhispererStudio.png`.
+- The logo is shown at the top of the README and the wiki.
+
+### Changed
+
+- The documentation was reviewed against the code for production: wrong sizes, flags, labels and links fixed, references to pages that do not exist and to replaced libraries removed, and the architecture diagram updated (`web.py`, `mcplite.py`, the simulator).
+- All screenshots, the video tour and its clips were regenerated for this version from a neutral data folder. The settings-tree screenshots and the tour now show their groups expanded (the scripts used to click open groups closed).
+- The programmer list names the CW-Nano under STM32F and the CW304 under AVR (it wrongly listed a "Nano ATmega").
+
 ## [0.4.4] - 2026-10-01
 
 Stress tests with very large trace sets, large files, long sessions, many windows and leak checks (`tools/benchmark.py`, results on the new [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance) wiki page and in the README) found the problems below. No memory leaks were found in any workload.
@@ -191,7 +207,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.1...v0.4.2
@@ -199,4 +216,3 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 [0.4.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.2.0
-[0.1.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.1.0

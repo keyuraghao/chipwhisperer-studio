@@ -47,13 +47,13 @@ Within a few seconds all 16 key bytes appear as tiles under **Result**. Because 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/analysis-light.png"><img alt="CPA result with all key bytes recovered" src="images/analysis.png"></picture>
 *All 16 key bytes recovered; the PGE plot shows how many traces each byte needed.*
 
-That is the whole attack. From here you can try Glitching (the simulator also models glitches), explore the [Waveform Viewer](Waveform-Viewer), or open a [notebook](Notebooks).
+That is the whole attack. From here you can try a glitch sweep in the **Glitch** tab (the simulator also models glitches, see [Simulator](Simulator#simulated-glitches)), explore the [Waveform Viewer](Waveform-Viewer), or open a [notebook](Notebooks).
 
 ## Walkthrough 2: real hardware (ChipWhisperer-Lite ARM)
 
 This walkthrough uses a ChipWhisperer-Lite with its built-in STM32F3 (ARM) target, platform `CWLITEARM`. Other hardware works the same way with a different platform and programmer; see [Firmware Builds](Firmware-Builds) and [Target and Programming](Target-and-Programming).
 
-> **Note:** Studio 0.4.4 has been tested with the simulator and in CI, not yet on physical hardware. If a step behaves differently on your device, please [open an issue](https://github.com/keyuraghao/chipwhisperer-studio/issues).
+> **Note:** Studio has been tested with the simulator and in CI, but not yet on physical ChipWhisperer hardware. If a step behaves differently on your device, please [open an issue](https://github.com/keyuraghao/chipwhisperer-studio/issues).
 
 ### 1. Prepare the computer (once)
 
@@ -75,7 +75,7 @@ Both chips in the top bar should turn green. If the scope is not found, see [Con
 The target needs NewAE's `simpleserial-aes` firmware. Studio builds it for you.
 
 1. Click **Firmware** in the left navigation.
-2. Scroll to the **Firmware sources** card and click **Download**. Studio downloads ChipWhisperer's firmware folder from NewAE's GitHub (about 20 MB). This happens only once.
+2. Scroll to the **Firmware sources** card and click **Download**. Studio downloads ChipWhisperer's firmware folder from NewAE's GitHub. This happens only once.
 3. Back in the **Build firmware** card, set **Project** to `simpleserial-aes` and **Platform** to `CWLITEARM · CW-Lite Arm (STM32F3)`.
 4. Leave **Compiler** on **GCC**, **Crypto** on `TINYAES128C` and **SimpleSerial** on `v2.1`.
 5. The **Toolchain** line tells you whether a compiler is installed. If it says **No GCC for Arm Cortex-M**, click **Install now** and wait for the download (about 300 MB) to finish in the **Toolchains** card.
@@ -105,5 +105,5 @@ With an unprotected software AES, a few hundred traces are usually enough for ev
 
 - Save your traces: **Capture** tab, **Export** as a ChipWhisperer project (`.cwp`) or NumPy file. See [Capturing Traces](Capturing-Traces).
 - Learn the rest of the window: [Interface Tour](Interface-Tour).
-- Try fault injection: Glitching.
+- Try fault injection: the **Glitch** tab sweeps glitch parameters; set up the glitch module first in the **Scope** tab (see [Scope Settings](Scope-Settings#glitch-the-fault-injection-module)).
 - Run NewAE's tutorials: [Notebooks](Notebooks).

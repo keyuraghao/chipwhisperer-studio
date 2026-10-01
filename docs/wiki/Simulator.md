@@ -13,7 +13,7 @@ In the top bar the scope appears as **ChipWhisperer-Simulator · SIM000001** and
 
 ## What it is good for
 
-- **Learning.** Follow the [Quick Start](Quick-Start), try the leakage models in CPA Analysis or find a glitch window in Glitching before touching real hardware.
+- **Learning.** Follow the [Quick Start](Quick-Start), try the leakage models in the **Analysis** tab or find a glitch window in the **Glitch** tab before touching real hardware.
 - **Teaching and demos.** Every student can work on their own laptop even if there are only a few ChipWhisperers in the room.
 - **Developing notebooks and scripts.** Write and debug a notebook, script or AI agent workflow against the simulator, then switch to real hardware.
 - **Automated testing.** Studio's own test suite and CI use the simulator on Windows, macOS and Linux.
@@ -67,10 +67,10 @@ The simulated target reacts to the scope's glitch settings when the glitch modul
 | Width below 1 | Normal (no effect) |
 | Width above 45, or repeat above 20 | Reset (no response) |
 | Width 5 to 40 and ext_offset 20 to 60 | Success about 75% of the time (a wrong but valid response), otherwise reset or normal |
-| Width 35 to 45 outside the window | Reset about 30% of the time, otherwise normal |
+| Width 35 to 45, when not a success case above | Reset about 30% of the time, otherwise normal |
 | Anything else | Normal |
 
-A success on the `g` command returns a loop counter slightly below 2500; a success on the `p` command returns a corrupted ciphertext. A sweep of `glitch.ext_offset` from 0 to 90 and `glitch.width` from -45 to 45 shows a clear success region. See Glitching for a walkthrough.
+A success on the `g` command returns a loop counter slightly below 2500; a success on the `p` command returns a corrupted ciphertext. A sweep of `glitch.ext_offset` from 0 to 90 and `glitch.width` from -45 to 45 shows a clear success region in the **Glitch** tab. On the `p` command the reset outcome is not modelled: the target still answers with the ciphertext.
 
 ## Limitations
 

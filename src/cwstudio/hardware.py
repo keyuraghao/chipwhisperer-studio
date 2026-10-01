@@ -28,9 +28,9 @@ TARGET_KINDS = {
 }
 
 PROGRAMMERS = {
-    "STM32F": {"label": "STM32F (CW308_STM32Fx, CWLITEARM, Husky targets)", "cls": "STM32FProgrammer"},
+    "STM32F": {"label": "STM32F (CWLITEARM, CW-Nano, CW308_STM32Fx, Husky targets)", "cls": "STM32FProgrammer"},
     "XMEGA": {"label": "XMEGA (CWLITEXMEGA, CW303, CW308_XMEGA)", "cls": "XMEGAProgrammer"},
-    "AVR": {"label": "AVR (CW308_AVR, Nano ATmega)", "cls": "AVRProgrammer"},
+    "AVR": {"label": "AVR (CW308_AVR, CW304 ATmega328P)", "cls": "AVRProgrammer"},
     "SAM4S": {"label": "SAM4S (CW308_SAM4S, Husky)", "cls": "SAM4SProgrammer"},
     "NEORV32": {"label": "NEORV32 (soft-core RISC-V)", "cls": "NEORV32Programmer"},
 }

@@ -122,6 +122,16 @@ jobs:
           set -e
           if [ "${{ runner.os }}" = "Windows" ]; then EXE=dist/ChipWhispererStudio/ChipWhispererStudio.exe; else EXE=dist/ChipWhispererStudio/ChipWhispererStudio; fi
           "$EXE" mcp --help | head -3
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            APP="dist/ChipWhispererStudio/ChipWhisperer Studio.app/Contents"
+            plutil -lint "$APP/Info.plist"
+            test -x "$APP/MacOS/ChipWhisperer Studio" && test -s "$APP/Resources/icon.icns"
+            codesign --verify --verbose "dist/ChipWhispererStudio/ChipWhisperer Studio.app"
+          fi
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            XDG_DATA_HOME="$PWD/xdg" "$EXE" --install-desktop
+            grep -q "^Icon=chipwhisperer-studio" xdg/applications/chipwhisperer-studio.desktop && test -s xdg/icons/hicolor/512x512/apps/chipwhisperer-studio.png
+          fi
           CWSTUDIO_CC='["python", "--version"]' "$EXE" --ccwrap
           "$EXE" --no-browser --simulate --port 8799 &
           PID=$!

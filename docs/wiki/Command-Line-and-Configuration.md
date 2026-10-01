@@ -1,6 +1,6 @@
 # Command Line and Configuration
 
-This page lists every command line option, the environment variables Studio reads, where Studio keeps its files, and how to run it on a lab machine for remote use.
+This page lists every command line option of ChipWhisperer Studio, the environment variables it reads, where Studio keeps its files, and how to run it on a lab machine for remote use.
 
 ## Starting Studio
 
@@ -37,9 +37,13 @@ cw-studio --data-dir D:\studio-data        # keep everything on another drive (W
 
 `cw-studio mcp` (or `ChipWhispererStudio mcp` for the bundle) runs the Model Context Protocol server for AI agents. Its options are documented in full on [MCP Server](MCP-Server): `--url`, `--no-embed`, `--simulate`, `--data-dir`, `--port`, `--transport` (stdio, streamable-http, sse), `--mcp-host`, `--mcp-port` and `--log-level` (default `warning`).
 
+## Linux applications menu
+
+On Linux, `cw-studio --install-desktop` (or `./ChipWhispererStudio --install-desktop` for the bundle) adds ChipWhisperer Studio with its icon to your desktop's applications menu, by writing `~/.local/share/applications/chipwhisperer-studio.desktop` and the icon. `--remove-desktop` takes the entry out again. On Windows and macOS these options only print a short note.
+
 ## Internal modes
 
-`--ccwrap` turns the executable into a compiler wrapper. Firmware builds that use clang call `cw-studio --ccwrap ...` (or `python -m cwstudio.ccwrap` from a pip install) as the C compiler; you never need to run it yourself. See [Firmware Builds](Firmware-Builds) and [Architecture](Architecture).
+`--ccwrap` turns the executable into a compiler wrapper. Firmware builds that use clang run `ChipWhispererStudio --ccwrap ...` (standalone bundle) or `python -m cwstudio.ccwrap` (pip install) as the C compiler; you never need to run it yourself. See [Firmware Builds](Firmware-Builds#gcc-and-clang-builds) and [Architecture](Architecture).
 
 ## Environment variables
 
@@ -48,7 +52,7 @@ cw-studio --data-dir D:\studio-data        # keep everything on another drive (W
 | `GITHUB_TOKEN` or `GH_TOKEN` | Optional. Sent with GitHub API lookups for firmware sources and tutorials, which lifts GitHub's limit of 60 anonymous requests per hour. A token with no scopes is enough. |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | Optional. If set, Studio verifies HTTPS certificates against this PEM bundle or folder instead of the operating system's trust store. Use it on networks that inspect HTTPS when you cannot install their root certificate in the system store. |
 | `CWSTUDIO_URL` | Default `--url` for `cw-studio mcp`. |
-| `MPLBACKEND` | Studio sets it to `Agg` if it is not set, so notebook figures render to images. |
+| `MPLBACKEND` | If it is not set, Studio sets it to its own inline backend so notebook figures render to images (shell commands run from a notebook get `Agg`). |
 | `CWSTUDIO_CC`, `CWSTUDIO_GCC` | Internal. Set by clang firmware builds for the compiler wrapper. |
 | `ZIG_GLOBAL_CACHE_DIR`, `ZIG_LOCAL_CACHE_DIR` | Internal. Clang builds point these at `toolchains/.zig-cache` in the data folder. |
 
@@ -82,7 +86,7 @@ ChipWhispererStudio/
 
 Relative paths you type in Studio (trace export names, glitch CSV names) are saved inside the data folder. Absolute paths are used as given.
 
-Disk usage: the ChipWhisperer firmware sources are about 60 MB. Installed compilers are the biggest items: Arm GCC about 1.1 GB, RISC-V GCC about 1.6 GB, AVR GCC about 200 MB and clang (Zig) about 390 MB unpacked. Remove the ones you do not need in the Firmware tab (see [Toolchains](Toolchains)).
+Disk usage: the ChipWhisperer firmware sources are about 250 MB. Installed compilers are the biggest items: Arm GCC about 1.1 GB, RISC-V GCC about 1.6 GB, AVR GCC about 215 MB and clang (Zig) about 400 MB unpacked. Remove the ones you do not need in the Firmware tab (see [Toolchains](Toolchains)).
 
 ## Remote use
 

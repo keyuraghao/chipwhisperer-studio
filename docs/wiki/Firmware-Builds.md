@@ -1,12 +1,10 @@
 # Firmware Builds
 
-The **Firmware** tab compiles ChipWhisperer's own target firmware (simpleserial-aes, simpleserial-glitch and the other example projects) for any supported platform, with GCC or clang, and can flash the result onto your target in the same click. You do not need to install a compiler, `make` (on Windows) or the ChipWhisperer repository yourself: Studio downloads what it needs the first time.
+The **Firmware** tab of ChipWhisperer Studio compiles ChipWhisperer's own target firmware (simpleserial-aes, simpleserial-glitch and the other example projects) for any supported platform, with GCC or clang, and can flash the result onto your target in the same click. You do not need to install a compiler, `make` (on Windows) or the ChipWhisperer repository yourself: Studio downloads what it needs the first time.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/firmware-light.png"><img alt="The Firmware tab after a clang build for the CW-Lite Arm" src="images/firmware.png"></picture>
 
 *The Firmware tab: build options at the top, the result of a successful build below.*
-
-> **Note:** Studio has so far been tested with its built-in [Simulator](Simulator) and in CI on Linux, Windows and macOS, where it downloads real compilers and builds real firmware. Flashing the built firmware onto physical hardware has not been verified yet.
 
 ![Building simpleserial-aes for CWLITEARM with clang (animated)](images/clips/firmware-build.webp)
 
@@ -25,7 +23,7 @@ The **Firmware** tab compiles ChipWhisperer's own target firmware (simpleserial-
 ## Quick start
 
 1. Open the **Firmware** tab.
-2. If the **Firmware sources** card says *Not downloaded*, press **Download** (about 20 MB).
+2. If the **Firmware sources** card says *Not downloaded*, press **Download** (about 110 MB, a one-time download).
 3. Choose a **Project** (for example `simpleserial-aes`) and a **Platform** (for example `CWLITEARM`).
 4. If the **Toolchain** line shows a warning such as *No GCC for Arm Cortex-M*, press **Install now** and wait for the download to finish.
 5. Press **Build**. A green *Build succeeded* box appears with the firmware size.
@@ -46,7 +44,7 @@ The **Firmware** tab compiles ChipWhisperer's own target firmware (simpleserial-
 
 ### Platforms that are greyed out
 
-A platform is disabled (*not available*) when it needs the extra HALs from `chipwhisperer-fw-extra` and your sources do not contain them. Studio's own download always includes them. If you build from your own checkout, run `git submodule update --init firmware/mcu/hal/chipwhisperer-fw-extra` in it. See [Firmware Sources](Firmware-Sources#using-your-own-firmware-folder).
+A platform is greyed out and cannot be selected when it needs the extra HALs from `chipwhisperer-fw-extra` and your sources do not contain them. Studio's own download always includes them. If you build from your own checkout, run `git submodule update --init firmware/mcu/hal/chipwhisperer-fw-extra` in it. See [Firmware Sources](Firmware-Sources#using-your-own-firmware-folder).
 
 ### Crypto targets
 
@@ -93,9 +91,9 @@ Linking is always done by GCC (Studio sets `LINK_COMPILER`), so a clang build us
 
 Under the options, the **Toolchain** line tells you which compilers the build will use:
 
-- a green badge such as *GNU Arm GCC 15.2.1-1.1* means the toolchain Studio downloaded will be used;
-- *(system)* means Studio found the compiler on your `PATH` and will use that;
-- an amber badge such as *No GCC for Arm Cortex-M* means nothing suitable is installed. If Studio has a download for it, the line shows its size and an **Install now** link; otherwise it suggests adding a custom toolchain on the [Toolchains](Toolchains) card.
+- a green badge such as *GNU Arm GCC 15.2.1-1.1* means the toolchain Studio downloaded (or a custom toolchain you added) will be used;
+- a badge ending in *(system)* means Studio found the compiler on your `PATH` and will use that;
+- an amber badge such as *No GCC for Arm Cortex-M* means nothing suitable is installed. If Studio has a download for it, the line shows its size and an **Install now** link; otherwise it suggests adding a custom toolchain on the **Toolchains** card (see [Toolchains](Toolchains#custom-toolchains)).
 
 If the platform has no programmer built into Studio, the line also says so: flash the `.hex` with the chip vendor's tool in that case.
 
@@ -107,7 +105,7 @@ If the platform has no programmer built into Studio, the line also says so: flas
 | **Build & program** | Builds, and if the build succeeds, immediately programs the target with the platform's programmer. Needs a scope connected on the Connect tab. |
 | **Cancel** | Shown while a build runs. Stops `make`. |
 
-While a build runs, a progress bar and *Building simpleserial-aes for CWLITEARM with gcc...* are shown and the log opens.
+While a build runs, a progress bar and *Building simpleserial-aes for CWLITEARM with gcc...* are shown and the **Build output** section opens.
 
 ### The result box
 
@@ -118,11 +116,11 @@ After a successful build a green box shows:
 - the path of the saved `.hex` (hover to see the full path);
 - **Program with ...** to flash the target with the platform's programmer, and **Download .hex** to save the file through your browser.
 
-If the build fails, a red box shows *Build failed* and the first error line from the log, and the build output opens automatically.
+If the build fails, a red box shows *Build failed* and the first error line from the log, and the **Build output** section opens automatically.
 
-<picture><source media="(prefers-color-scheme: light)" srcset="images/firmware-build-output-light.png"><img alt="Build output with coloured errors and warnings" src="images/firmware-build-output.png"></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="images/firmware-build-output-light.png"><img alt="The Build output section after a clang build" src="images/firmware-build-output.png"></picture>
 
-*The build output streams live. Errors are red, warnings amber, and make's own commands grey.*
+*The build output streams live while make runs. When there are errors or warnings, errors are shown in red and warnings in amber; make's own commands are grey.*
 
 ### Where builds are saved
 

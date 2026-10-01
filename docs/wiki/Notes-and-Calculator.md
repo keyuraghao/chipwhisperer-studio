@@ -1,6 +1,6 @@
 # Notes and Calculator
 
-Two small tools for everyday lab work. **Notes** is a text pad for keys you recovered, glitch settings that worked and to-dos, saved automatically. **Calc** is a calculator with side-channel helpers, plus statistics (count, sum, mean, median, min, max, peak to peak, standard deviation, RMS) of whatever you select: part of the waveform, one sample across all traces, or numbers anywhere in Studio.
+Two small ChipWhisperer Studio tools for everyday lab work. **Notes** is a text pad for keys you recovered, glitch settings that worked and to-dos, saved automatically. **Calc** is a calculator with side-channel helpers, plus statistics (count, sum, mean, median, min, max, peak to peak, standard deviation, RMS) of whatever you select: part of the waveform, one sample across all traces, or numbers anywhere in Studio.
 
 ![Inserting the CPA key into a note and previewing it (animated)](images/clips/notes.webp)
 
@@ -8,11 +8,11 @@ Two small tools for everyday lab work. **Notes** is a text pad for keys you reco
 
 ## Notes
 
-<picture><source media="(prefers-color-scheme: light)" srcset="images/notes-light.png"><img alt="The Notes tab with live selection statistics in the log bar" src="images/notes.png"></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="images/notes-light.png"><img alt="Notes tab with the Markdown preview of a lab note" src="images/notes.png"></picture>
 
 *The Notes tab. Selecting numbers in a note shows their statistics in the log bar at the bottom.*
 
-Open **Notes** in the left navigation (near the bottom).
+Open the **Notes** tab in the left navigation (near the bottom).
 
 | Control | What it does |
 |---------|--------------|
@@ -88,7 +88,7 @@ The calculator is deliberately limited to maths: it cannot run Python code, acce
 
 ## Selection statistics
 
-The **Selection statistics** card computes statistics of a set of numbers you pick. Choose the source at the top of the card:
+The **Selection statistics** card in the **Calc** tab computes statistics of a set of numbers you pick. Choose the source at the top of the card:
 
 | Source | What is measured |
 |--------|------------------|
@@ -126,7 +126,7 @@ For the waveform sources the card also shows the sample range and, when the scop
 
 ### The selection badge in the log bar
 
-Whenever you select text that contains numbers, anywhere in Studio, a small badge appears in the log bar at the bottom: *n 4 · Σ 172 · mean 43 · min 3 · max 126*, like the status bar of a spreadsheet. With a single number it shows *Selected: 42*. Click the badge to open the Calc tab.
+Whenever you select text that contains numbers, anywhere in Studio, a small badge appears in the log bar at the bottom: *n 4 · Σ 172 · mean 43 · min 3 · max 126*, like the status bar of a spreadsheet. With a single number it shows *Selected: 42*. Click the badge to open the **Calc** tab.
 
 Numbers are recognised in decimal (`42`, `-3.5`, `.5`), scientific (`1e-6`, `2.5E3`) and hexadecimal with a `0x` prefix (`0x2b`). Other hexadecimal text, such as a key written as `2b7e1516`, is not recognised as one number: parts of it are read as separate decimal (or scientific) numbers, so select plain numbers, or `0x` prefixed ones, for meaningful results. Numbers inside words (for example the `2` in `SS_VER_2_1`) are counted too. Selections longer than 500,000 characters are ignored.
 

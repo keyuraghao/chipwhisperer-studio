@@ -2,11 +2,11 @@
 
 A walkthrough of every feature of ChipWhisperer Studio in under three minutes, recorded with the built-in [simulator](Simulator), so everything shown also works without hardware.
 
-Each feature has a short clip below that plays by itself. The full narrated walkthrough is also available as one video:
+Each feature has a short clip below that plays by itself. The full captioned walkthrough is also available as one video:
 
-[![Video walkthrough: click to watch](images/demo-poster.png)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer-studio-demo.mp4)
+[![Video walkthrough: click to watch](images/demo-poster.png)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer-studio-demo.mp4)
 
-**[Watch or download the video (MP4, 6.5 MB)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer-studio-demo.mp4)**
+**[Watch or download the video (MP4, 7.2 MB)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer-studio-demo.mp4)**
 
 ## Chapters
 
@@ -14,20 +14,20 @@ Each feature has a short clip below that plays by itself. The full narrated walk
 |------|---------|--------------|
 | 0:01 | Introduction | What Studio is. |
 | 0:08 | Connect | Pick the simulator and connect the scope; the target connects with it. |
-| 0:17 | Scope settings | The searchable settings tree: gain, ADC and the glitch module. |
-| 0:28 | Target I/O | Send a key and a plaintext with SimpleSerial and watch the serial console. |
-| 0:35 | Capture | Capture 500 traces while the waveform updates live. |
-| 0:42 | Waveform view | Overlay of the last 10 traces, the mean and the min/max envelope. |
-| 0:51 | Cursors and zoom | Cursors A and B, the zoom in and zoom out buttons, the + and - keys, drag to zoom and Fit. |
-| 1:08 | CPA key recovery | Run CPA and recover the AES key, then overlay the correlation on the waveform. |
-| 1:21 | Glitch sweep | A clock glitch sweep over offset and width with the live result plot. |
-| 1:38 | Firmware build | Build simpleserial-aes for CWLITEARM with clang. |
-| 1:48 | Notebooks | Run a notebook that captures through Studio and plots the mean trace. |
-| 2:00 | Notes | Insert the CPA key into a note and preview the Markdown. |
-| 2:07 | Calculator | Side-channel expressions and statistics between the waveform cursors. |
-| 2:21 | AI agents (MCP) | The MCP setup for Claude and other agents. |
-| 2:26 | Themes | Switch between the dark and light themes. |
-| 2:33 | Get it | Where to download Studio. |
+| 0:18 | Scope settings | The settings tree with its groups open, the glitch group opened with a click, and filtering by name. |
+| 0:30 | Target I/O | Send a key and a plaintext with SimpleSerial and watch the serial console. |
+| 0:38 | Capture | Capture 500 traces while the waveform updates live. |
+| 0:45 | Waveform view | Overlay of the last 10 traces, the mean and the min/max envelope. |
+| 0:54 | Cursors and zoom | Cursors A and B, the zoom in and zoom out buttons, the + and - keys, drag to zoom and Fit. |
+| 1:11 | CPA key recovery | Run CPA and recover the AES key, then overlay the correlation on the waveform. |
+| 1:24 | Glitch sweep | A clock glitch sweep over offset and width with the live result plot. |
+| 1:41 | Firmware build | Build simpleserial-aes for CWLITEARM with clang. |
+| 1:53 | Notebooks | Run a notebook that captures through Studio and plots the mean trace. |
+| 2:04 | Notes | Insert the CPA key into a note and preview the Markdown. |
+| 2:11 | Calculator | Side-channel expressions and statistics between the waveform cursors. |
+| 2:25 | AI agents (MCP) | The MCP setup for Claude and other agents. |
+| 2:30 | Themes | Switch between the dark and light themes. |
+| 2:38 | Get it | Where to download Studio. |
 
 ## Clips by feature
 

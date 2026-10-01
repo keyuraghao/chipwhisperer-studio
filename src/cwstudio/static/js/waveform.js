@@ -112,6 +112,7 @@ export class Waveform {
     const w = this.plotEl.clientWidth || 800, ht = this.plotEl.clientHeight || 400;
     const opts = {
       width: w, height: ht,
+      padding: [8, 34, 0, 0], // room on the right for the last x-axis label (long time labels were cut off)
       cursor: {
         drag: { x: true, y: false, uni: 20 },
         points: { show: false },

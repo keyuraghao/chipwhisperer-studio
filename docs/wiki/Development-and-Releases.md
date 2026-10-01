@@ -32,10 +32,11 @@ cw-studio --simulate --log-level debug
 | `src/cwstudio/static/` | The web UI: `index.html`, `css/app.css`, `js/*.js` (including `markdown.js`, the Markdown renderer and sanitiser), `vendor/` (uPlot). |
 | `src/cwstudio/resources/` | `toolchains.json` (pinned compilers and firmware source settings) and `50-newae.rules`. |
 | `tests/` | pytest suite. |
-| `tools/` | `screenshots.py` (wiki and README images) and `release_notes.py`. |
-| `packaging/` | PyInstaller spec, `build.py`, `launcher.py` and the README placed inside bundles. |
+| `tools/` | `screenshots.py` (wiki and README screenshots), `theme_images.py` (light and dark `<picture>` references), `demo_video.py` (the video tour and feature clips), `benchmark.py` (stress tests and the [Performance](Performance) page), `release_notes.py` (release notes from `CHANGELOG.md`) and `make_icon.py` (the application icon). |
+| `packaging/` | PyInstaller spec, `build.py`, `launcher.py`, the application icons and the README placed inside bundles. |
 | `docs/wiki/` | Source of this wiki. |
 | `docs/DESIGN.md` | Design notes. |
+| `docs/benchmarks/` | Stored benchmark runs (JSON), one per published run. |
 | `.github/workflows/` | `ci.yml` (tests, firmware builds, bundles, releases) and `wiki.yml` (publishes this wiki). |
 
 ## Tests
@@ -48,11 +49,11 @@ The suite runs against the simulator and needs no hardware or network access. It
 
 | File | What it tests |
 |------|---------------|
-| `test_api.py` | The HTTP API end to end: metadata, connecting, settings, serial, capture modes, traces, export and import, CPA, glitch sweeps, WebSocket frames, programming upload. |
-| `test_units.py` | Settings introspection on the simulated scope, value conversion, the hardware worker's short and long jobs, the trace store, key and text generation, simulated glitch outcomes. |
+| `test_api.py` | The HTTP API end to end: metadata, connecting, settings, serial, capture modes, traces, export and import (including the `.npy` and `.cwp` zip downloads), CPA, glitch sweeps, WebSocket frames, programming upload, notebook import, and the routing layer's parameter handling and errors. |
+| `test_units.py` | Settings introspection on the simulated scope, value conversion, the hardware worker's short and long jobs, the trace store and its running statistics, `.npz` export round trips, key and text generation, simulated glitch outcomes, and the event history. |
 | `test_toolchains.py` | Toolchain registry pinning, install with checksum verification, mirror fallback, path traversal protection, aliases, custom toolchains, the clang wrapper's flag translation, platform parsing, firmware folder checks. |
 | `test_net.py` | HTTPS certificate source selection and the error shown when verification fails. |
-| `test_notebook.py` | Notebook kernel: results and errors, tutorial-style capture loops reaching the trace store, shell and cell magics, `%run`, simulated programming, notebook files API, interrupt and restart, notes, calculator and statistics. |
+| `test_notebook.py` | Notebook kernel: results and errors, tutorial-style capture loops reaching the trace store, shell and cell magics, `%run`, simulated programming, matplotlib figures, notebook files API, interrupt and restart, notes, calculator and statistics. |
 | `test_mcp.py` | Unit tests of the MCP protocol layer, a raw stdio session and the streamable HTTP transport, then (when the `mcp` package is installed, as with `pip install -e ".[test-mcp]"`) starts `cw-studio mcp` over stdio with the official MCP client and runs a full session: connect, settings, capture, CPA key recovery, glitch sweep, notebook code, calculator, notes and notebook runs. |
 
 Real compiler downloads and firmware builds are exercised in CI rather than in the unit tests.
@@ -83,7 +84,7 @@ The script exits with an error if the browser console reported any JavaScript er
 
 ## Benchmarks and stress tests
 
-`tools/benchmark.py` measures large trace sets, large files, CPA, capture throughput, the server under load and many windows, runs memory leak checks against a real Studio process, and watches the browser during long live captures. `--quick` takes a few minutes, the full set about 45. `--publish results.json` keeps the run in `docs/benchmarks` and rebuilds the [Performance](Performance) page and the README section; `--compare before.json after.json` prints what changed. Run it before a release that touches capture, storage, analysis or the server.
+`tools/benchmark.py` measures large trace sets, large files, CPA, capture throughput, the server under load and many windows, runs memory leak checks against a real Studio process, and watches the browser during long live captures. `--quick` takes a few minutes, the full set about 45 minutes, and `--only` picks groups (store, files, cpa, capture, server, leaks, ui). `--publish results.json` keeps the run in `docs/benchmarks` and rebuilds the [Performance](Performance) page and the README section; `--compare before.json after.json` prints what changed. Run it before a release that touches capture, storage, analysis or the server.
 
 ## Demo video
 
@@ -104,7 +105,7 @@ pip install -e . "pyinstaller>=6.0" libusb-package
 python packaging/build.py --no-venv
 ```
 
-`build.py` runs PyInstaller with `packaging/cwstudio.spec`, copies the udev rule, a README, LICENSE and NOTICE next to the executable and zips `dist/ChipWhispererStudio-<os>-<arch>.zip`. Without `--no-venv` it first creates an isolated virtual environment; `--out` changes the output folder and `--skip-zip` leaves the unzipped folder only. `packaging/launcher.py` is the bundle's entry point: it handles the `--ccwrap` compiler wrapper mode quickly and points python-libusb1 at the bundled libusb before starting Studio.
+`build.py` runs PyInstaller with `packaging/cwstudio.spec`, copies the udev rule, a README, LICENSE, NOTICE and the application icon next to the executable and zips `dist/ChipWhispererStudio-<os>-<arch>.zip`. Without `--no-venv` it first creates an isolated virtual environment; `--out` changes the output folder and `--skip-zip` leaves the unzipped folder only. `packaging/launcher.py` is the bundle's entry point: it handles the `--ccwrap` compiler wrapper mode quickly and points python-libusb1 at the bundled libusb before starting Studio.
 
 ## Continuous integration
 
@@ -112,9 +113,10 @@ python packaging/build.py --no-venv
 
 | Job | What it does |
 |-----|--------------|
-| Tests | pytest on Ubuntu (Python 3.10 and 3.12), Windows and macOS. |
+| Tests | pytest on Ubuntu (Python 3.10 and 3.12), Windows and macOS (Python 3.12). The Python 3.10 job installs only the `test` extra; the others install `test-mcp` and also run the official MCP client test. |
+| Docs | Checks that links and images in README, DESIGN and CHANGELOG resolve, that no em dashes appear anywhere, and that every screenshot uses the light and dark `<picture>` format (`tools/theme_images.py --check`). |
 | Firmware build | On all three operating systems: installs Arm GCC, AVR GCC, clang (and Windows make) through Studio, downloads the firmware sources from GitHub (failing if it had to use the fallback commit), and builds simpleserial-aes for CWLITEARM and CWLITEXMEGA with GCC and clang, and for CWHUSKY with GCC. |
-| Bundle | Builds the standalone bundle on each operating system and smoke tests it: `mcp --help`, the compiler wrapper, a simulator capture over the API, the toolchain list, and a notebook cell that plots with matplotlib. |
+| Bundle | Builds the standalone bundle on each operating system (Linux on Ubuntu 22.04) and smoke tests it: `mcp --help`, the compiler wrapper, a simulator capture over the API, the toolchain list, and a notebook cell that plots with matplotlib. |
 | GitHub release | Only for tags `v*`, after all other jobs pass: extracts the release notes from `CHANGELOG.md`, builds the wheel and source package, and publishes a GitHub release with the three bundles attached. |
 
 ## Releasing a version

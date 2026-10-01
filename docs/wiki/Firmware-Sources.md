@@ -1,6 +1,6 @@
 # Firmware Sources
 
-To build target firmware, Studio needs ChipWhisperer's firmware source tree (`firmware/mcu`). Studio does not bundle it: it downloads it straight from NewAE's GitHub repository and can keep it up to date, so new examples and fixes from NewAE reach you without a new Studio release. You can also point Studio at your own ChipWhisperer checkout.
+To build target firmware, ChipWhisperer Studio needs ChipWhisperer's firmware source tree (`firmware/mcu`). Studio does not bundle it: it downloads it straight from NewAE's GitHub repository and can keep it up to date, so new examples and fixes from NewAE reach you without a new Studio release. You can also point Studio at your own ChipWhisperer checkout.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/firmware-sources-light.png"><img alt="The Firmware sources card" src="images/firmware-sources.png"></picture>
 
@@ -13,7 +13,7 @@ To build target firmware, Studio needs ChipWhisperer's firmware source tree (`fi
 | `firmware/mcu`: the example projects (`simpleserial-aes`, `simpleserial-glitch`, ...), the HALs for the main platforms, the crypto libraries and the shared makefiles | [newaetech/chipwhisperer](https://github.com/newaetech/chipwhisperer), at the commit your channel points to | `<data dir>/firmware/chipwhisperer/` |
 | The extra HALs for many CW308 target boards (STM32F1/F2/F4, K82F, SAML11, NRF52, ...) | [newaetech/chipwhisperer-fw-extra](https://github.com/newaetech/chipwhisperer-fw-extra), at exactly the commit the ChipWhisperer repository pins as its submodule | `<data dir>/firmware/chipwhisperer/hal/chipwhisperer-fw-extra/` |
 
-Only these folders are kept from the downloaded archives (about 20 MB). Studio records the repository, channel, commit, commit date and message in a small `.cwstudio-source.json` file inside the folder.
+Only these folders are kept from the downloaded archives (about 110 MB to download, about 250 MB on disk). Studio records the repository, channel, commit, commit date and message in a small `.cwstudio-source.json` file inside the folder.
 
 ## Channels
 
@@ -25,7 +25,7 @@ The **Follow** setting chooses which version of ChipWhisperer the sources track:
 | **Latest release** | The commit of NewAE's latest GitHub release. |
 | **Tag or commit...** | Any branch name, tag (for example `v6.0.0`) or commit hash. Type it into the box that appears and press Enter. |
 
-Changing the channel does not download anything by itself: press **Update now** (or **Re-download**) afterwards.
+Changing the channel does not download anything by itself: press **Re-download** afterwards, or **Check for updates** and then **Update now**.
 
 ## Buttons and statuses
 
@@ -84,7 +84,7 @@ Studio checks that the folder contains `Makefile.inc` and `hal/Makefile.hal`. Wh
 | `<data dir>/firmware/builds/` | Copies of successful builds. |
 | `<data dir>/firmware/uploads/` | Firmware files you uploaded on the Target tab. |
 
-The [Notebooks](Notebooks) tab links `<data dir>/notebooks/firmware/mcu` to the sources, so NewAE's tutorial notebooks can find the firmware at the relative path they expect.
+The [Notebook](Notebooks) tab links `<data dir>/notebooks/firmware/mcu` to the sources, so NewAE's tutorial notebooks can find the firmware at the relative path they expect.
 
 ## From the API and MCP
 

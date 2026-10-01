@@ -19,7 +19,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from screenshots import ROOT, Api, _free_port, _up  # noqa: E402
+from screenshots import ROOT, Api, _free_port, _up, neutral_pythonpath  # noqa: E402
 
 KEY = "2b7e151628aed2a6abf7158809cf4f3c"
 
@@ -75,6 +75,7 @@ class Demo:
         return time.monotonic() - self.t0
 
     def chapter(self, name: str):
+        self.page.evaluate("() => window.__demo.caption('', '')")  # no caption from the previous chapter in this one
         self.chapters.append((self.at(), name))
         print(f"{self.at():6.1f}s  {name}", flush=True)
 
@@ -105,7 +106,19 @@ class Demo:
     def click(self, locator, pause: float = 0.6, **kw):
         self.point(locator)
         locator.click(**kw)
+        locator.evaluate("e => { if (e.type === 'checkbox') e.blur(); }")  # no focus ring left on toggled checkboxes
         self.wait(pause)
+
+    def expand(self, group: str, pause: float = 0.8):
+        """Click a settings-tree group open, but only if it is closed (clicking an open group would collapse it on camera)."""
+        loc = self.page.locator(".tree .ghead", has_text=group).first
+        if loc.count() and not loc.evaluate("e => e.parentElement.classList.contains('open')"):
+            self.click(loc, pause)
+
+    def open_details(self, scope: str, text: str, pause: float = 0.6):
+        loc = self.page.locator(f"{scope} summary", has_text=text).first
+        if loc.count() and not loc.evaluate("e => e.parentElement.open"):
+            self.click(loc, pause)
 
     def tab(self, name: str):
         self.click(self.page.locator(f'[data-tab="{name}"]'), 0.9)
@@ -162,30 +175,30 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.card("ChipWhisperer Studio", ["A desktop app for NewAE ChipWhisperer hardware", "Live waveforms, capture, CPA, glitching, firmware builds, notebooks and an MCP server for AI agents", "This walkthrough uses the built-in simulator, so no hardware is needed"], 6)
 
         d.chapter("Connect")
+        d.caption("Connect a scope and a target", "Nano, Lite, Pro and Husky are detected over USB; here we pick the built-in simulator")
         d.tab("connect")
-        d.caption("Connect a scope and a target", "Nano, Lite, Pro and Husky are detected over USB; here we pick the built-in simulator", 1.5)
+        d.wait(1.2)
         sel = pg.locator("#panel-connect select").first
         d.point(sel)
         sel.select_option("sim")
         d.wait(0.6)
         d.click(pg.locator("#panel-connect button", has_text="Connect scope"), 1.5)
+        d.tab("connect")  # Studio moves on to the Scope tab after connecting; come back to show the result here
         d.point(pg.locator("#chip-target"))
         d.caption("With the simulator the target connects too; both show in the top bar", "With real hardware, pick the target and press Connect target", 2.5)
 
         d.chapter("Scope settings")
         d.tab("scope")
-        d.caption("Every scope setting in one searchable tree", "Gain, ADC, clock, triggers and glitch settings, with live values and documentation", 0.5)
-        for group in ("gain", "adc"):
-            loc = pg.locator(".tree .ghead", has_text=group).first
-            if loc.count():
-                d.click(loc, 0.7)
-        d.wait(1.5)
+        d.caption("Every scope setting in one searchable tree", "Gain, ADC, clock and trigger are open; click any group, such as glitch, to see its settings", 1.5)
+        pg.locator("#sidebar").evaluate("e => e.scrollTo({top: 400, behavior: 'smooth'})")
+        d.wait(1)
+        d.expand("glitch", 1.5)
+        pg.locator("#sidebar").evaluate("e => e.scrollTo({top: 0, behavior: 'smooth'})")
+        d.wait(0.8)
+        d.caption("Type to filter: every matching setting shows at once", "", 0.3)
         search = pg.locator("#panel-scope input.flex").first
-        d.type(search, "glitch")
-        loc = pg.locator(".tree .ghead", has_text="glitch").first
-        if loc.count():
-            d.click(loc, 0.8)
-        d.wait(2)
+        d.type(search, "clkgen")
+        d.wait(2.5)
         search.fill("")
 
         d.chapter("Target I/O")
@@ -281,9 +294,7 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
                 s.select_option(sel_value)
                 d.wait(0.5)
         d.click(pg.locator("#panel-firmware .seg button[data-v='clang']").first, 0.6)
-        out_sum = pg.locator("#panel-firmware summary", has_text="Build output")
-        if out_sum.count():
-            out_sum.first.click()
+        d.open_details("#panel-firmware", "Build output", 0.3)
         d.click(pg.locator("#panel-firmware button", has_text="Build").first, 0.5)
         api.wait("/api/firmware/build", lambda r: r.get("state") != "running", timeout=600, every=1)
         d.wait(1)
@@ -373,7 +384,8 @@ def make_clips(ff: str, mp4: str, chapters, folder: str, skip=("Introduction", "
             continue
         end = chapters[i + 1][0] if i + 1 < len(chapters) else total
         path = os.path.join(folder, slug(name) + ".webp")
-        subprocess.check_call([ff, "-y", "-loglevel", "error", "-ss", f"{start + 0.2:.2f}", "-t", f"{end - start - 0.3:.2f}", "-i", mp4, "-vf", "fps=10,scale=960:-1:flags=lanczos", "-c:v", "libwebp_anim", "-quality", "60", "-compression_level", "3", "-loop", "0", path])
+        # Margins keep the previous chapter's last frames and the next chapter's first ones out of the clip
+        subprocess.check_call([ff, "-y", "-loglevel", "error", "-ss", f"{start + 1.0:.2f}", "-t", f"{end - start - 1.6:.2f}", "-i", mp4, "-vf", "fps=10,scale=960:-1:flags=lanczos", "-c:v", "libwebp_anim", "-quality", "60", "-compression_level", "3", "-loop", "0", path])
         print(f"clip {name}: {path} ({os.path.getsize(path) / 1e6:.1f} MB)", flush=True)
 
 
@@ -419,7 +431,7 @@ def main() -> int:
     os.makedirs(args.out, exist_ok=True)
     width, height = (int(v) for v in args.size.split("x"))
     port = _free_port()
-    env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "src") + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    env = dict(os.environ, PYTHONPATH=neutral_pythonpath() + os.pathsep + os.environ.get("PYTHONPATH", ""))
     proc = subprocess.Popen([sys.executable, "-m", "cwstudio", "--no-browser", "--port", str(port), "--data-dir", args.data_dir], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
     api = Api(base)

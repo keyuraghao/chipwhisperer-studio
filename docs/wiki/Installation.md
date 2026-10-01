@@ -23,9 +23,11 @@ Every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases/late
 Each zip contains a single `ChipWhispererStudio` folder with:
 
 - `ChipWhispererStudio` (or `ChipWhispererStudio.exe` on Windows): the application, with its own Python runtime, the `chipwhisperer` library, `libusb` and all other dependencies inside the `_internal` folder.
+- `ChipWhisperer Studio.app` (macOS): starts Studio with a double-click and shows the Studio icon in Finder and the Dock.
 - `chipwhisperer-studio.sh` (macOS and Linux): a small launcher script.
 - `ChipWhispererStudio-simulator.bat` (Windows): starts Studio with the simulator preselected.
 - `50-newae.rules`: the Linux udev rule for ChipWhisperer devices.
+- `ChipWhispererStudio.png` (Linux): the application icon, for desktop shortcuts and launchers.
 - `README.md`, `LICENSE.txt` and `NOTICE.txt`.
 
 When Studio starts, a console window shows its address (normally `http://127.0.0.1:8765/`) and your web browser opens it automatically. Keep the console window open while you use Studio; closing it stops the application.
@@ -44,7 +46,7 @@ When Studio starts, a console window shows its address (normally `http://127.0.0
 
 1. Download `ChipWhispererStudio-macos-arm64.zip`. Safari usually extracts it automatically; otherwise double-click the zip.
 2. Move the `ChipWhispererStudio` folder somewhere permanent, for example your Applications or Documents folder.
-3. The bundle is not notarized by Apple yet, so the first time you open it, right-click (or Control-click) `ChipWhispererStudio` and choose **Open**, then confirm **Open** in the dialog. After that it opens normally with a double-click. You can also run `./chipwhisperer-studio.sh` from Terminal.
+3. Double-click `ChipWhisperer Studio.app` in the folder; it opens Studio in a Terminal window that shows its address and messages. The bundle is not notarized by Apple yet, so the first time, right-click (or Control-click) `ChipWhisperer Studio.app` and choose **Open**, then confirm **Open** in the dialog; if macOS then asks about `ChipWhispererStudio` too, allow it the same way. After that it opens normally with a double-click. You can also run `./chipwhisperer-studio.sh` from Terminal.
 4. If macOS says the app "is damaged" or refuses to open it, remove the download quarantine flag in Terminal and try again: `xattr -dr com.apple.quarantine /path/to/ChipWhispererStudio`
 5. Your browser opens Studio.
 
@@ -55,6 +57,7 @@ No USB driver is needed on macOS. If a device is not detected, try another cable
 1. Download `ChipWhispererStudio-linux-x86_64.zip` and extract it, for example: `unzip ChipWhispererStudio-linux-x86_64.zip -d ~/Applications`
 2. Start it with `~/Applications/ChipWhispererStudio/chipwhisperer-studio.sh`
 3. Your browser opens Studio.
+4. Optional: run `~/Applications/ChipWhispererStudio/ChipWhispererStudio --install-desktop` once to add ChipWhisperer Studio with its icon to your applications menu (`--remove-desktop` takes it out again).
 
 **udev rule (once per computer).** Linux only lets root open USB devices unless a udev rule grants access. Studio includes NewAE's rule (`50-newae.rules`), and the Connect tab shows the exact command for your installation with a **Copy command** button. It looks like this:
 
@@ -75,7 +78,7 @@ Studio is not on PyPI yet. Install the wheel from the latest GitHub release inst
 ```bash
 python -m venv studio-env
 source studio-env/bin/activate            # Windows: studio-env\Scripts\activate
-pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.4/chipwhisperer_studio-0.4.4-py3-none-any.whl
+pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer_studio-0.4.5-py3-none-any.whl
 cw-studio
 ```
 
@@ -90,7 +93,7 @@ The USB driver (Windows) and udev rule (Linux) steps above apply to the Python p
 By default Studio opens in your web browser. To open it in its own desktop window instead, install the `window` extra and start Studio with `--window`:
 
 ```bash
-pip install "chipwhisperer-studio[window] @ https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.4/chipwhisperer_studio-0.4.4-py3-none-any.whl"
+pip install "chipwhisperer-studio[window] @ https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer_studio-0.4.5-py3-none-any.whl"
 cw-studio --window
 ```
 
@@ -131,9 +134,9 @@ The application itself needs about 150 to 300 MB once extracted. Compilers are o
 
 | Toolchain | Download | On disk (approximately) |
 |-----------|----------|-------------------------|
-| GNU Arm GCC | about 300 MB | about 1.1 GB |
+| GNU Arm GCC | about 300 to 340 MB | about 1.1 GB |
 | GNU RISC-V GCC | about 400 to 470 MB | about 1.6 GB |
-| GNU AVR GCC | about 40 to 55 MB | about 220 MB |
+| GNU AVR GCC | about 35 to 55 MB | about 220 MB |
 | LLVM clang (Zig) | about 50 to 100 MB | about 400 MB |
 | GNU make + sh (Windows only) | about 3 MB | about 10 MB |
 
@@ -141,7 +144,7 @@ You can remove any toolchain again from the Firmware tab. See [Toolchains](Toolc
 
 ## Updating
 
-- **Standalone bundle:** download the new zip and extract it next to (or over) the old folder. Your data folder is separate, so notebooks, notes, compilers, builds and firmware sources are kept.
+- **Standalone bundle:** delete the old `ChipWhispererStudio` application folder and extract the new zip in its place (extracting over the old folder can leave stale files behind). Your data folder is separate, so notebooks, notes, compilers, builds and firmware sources are kept.
 - **Python package:** `pip install --upgrade` with the new release's wheel URL, or `git pull` in a source checkout.
 
 Firmware sources and the list of available compilers can be updated from inside Studio without a new release. See [Firmware Sources](Firmware-Sources) and [Toolchains](Toolchains).

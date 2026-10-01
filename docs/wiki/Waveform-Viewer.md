@@ -1,12 +1,12 @@
 # Waveform viewer
 
-The waveform viewer is the large plot in the middle of Studio. It shows every trace as it is captured, lets you overlay and average traces, browse stored traces, zoom, and measure with two cursors.
+The waveform viewer is the large plot on the right of the ChipWhisperer Studio window. It shows every trace as it is captured, lets you overlay and average traces, browse stored traces, zoom, and measure with two cursors.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/waveform-overlay-light.png"><img alt="The waveform viewer showing an overlay of recent traces" src="images/waveform-overlay.png"></picture>
 
 *The toolbar at the top controls what is drawn; the footer below the plot shows statistics of the displayed trace.*
 
-The viewer is visible on every tab except [Notebooks](Notebooks), which uses the main area for its cells. Traces captured by notebook code still appear here when you switch back.
+The viewer is visible on every tab except **Notebook**, which uses the main area for its cells (see [Notebooks](Notebooks)). Traces captured by notebook code still appear here when you switch back.
 
 ![Overlay of recent traces with the mean and min/max envelope (animated)](images/clips/waveform-view.webp)
 
@@ -38,7 +38,7 @@ The mean and min/max statistics are computed over all stored traces. They are re
 
 ![Cursors, the zoom buttons, the + and - keys, drag to zoom and Fit (animated)](images/clips/cursors-and-zoom.webp)
 
-While you are zoomed in, new live traces keep your zoom. The CPA Analysis tab's **use zoom** button copies the zoomed range into the attack's sample range, so you can attack only the part of the trace you are looking at.
+While you are zoomed in, new live traces keep your zoom. The **use zoom** button in the **Analysis** tab copies the zoomed range into the attack's sample range, so you can attack only the part of the trace you are looking at.
 
 ## Cursors and measurements
 
@@ -83,15 +83,16 @@ The footer under the plot describes the displayed trace:
 | Esc | Stop the running capture or sweep |
 | Space | Pause or resume the display |
 | Left / Right | Previous or next trace (in Browse mode) |
+| + / - | Zoom in or out around cursor A |
 
 Shortcuts are ignored while you are typing in a text box.
 
 ## Performance
 
-Captures can run much faster than a screen can redraw. Studio sends at most **Display fps** traces per second (25 by default, set on the [Capturing Traces](Capturing-Traces) tab) to the viewer and always sends the final trace of a run, while every trace is still stored. Traces travel to the browser as compact binary data, and the plot uses the uPlot library, so traces with tens of thousands of samples stay smooth.
+Captures can run much faster than a screen can redraw. Studio sends at most **Display fps** traces per second (25 by default, set in the **Capture** tab, see [Capturing Traces](Capturing-Traces#capture-options)) to the viewer and always sends the final trace of a run with a fixed trace count, while every trace is still stored. Traces travel to the browser as compact binary data, and the plot uses the uPlot library, so traces with tens of thousands of samples stay smooth.
 
 ## See also
 
 - [Capturing Traces](Capturing-Traces) for recording traces.
-- CPA Analysis, whose **overlay corr** option draws the correlation of a key byte on top of the waveform.
+- The **Analysis** tab, whose **overlay corr** option draws the correlation of a key byte on top of the waveform.
 - [Interface Tour](Interface-Tour) for the rest of the window.

@@ -57,7 +57,7 @@ The executable is not code-signed. Choose **More info** and **Run anyway** if yo
 
 ### `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`
 
-Python could not verify an HTTPS certificate. Since version 0.3.0 Studio uses the operating system's certificate store, which fixes this for standard setups; update if you run an older version. If it still happens you are probably on a network that inspects HTTPS with its own root certificate:
+Python could not verify an HTTPS certificate. Studio uses the operating system's certificate store (with Mozilla's bundle from `certifi` as a fallback), which works for standard setups. If it still happens you are probably on a network that inspects HTTPS with its own root certificate:
 
 1. Install that root certificate in the operating system's trust store (your IT department can provide it), then restart Studio, or
 2. Save the certificate (PEM) and start Studio with `SSL_CERT_FILE=/path/to/bundle.pem`.
@@ -80,17 +80,17 @@ The downloaded file does not match the SHA-256 pinned in Studio's registry. The 
 
 ### "no GCC toolchain for arm/avr/riscv"
 
-Install the matching compiler on the Toolchains card (the Build card offers an **Install now** link). Clang builds need the GCC toolchain too, because GCC provides the C library and links the firmware.
+Install the matching compiler on the **Toolchains** card (the **Build firmware** card offers an **Install now** link). Clang builds need the GCC toolchain too, because GCC provides the C library and links the firmware.
 
 ### "make not found"
 
-- **Windows:** install **GNU make + sh** on the Toolchains card.
+- **Windows:** install **GNU make + sh** on the **Toolchains** card.
 - **macOS:** run `xcode-select --install`.
 - **Linux:** install make with your package manager, for example `sudo apt install make`.
 
 ### "no firmware sources yet"
 
-Download the sources on the Sources card of the Firmware tab, or point Studio at your own checkout with **Use my own firmware folder** (see [Firmware Sources](Firmware-Sources)).
+Download the sources on the **Firmware sources** card of the Firmware tab, or point Studio at your own checkout with **Use my own firmware folder** (see [Firmware Sources](Firmware-Sources)).
 
 ### Some platforms always fail
 
@@ -160,7 +160,7 @@ See [MCP Server](MCP-Server).
 
 Open an issue at [github.com/keyuraghao/chipwhisperer-studio/issues](https://github.com/keyuraghao/chipwhisperer-studio/issues) and include:
 
-1. The Studio version (shown next to the title, for example `v0.4.4`) and how you installed it (bundle or pip).
+1. The Studio version (shown next to the title in the top bar) and how you installed it (bundle or pip).
 2. Your operating system and version, and the ChipWhisperer scope and target you use.
 3. What you did, what you expected and what happened.
 4. The relevant log lines from the log drawer or console (start with `--log-level debug` if you can reproduce it), or the build output for build problems.

@@ -3,7 +3,7 @@
 
 Measures how Studio behaves with very large trace sets, large trace files, long sessions and many clients, and checks for memory leaks. Every scenario runs in a fresh Python process (or against a fresh Studio server), so memory figures are not polluted by earlier scenarios. Results go to a JSON file and to Markdown tables for the README and the wiki.
 
-    python tools/benchmark.py                  # everything (about 30 minutes)
+    python tools/benchmark.py                  # everything (about 45 minutes)
     python tools/benchmark.py --quick          # smaller sizes and shorter leak runs (a few minutes)
     python tools/benchmark.py --only store,cpa # some groups: store, files, cpa, capture, server, leaks, ui
     python tools/benchmark.py --report build/bench/results.json   # only render the Markdown from saved results
