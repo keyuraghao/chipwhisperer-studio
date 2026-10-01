@@ -25,6 +25,9 @@ MODELS: Dict[str, Dict[str, Any]] = {
 
 GUESSES = np.arange(256, dtype=np.uint8)
 
+# Elements (float64) per block when turning the CPA sums into |corr|; 256 KiB-ish blocks stay in cache.
+_REPORT_BLOCK = 1 << 15
+
 
 def hypotheses(model: str, tin: np.ndarray, tout: np.ndarray, b: int) -> np.ndarray:
     """Return float32 matrix (n_traces, 256) of hypothetical leakage for byte b."""
@@ -172,6 +175,7 @@ class CPAAttack:
             sum_ht = np.zeros((nb, 256, S), np.float64)
             n = 0
             chunk = max(self.report_every, 1)
+            prod = np.empty((256, S), np.float64)   # reused GEMM output, avoids a large allocation per byte per chunk
             for start in range(0, N, chunk):
                 if self._stop.is_set():
                     break
@@ -179,11 +183,13 @@ class CPAAttack:
                 W = self.waves[start:end, self.lo:self.hi].astype(np.float64)
                 sum_t += W.sum(axis=0)
                 sum_t2 += (W * W).sum(axis=0)
+                tin, tout = self.tin[start:end], self.tout[start:end]
                 for i, b in enumerate(self.bytes_to_attack):
-                    H = hypotheses(self.model, self.tin[start:end], self.tout[start:end], b).astype(np.float64)
+                    H = hypotheses(self.model, tin, tout, b).astype(np.float64)
                     sum_h[i] += H.sum(axis=0)
                     sum_h2[i] += (H * H).sum(axis=0)
-                    sum_ht[i] += H.T @ W
+                    np.matmul(H.T, W, out=prod)
+                    sum_ht[i] += prod
                 n = end
                 self._report(n, sum_h, sum_h2, sum_t, sum_t2, sum_ht)
             r.done = True
@@ -197,19 +203,41 @@ class CPAAttack:
 
     def _report(self, n, sum_h, sum_h2, sum_t, sum_t2, sum_ht):
         r = self.result
+        S = sum_t.shape[0]
         with np.errstate(divide="ignore", invalid="ignore"):
             var_h = n * sum_h2 - sum_h ** 2                     # (nb,256)
             var_t = n * sum_t2 - sum_t ** 2                     # (S,)
-            num = n * sum_ht - sum_h[:, :, None] * sum_t[None, None, :]
-            den = np.sqrt(var_h[:, :, None] * var_t[None, None, :])
-            corr = np.abs(num / den)
-            corr[~np.isfinite(corr)] = 0.0
+            # corr = (n*sum_ht - sum_h*sum_t) / sqrt(var_h*var_t), rearranged as (sum_ht - sum_h/n * sum_t) * (n/sd_h) * (1/sd_t)
+            mean_h = sum_h / n
+            scale_h = n / np.sqrt(var_h)
+            scale_t = 1.0 / np.sqrt(var_t)
+        # |corr| is built a few guesses at a time in a small reused buffer: the full (nb,256,S) num/den/corr arrays of a naive version cost several passes over hundreds of MB per report
+        rows = max(1, min(256, _REPORT_BLOCK // max(S, 1)))
+        blk = np.empty((rows, S), np.float64)
         pge = []
         for i, b in enumerate(self.bytes_to_attack):
-            r.corr_max[b] = corr[i].max(axis=1)
-            r.corr_argmax[b] = corr[i].argmax(axis=1) + self.lo
+            for g0 in range(0, 256, rows):
+                g1 = min(256, g0 + rows)
+                c = blk[:g1 - g0]
+                with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+                    np.multiply(mean_h[i, g0:g1, None], sum_t[None, :], out=c)
+                    np.subtract(sum_ht[i, g0:g1], c, out=c)
+                    c *= scale_h[i, g0:g1, None]
+                    c *= scale_t[None, :]
+                    np.abs(c, out=c)
+                    am = c.argmax(axis=1)
+                    mx = c[np.arange(g1 - g0), am]
+                if not np.all(np.isfinite(mx)):
+                    # zero variance (constant sample or hypothesis) or non-finite input: those correlations count as 0
+                    c[~np.isfinite(c)] = 0.0
+                    am = c.argmax(axis=1)
+                    mx = c[np.arange(g1 - g0), am]
+                r.corr_max[b, g0:g1] = mx
+                r.corr_argmax[b, g0:g1] = am + self.lo
             best = int(np.argmax(r.corr_max[b]))
-            r.best_corr_trace[b] = (num[i, best] / den[i, best]).astype(np.float32)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                num = n * sum_ht[i, best] - sum_h[i, best] * sum_t
+                r.best_corr_trace[b] = (num / np.sqrt(var_h[i, best] * var_t)).astype(np.float32)
             if r.known_key is not None and len(r.known_key) > b:
                 order = np.argsort(-r.corr_max[b])
                 pge.append(int(np.where(order == int(r.known_key[b]))[0][0]))
@@ -222,3 +250,4 @@ class CPAAttack:
         r.history.append(entry)
         if self.callback:
             self.callback(r)
+

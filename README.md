@@ -183,7 +183,7 @@ Try asking your agent: *"Connect to the simulator, capture 100 traces with a fix
 
 ## HTTP API and remote use
 
-Everything the UI and the MCP server do goes through a documented HTTP API; open `/api/docs` for interactive documentation. Start Studio with `--host 0.0.0.0` on the machine that has the hardware and use it from any browser on the network, or drive captures from scripts and CI.
+Everything the UI and the MCP server do goes through a documented HTTP API; open `/api/docs` for the list of endpoints and the [HTTP API wiki page](https://github.com/keyuraghao/chipwhisperer-studio/wiki/HTTP-API) for details. Start Studio with `--host 0.0.0.0` on the machine that has the hardware and use it from any browser on the network, or drive captures from scripts and CI.
 
 ![Light theme](docs/wiki/images/capture-light.png)
 
@@ -191,7 +191,7 @@ Everything the UI and the MCP server do goes through a documented HTTP API; open
 
 ![ChipWhisperer Studio architecture](docs/wiki/images/architecture.svg)
 
-Studio is one Python process: a FastAPI server that serves the web UI, the HTTP API and a WebSocket for live traces. A single worker thread owns the USB hardware, while CPA, toolchain downloads and firmware builds run on their own threads. The MCP server is another client of the same API. Details are in [docs/DESIGN.md](docs/DESIGN.md).
+Studio is one Python process: a Starlette server (with a small built-in router) that serves the web UI, the HTTP API and a WebSocket for live traces. A single worker thread owns the USB hardware, while CPA, toolchain downloads and firmware builds run on their own threads. The MCP server is another client of the same API. Details are in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Development
 

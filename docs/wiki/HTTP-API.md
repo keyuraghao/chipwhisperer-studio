@@ -5,8 +5,8 @@ Everything the Studio window does goes through a local HTTP API and one WebSocke
 ## Basics
 
 - **Base URL:** `http://127.0.0.1:8765` by default (the host and port you started Studio with; see [Command Line and Configuration](Command-Line-and-Configuration)).
-- **Interactive documentation:** open `http://127.0.0.1:8765/api/docs` for a browsable Swagger UI generated from the running server. You can try every call there.
-- **Requests:** `POST` and `PUT` bodies are JSON (`Content-Type: application/json`). Uploads use `multipart/form-data`.
+- **Endpoint list:** open `http://127.0.0.1:8765/api/docs` for a list of every route the running server offers, with its method, parameters and notes.
+- **Requests:** `POST` and `PUT` bodies are JSON (`Content-Type: application/json`). Uploads use `multipart/form-data` with a `file` field, or send the file itself as the request body with `?filename=NAME` (for example `curl --data-binary @fw.hex "http://127.0.0.1:8765/api/target/program/upload?programmer=STM32F&filename=fw.hex"`).
 - **Responses:** JSON, except trace data, which uses the binary frame format below, and file downloads.
 - **Errors:** a non-2xx status with `{"detail": "ExceptionType: message"}`. Most failures (wrong parameter, no scope connected, build failed to start) return status 400.
 - **Long jobs:** captures, glitch sweeps, CPA, builds and downloads start in the background and return immediately. Poll the matching status endpoint or listen on the WebSocket.

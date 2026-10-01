@@ -64,14 +64,17 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 
 ### MCP server
 
-`mcp_server.py` is a Model Context Protocol server built on the official Python SDK. Each tool is a thin wrapper around an HTTP API route, so the agent sees exactly the features and options of the UI, and one session can be shared between a person in the browser and an agent. If no Studio answers at `--url`, the server starts a headless one in the same process. Long operations accept `wait=true` so an agent can run "capture 500 traces" or "build and flash" as a single call.
+`mcp_server.py` is a Model Context Protocol server built on `mcplite.py`, Studio's own compact MCP implementation (JSON-RPC over stdio, streamable HTTP or SSE, with tool schemas generated from type hints), which keeps the install free of the SDK's dependency tree. Each tool is a thin wrapper around an HTTP API route, so the agent sees exactly the features and options of the UI, and one session can be shared between a person in the browser and an agent. If no Studio answers at `--url`, the server starts a headless one in the same process. Long operations accept `wait=true` so an agent can run "capture 500 traces" or "build and flash" as a single call.
 
 ### Modules
 
 | File | Responsibility |
 |------|----------------|
 | `cli.py` | Entry point: argument parsing, uvicorn, browser or native window, and the `mcp` / `--ccwrap` subcommands. |
-| `app.py` | FastAPI app: REST endpoints, WebSocket, static files. |
+| `app.py` | Web app: REST endpoints, WebSocket, static files. |
+| `web.py` | Small routing layer on Starlette: FastAPI-style decorators, query and upload parameters, JSON errors, the `/api/docs` page. |
+| `mcplite.py` | Compact MCP protocol server (tools, resources, prompts; stdio, streamable HTTP and SSE transports). |
+| `compat.py` | Stand-in for `pkg_resources`, which ChipWhisperer's TraceWhisperer imports but setuptools 81 removed. |
 | `session.py` | The single application state: scope, target, jobs, trace store, toolchain and firmware managers. |
 | `worker.py` | The hardware thread, futures and long job scheduling. |
 | `hardware.py` | Connect, disconnect, detect and program on real hardware. |

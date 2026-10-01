@@ -1,14 +1,15 @@
-"""FastAPI application: REST API + WebSocket + static frontend."""
+"""Studio web application: REST API + WebSocket + static frontend."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
+from starlette.staticfiles import StaticFiles
+
+from cwstudio.web import App, FileResponse, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 
 from cwstudio import __version__, hardware
 from cwstudio.analysis import MODELS
@@ -20,7 +21,7 @@ log = logging.getLogger("cwstudio.app")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 
-def create_app(session: Session) -> FastAPI:
+def create_app(session: Session) -> App:
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
@@ -29,8 +30,7 @@ def create_app(session: Session) -> FastAPI:
         yield
         await asyncio.get_running_loop().run_in_executor(None, session.close)
 
-    app = FastAPI(title="ChipWhisperer Studio", version=__version__, docs_url="/api/docs", redoc_url=None,
-                  lifespan=lifespan)
+    app = App(title="ChipWhisperer Studio", version=__version__, docs_url="/api/docs", lifespan=lifespan)
     app.state.session = session
 
     async def run(fn, *args, **kwargs):
@@ -166,7 +166,7 @@ def create_app(session: Session) -> FastAPI:
             err(e)
 
     @app.post("/api/target/program/upload")
-    async def target_program_upload(programmer: str = "STM32F", file: UploadFile = File(...)):
+    async def target_program_upload(file: UploadFile, programmer: str = "STM32F"):
         try:
             content = await file.read()
             path = session.save_upload(file.filename or "firmware.hex", content)
@@ -278,7 +278,7 @@ def create_app(session: Session) -> FastAPI:
             err(e)
 
     @app.post("/api/traces/import/upload")
-    async def traces_import_upload(file: UploadFile = File(...), replace: bool = True):
+    async def traces_import_upload(file: UploadFile, replace: bool = True):
         try:
             content = await file.read()
             d = os.path.join(session.data_dir, "imports")
@@ -524,7 +524,7 @@ def create_app(session: Session) -> FastAPI:
             err(e)
 
     @app.post("/api/notebooks/import")
-    async def notebook_import(file: UploadFile = File(...)):
+    async def notebook_import(file: UploadFile):
         try:
             return await run(session.notebooks.import_bytes, file.filename or "imported.ipynb", await file.read())
         except Exception as e:  # noqa: BLE001
@@ -671,7 +671,7 @@ def create_app(session: Session) -> FastAPI:
         await sock.accept()
         sub = session.bus.subscribe()
         try:
-            await sock.send_text(__import__("json").dumps({"type": "hello", "version": __version__,
+            await sock.send_text(json.dumps({"type": "hello", "version": __version__,
                                                            "status": session.status()}, default=str))
 
             async def reader():
@@ -682,18 +682,21 @@ def create_app(session: Session) -> FastAPI:
                     pass
 
             rtask = asyncio.ensure_future(reader())
-            while True:
-                if rtask.done():
-                    break
-                try:
-                    ev = await asyncio.wait_for(sub.queue.get(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    continue
-                frame = ev.frame()
-                if isinstance(frame, (bytes, bytearray)):
-                    await sock.send_bytes(frame)
-                else:
-                    await sock.send_text(frame)
+            try:
+                while True:
+                    # Sleep until an event arrives or the client goes away, instead of waking up on a timer.
+                    get = asyncio.ensure_future(sub.queue.get())
+                    await asyncio.wait({get, rtask}, return_when=asyncio.FIRST_COMPLETED)
+                    if not get.done():
+                        get.cancel()
+                        break
+                    frame = get.result().frame()
+                    if isinstance(frame, (bytes, bytearray)):
+                        await sock.send_bytes(frame)
+                    else:
+                        await sock.send_text(frame)
+            finally:
+                rtask.cancel()
         except WebSocketDisconnect:
             pass
         except Exception as e:  # noqa: BLE001

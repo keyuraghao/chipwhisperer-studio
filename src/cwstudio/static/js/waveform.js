@@ -223,12 +223,18 @@ export class Waveform {
     }
     if (this.showMean) data.push(this.stats && this.stats.mean && this.stats.mean.length === n ? this.stats.mean : null);
     if (this.corr) {
-      const c = new Float32Array(n).fill(NaN);
-      c.set(this.corr.samples.subarray(0, Math.max(0, Math.min(this.corr.samples.length, n - this.corr.offset))), this.corr.offset);
-      data.push(c);
+      // The correlation series only changes with setCorr or the trace length, so it is built once instead of on every frame.
+      const cc = this.corrCache;
+      if (!cc || cc.src !== this.corr || cc.n !== n) {
+        const c = new Float32Array(n).fill(NaN);
+        c.set(this.corr.samples.subarray(0, Math.max(0, Math.min(this.corr.samples.length, n - this.corr.offset))), this.corr.offset);
+        this.corrCache = { src: this.corr, n, data: c };
+      }
+      data.push(this.corrCache.data);
     }
-    // uPlot requires arrays; null series -> array of nulls
-    for (let i = 2; i < data.length; i++) if (data[i] === null) data[i] = new Array(n).fill(null);
+    // uPlot requires arrays; null series share one cached array of nulls
+    if (!this.nullCache || this.nullCache.length !== n) this.nullCache = new Array(n).fill(null);
+    for (let i = 2; i < data.length; i++) if (data[i] === null) data[i] = this.nullCache;
     const keepZoom = this.userZoomed && !resetScales;
     this.u.setData(data, !keepZoom);
     if (keepZoom) {

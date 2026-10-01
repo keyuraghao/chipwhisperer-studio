@@ -4,7 +4,7 @@ import os
 import tempfile
 
 import pytest
-from fastapi.testclient import TestClient
+from starlette.testclient import TestClient
 
 from cwstudio import notebook, tools
 from cwstudio.app import create_app

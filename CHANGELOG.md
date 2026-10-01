@@ -4,18 +4,34 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-01
+
+This release makes Studio smaller and faster. Heavy libraries that Studio used only a small part of are replaced by compact built-in code, so a pip install pulls in about 25 fewer packages and the standalone bundles shrink by a third, while CPA, the simulator and live streaming get several times faster. The HTTP API, the MCP tools and the file formats are unchanged.
+
 ### Added
 
 - **Wiki:** a full user and developer guide in `docs/wiki`, published to the GitHub wiki by CI, with new screenshots of every tab and a diagram of how notebook cells share the hardware.
 
+- **Built-in MCP server** (`mcplite.py`): Studio now speaks the Model Context Protocol itself (stdio, streamable HTTP and SSE) instead of using the MCP SDK. The 68 tools, their schemas, the prompts and the resources are identical, and agents see no difference; it was checked against the official MCP client on all three transports.
+- **Built-in router** (`web.py`): the HTTP API runs on Starlette directly with a small routing layer instead of FastAPI, so pydantic is no longer needed. `/api/docs` now lists every endpoint with its parameters (the wiki's HTTP API page has the details).
+- Uploads also accept the file as the raw request body with `?filename=NAME`, besides `multipart/form-data`.
+
 ### Changed
 
+- **Fewer dependencies:** `fastapi`, `mcp`, `python-multipart` and the `uvicorn[standard]` extras are gone, and with them pydantic, pydantic-core, jsonschema, rpds, httpx2, opentelemetry, pyjwt, cryptography, uvloop, httptools, watchfiles and PyYAML. Studio now needs Starlette, uvicorn, websockets, numpy, matplotlib and a few small packages.
+- **Smaller bundles:** the Linux bundle zip shrinks from 108 MB to 65 MB. Besides the dependencies above, the bundles leave out Cython, setuptools, matplotlib's GUI backends and sample data, and Pillow's AVIF, WebP and colour management codecs, and strip debug symbols on Linux.
+- **Smaller frontend:** the notebook and notes Markdown renderer and HTML sanitizer are now one 14 KB module (`markdown.js`) instead of marked and DOMPurify (76 KB). It renders NewAE's tutorial notebooks like before, leaves LaTeX math untouched, and keeps notebook output safe from scripts.
+- **Faster CPA:** about 3 times faster with live progress (5000 traces of 5000 samples: 27 s to 9 s) and 1.6 times faster without, with identical results; progress reports no longer allocate hundreds of MB.
+- **Faster capture and simulator:** the simulator synthesises traces 3 times faster and AES runs 7 times faster, so simulated captures run about 2.7 times faster. The same seed still gives the same traces.
+- **Faster live view:** each WebSocket event is encoded once for all open windows instead of once per window, the WebSocket loop sleeps until there is an event instead of waking every second, the trace store keeps running counters for its summary, and the waveform view reuses buffers instead of allocating them for every frame.
 - The Connect tab now preselects SimpleSerial v2, which current ChipWhisperer firmware uses, instead of the legacy v1 protocol.
 - In notebooks, `cw.plot()` returns a plot object that combines with `*` and `+` like ChipWhisperer's holoviews version (`cw.plot(a) * cw.plot(b)`, `fig = cw.plot()`), and `plt.show()` shows figures immediately.
 - `studio.build_firmware()` defaults to SimpleSerial v2.1, like the Firmware tab.
 
 ### Fixed
 
+- `cw.trace` (TraceWhisperer) failed with "No module named 'pkg_resources'" in the bundles and in new Python environments, because setuptools 81 removed that module. Studio now provides the small part of it that ChipWhisperer uses, and the bundles include ChipWhisperer's trace modules again.
+- SVG figures in notebooks show their text, tick labels and titles again (the old sanitizer removed the `<use>` elements matplotlib draws text with).
 - **Download in browser** for the NumPy `.npy` set now downloads one zip with all four files instead of failing.
 - The serial console shows traffic from before the page was opened.
 - The build log prints the `make clean` command before its output, and `clean` receives the same SimpleSerial version as the build, so the log no longer shows a misleading "SS_VER set to SS_VER_1_1".
@@ -103,7 +119,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.2.0
 [0.1.0]: https://github.com/keyuraghao/chipwhisperer-studio/releases/tag/v0.1.0

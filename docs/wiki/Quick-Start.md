@@ -51,7 +51,7 @@ That is the whole attack. From here you can try Glitching (the simulator also mo
 
 This walkthrough uses a ChipWhisperer-Lite with its built-in STM32F3 (ARM) target, platform `CWLITEARM`. Other hardware works the same way with a different platform and programmer; see [Firmware Builds](Firmware-Builds) and [Target and Programming](Target-and-Programming).
 
-> **Note:** Studio 0.3.0 has been tested with the simulator and in CI, not yet on physical hardware. If a step behaves differently on your device, please [open an issue](https://github.com/keyuraghao/chipwhisperer-studio/issues).
+> **Note:** Studio 0.4.0 has been tested with the simulator and in CI, not yet on physical hardware. If a step behaves differently on your device, please [open an issue](https://github.com/keyuraghao/chipwhisperer-studio/issues).
 
 ### 1. Prepare the computer (once)
 

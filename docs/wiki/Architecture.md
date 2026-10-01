@@ -15,7 +15,7 @@ This page is for developers who want to understand how Studio is built before ch
 
 ## One process, several threads
 
-Studio is a single Python process running a FastAPI application under uvicorn. The same server delivers the web UI (static files), the REST API and one WebSocket.
+Studio is a single Python process running a Starlette application under uvicorn, with a small built-in router (`web.py`) instead of FastAPI so no pydantic is needed. The same server delivers the web UI (static files), the REST API and one WebSocket.
 
 | Thread | Job |
 |--------|-----|
@@ -45,7 +45,10 @@ Every scope and target sub-object in `chipwhisperer` implements `_dict_repr()`. 
 | Module | Responsibility |
 |--------|----------------|
 | `cli.py` | Entry point: arguments, uvicorn, browser or native window, the `mcp` and `--ccwrap` modes. |
-| `app.py` | FastAPI application: REST routes, WebSocket, static files. |
+| `app.py` | Web application: REST routes, WebSocket, static files. |
+| `web.py` | Routing layer on Starlette: FastAPI-style decorators, parameter conversion, uploads, JSON errors and the `/api/docs` page. |
+| `mcplite.py` | Studio's own compact MCP server: JSON-RPC over stdio, streamable HTTP and SSE, tool schemas from type hints. |
+| `compat.py` | Stand-in for `pkg_resources` (removed in setuptools 81), which ChipWhisperer's TraceWhisperer imports. |
 | `session.py` | The single application state: scope, target, jobs, trace store, and the toolchain, firmware, notebook and notes managers. |
 | `worker.py` | Hardware thread, futures and long job scheduling. |
 | `hardware.py` | Connect, detect and program real hardware; platform help (drivers, udev). |
@@ -63,7 +66,7 @@ Every scope and target sub-object in `chipwhisperer` implements `_dict_repr()`. 
 | `net.py` | HTTPS using the operating system trust store (certifi fallback). |
 | `mcp_server.py` | MCP server that exposes every feature to AI agents through the HTTP API. |
 | `events.py` | Event bus and binary trace frames. |
-| `static/` | Frontend: vanilla ES modules, uPlot, marked and DOMPurify, light and dark themes. |
+| `static/` | Frontend: vanilla ES modules, uPlot, a small built-in Markdown renderer and HTML sanitiser (`js/markdown.js`), light and dark themes. |
 
 ## Firmware builds
 
@@ -90,16 +93,16 @@ Studio uses a small in-process kernel instead of a Jupyter kernel, because a sep
 
 ## MCP server
 
-`mcp_server.py` builds an MCP server with the official Python SDK. Each tool is a small function that calls the HTTP API, so the MCP server is just another API client. It attaches to a running Studio or starts one headless in the same process. Long operations accept `wait=true` and poll the API, so an agent can do "capture 500 traces" or "build and flash" in one call. See [MCP Server](MCP-Server).
+`mcp_server.py` builds an MCP server with `mcplite.py`, a compact implementation of the protocol that ships with Studio, so the MCP SDK and its dependencies are not needed. Each tool is a small function that calls the HTTP API, so the MCP server is just another API client. It attaches to a running Studio or starts one headless in the same process. Long operations accept `wait=true` and poll the API, so an agent can do "capture 500 traces" or "build and flash" in one call. See [MCP Server](MCP-Server).
 
 ## Frontend
 
-The UI is plain ES modules served as-is, with no build step or Node toolchain. uPlot draws waveforms and analysis plots on canvas; marked renders Markdown; DOMPurify sanitises it. Colours are CSS custom properties with light and dark variants, and charts read them at draw time so switching themes redraws everything.
+The UI is plain ES modules served as-is, with no build step or Node toolchain. uPlot draws waveforms and analysis plots on canvas; `js/markdown.js` renders Markdown and sanitises the result with an allowlist. Colours are CSS custom properties with light and dark variants, and charts read them at draw time so switching themes redraws everything.
 
 ## Security notes
 
 - The API has no authentication; the default bind address is `127.0.0.1`.
-- Markdown from notebooks and notes is sanitised with DOMPurify; HTML outputs are shown in iframes with an empty `sandbox` attribute (no scripts, no same-origin access), so opening an untrusted notebook does not execute its saved HTML.
+- Markdown from notebooks and notes, and SVG outputs, are sanitised by the allowlist in `js/markdown.js` (no scripts, event handlers, `javascript:` links or embedded frames); HTML outputs are shown in iframes with an empty `sandbox` attribute (no scripts, no same-origin access), so opening an untrusted notebook does not execute its saved HTML.
 - Notebook, note, asset and firmware project paths are resolved and checked to stay inside their folders.
 - Archive extraction rejects absolute paths, `..` components and links pointing outside the destination.
 - The calculator evaluates an allow-listed subset of Python syntax (no attribute access, no names except its own functions and variables, bounded exponents and shifts).

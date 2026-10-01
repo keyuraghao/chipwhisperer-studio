@@ -42,7 +42,7 @@ export function initHelp(ctx, el) {
       h('span', { class: 'k' }, 'Double-click'), h('span', {}, 'fit'),
       h('span', { class: 'k' }, 'Click / Shift+click'), h('span', {}, 'cursor A / B'))),
     h('h2', {}, 'Remote use and scripting'),
-    h('div', { class: 'card' }, 'Start Studio with ', h('code', {}, '--host 0.0.0.0'), ' on the machine that has the hardware and open ', h('code', {}, 'http://<that-machine>:8765/'), ' from anywhere on the network. Everything the UI does is also available over HTTP: ', h('a', { href: '/api/docs', target: '_blank', style: 'color:var(--info)' }, 'interactive API docs'), '.'),
+    h('div', { class: 'card' }, 'Start Studio with ', h('code', {}, '--host 0.0.0.0'), ' on the machine that has the hardware and open ', h('code', {}, 'http://<that-machine>:8765/'), ' from anywhere on the network. Everything the UI does is also available over HTTP: ', h('a', { href: '/api/docs', target: '_blank', style: 'color:var(--info)' }, 'API endpoint list'), '.'),
     h('div', { class: 'help', style: 'margin-top:14px' }, `ChipWhisperer Studio ${ctx.meta.version} · independent project, not affiliated with NewAE Technology`),
   );
 }

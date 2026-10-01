@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
+from starlette.testclient import TestClient
 
 from cwstudio.app import create_app
 from cwstudio.session import Session
@@ -214,3 +214,19 @@ def test_download_npy_set_as_zip(client):
     assert r.status_code == 200
     names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
     assert sorted(names) == ["traces_keys.npy", "traces_textins.npy", "traces_textouts.npy", "traces_waves.npy"]
+
+
+def test_web_layer(client):
+    """Uploads (multipart with binary content, or the raw body), query conversion, JSON errors and the docs page of the routing layer."""
+    from cwstudio.web import _multipart
+    blob = bytes(range(256)) * 4 + b"\r\n--x\r\n\r\n"
+    body = b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"C:\\\\fw\\\\a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n" + blob + b"\r\n--B--\r\n"
+    assert _multipart(body, "multipart/form-data; boundary=B")["file"] == ("a.bin", blob, "application/octet-stream")
+    r = client.post("/api/target/program/upload?programmer=STM32F&filename=raw.hex", content=b":00000001FF\n", headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 200 and r.json()["path"].endswith("raw.hex")
+    assert client.get("/api/traces/notanumber").status_code == 422
+    r = client.get("/api/traces/99999")
+    assert r.status_code == 404 and r.json() == {"detail": "no such trace"}
+    assert client.get("/api/notebooks/file").json()["detail"].startswith("missing parameter")
+    docs = client.get("/api/docs")
+    assert docs.status_code == 200 and "/api/capture/start" in docs.text

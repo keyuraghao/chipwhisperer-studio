@@ -68,18 +68,18 @@ The command copies the rule, creates a `chipwhisperer` group, adds you to it and
 
 ## Python package
 
-Use this if you already work with Python. Studio needs **Python 3.10, 3.11 or 3.12**. The reason for the upper limit is that `chipwhisperer` 6.0.0 on PyPI requires numpy 1.26 or older, and numpy 1.26 has no ready-made packages for Python 3.13 and newer. The lower limit comes from the MCP SDK that Studio uses.
+Use this if you already work with Python. Studio needs **Python 3.10, 3.11 or 3.12**. The reason for the upper limit is that `chipwhisperer` 6.0.0 on PyPI requires numpy 1.26 or older, and numpy 1.26 has no ready-made packages for Python 3.13 and newer.
 
 Studio is not on PyPI yet. Install the wheel from the latest GitHub release instead:
 
 ```bash
 python -m venv studio-env
 source studio-env/bin/activate            # Windows: studio-env\Scripts\activate
-pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.3.0/chipwhisperer_studio-0.3.0-py3-none-any.whl
+pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.0/chipwhisperer_studio-0.4.0-py3-none-any.whl
 cw-studio
 ```
 
-This installs the `chipwhisperer` library from PyPI together with Studio's other dependencies (FastAPI, uvicorn, numpy, matplotlib, the MCP SDK and a few more) and adds the `cw-studio` command. Run `cw-studio --simulate` to try it without hardware.
+This installs the `chipwhisperer` library from PyPI together with Studio's other dependencies (Starlette, uvicorn, websockets, numpy, matplotlib and a few small ones) and adds the `cw-studio` command. Run `cw-studio --simulate` to try it without hardware.
 
 You can also install straight from the repository: `pip install git+https://github.com/keyuraghao/chipwhisperer-studio`
 
@@ -90,7 +90,7 @@ The USB driver (Windows) and udev rule (Linux) steps above apply to the Python p
 By default Studio opens in your web browser. To open it in its own desktop window instead, install the `window` extra and start Studio with `--window`:
 
 ```bash
-pip install "chipwhisperer-studio[window] @ https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.3.0/chipwhisperer_studio-0.3.0-py3-none-any.whl"
+pip install "chipwhisperer-studio[window] @ https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.0/chipwhisperer_studio-0.4.0-py3-none-any.whl"
 cw-studio --window
 ```
 

@@ -160,7 +160,7 @@ See [MCP Server](MCP-Server).
 
 Open an issue at [github.com/keyuraghao/chipwhisperer-studio/issues](https://github.com/keyuraghao/chipwhisperer-studio/issues) and include:
 
-1. The Studio version (shown next to the title, for example `v0.3.0`) and how you installed it (bundle or pip).
+1. The Studio version (shown next to the title, for example `v0.4.0`) and how you installed it (bundle or pip).
 2. Your operating system and version, and the ChipWhisperer scope and target you use.
 3. What you did, what you expected and what happened.
 4. The relevant log lines from the log drawer or console (start with `--log-level debug` if you can reproduce it), or the build output for build problems.

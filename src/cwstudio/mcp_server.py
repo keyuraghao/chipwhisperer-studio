@@ -139,16 +139,14 @@ def start_embedded(host: str, port: int, simulate: bool, data_dir: Optional[str]
 
 
 def build_server(client: StudioClient, url_note: str = ""):
-    from mcp.server.mcpserver import MCPServer
-    from mcp.types import ToolAnnotations
-
     from cwstudio import __version__
+    from cwstudio.mcplite import Server
 
-    mcp = MCPServer(name="chipwhisperer-studio", title="ChipWhisperer Studio", version=__version__, instructions=INSTRUCTIONS + (" " + url_note if url_note else ""))
-    RO = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
-    HW = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
-    DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
-    NET = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
+    mcp = Server(name="chipwhisperer-studio", title="ChipWhisperer Studio", version=__version__, instructions=INSTRUCTIONS + (" " + url_note if url_note else ""))
+    RO = {"readOnlyHint": True, "openWorldHint": False}
+    HW = {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}
+    DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False}
+    NET = {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}
 
     def wait_job(timeout: float, name: Optional[str] = None) -> Dict[str, Any]:
         end = time.time() + timeout
@@ -721,10 +719,7 @@ def main(argv=None) -> int:
         note = f"A headless Studio was started for this session; its UI is at {url}/ ."
         print(f"cw-studio mcp: started headless Studio at {url}", file=sys.stderr)
     server = build_server(client, note)
-    if args.transport == "stdio":
-        server.run("stdio")
-    else:
-        server.run(args.transport, host=args.mcp_host, port=args.mcp_port)
+    server.run(args.transport, host=args.mcp_host, port=args.mcp_port)
     return 0
 
 

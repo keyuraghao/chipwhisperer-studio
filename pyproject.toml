@@ -13,11 +13,9 @@ requires-python = ">=3.10"
 dependencies = [
     "chipwhisperer>=6.0",
     "numpy>=1.24",
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.27",
-    "python-multipart>=0.0.9",
+    "starlette>=0.37",
+    "uvicorn>=0.27",
     "websockets>=12",
-    "mcp>=2.2",
     "truststore>=0.9",
     "certifi",
     "matplotlib>=3.7",
@@ -34,6 +32,8 @@ classifiers = [
 [project.optional-dependencies]
 window = ["pywebview>=5"]
 test = ["pytest", "httpx"]
+# The official MCP SDK is only used by the interoperability test; Studio has its own MCP server.
+test-mcp = ["pytest", "httpx", "mcp>=2.2"]
 
 [project.scripts]
 cw-studio = "cwstudio.cli:main"

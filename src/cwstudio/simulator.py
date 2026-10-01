@@ -207,6 +207,8 @@ class SimScope:
         self.leak_start = 60           # sample index of first S-box leak
         self.leak_spacing = 45         # samples between successive S-box bytes
         self.capture_delay = 0.0       # extra latency per capture (seconds) to mimic USB
+        self._bg_cache: Optional[np.ndarray] = None
+        self._geo_cache: Optional[tuple] = None
 
     # --- API used by Studio ------------------------------------------------
     def _dict_repr(self):
@@ -282,34 +284,87 @@ class SimScope:
         return self._last_trace
 
     # --- leakage model ------------------------------------------------------
-    def _synth(self, pt: bytes, key: bytes) -> np.ndarray:
-        n = int(self.adc.samples)
-        gain_scale = (0.6 + self.gain.gain / 78.0) * (1.4 if self.gain.mode == "high" else 0.7)
-        t = np.arange(n, dtype=np.float32)
-        # Background: clock ripple + slow envelope + noise
-        clk = 0.03 * np.sin(2 * np.pi * t / 4.0)
-        env = 0.02 * np.sin(2 * np.pi * t / 700.0)
-        wave = clk + env + self._rng.normal(0, self.noise, n).astype(np.float32)
-        # Round 1 S-box leakage: one bump per byte, amplitude ~ HW(sbox(pt^k))
-        if pt and key and len(pt) >= 16 and len(key) >= 16:
-            offset = int(self.adc.offset)
+    def _background(self, n: int) -> np.ndarray:
+        """Clock ripple + slow envelope for `n` samples (key independent, cached)."""
+        bg = self._bg_cache
+        if bg is None or bg.shape[0] != n:
+            t = np.arange(n, dtype=np.float32)
+            clk = 0.03 * np.sin(2 * np.pi * t / 4.0)
+            env = 0.02 * np.sin(2 * np.pi * t / 700.0)
+            bg = clk + env
+            self._bg_cache = bg
+        return bg
+
+    def _leak_geometry(self, n: int, offset: int):
+        """Cached sample indices and Gaussian shapes of the per-byte and per-round bumps.
+
+        Returns None when the per-byte windows overlap (custom leak_spacing), in which case `_synth` applies them one by one so every sample sees the same sequence of float32 roundings.
+        """
+        width = 6
+        geo_key = (n, offset, self.leak_start, self.leak_spacing)
+        cached = self._geo_cache
+        if cached is not None and cached[0] == geo_key:
+            return cached[1]
+        geo = None
+        if self.leak_spacing >= 6 * width:
+            b_idx, b_win, b_shape = [], [], []
             for b in range(16):
                 center = self.leak_start + b * self.leak_spacing - offset
                 if 0 <= center < n:
-                    hw = int(HW[SBOX[pt[b] ^ key[b]]])
-                    width = 6
-                    lo, hi = max(0, center - 3 * width), min(n, center + 3 * width)
+                    idx = np.arange(max(0, center - 3 * width), min(n, center + 3 * width))
+                    b_idx.append(idx)
+                    b_win.append(np.full(idx.shape[0], b, np.intp))
+                    b_shape.append(np.exp(-0.5 * ((idx - center) / width) ** 2))
+            r_idx, r_shape = [], []
+            r_start = self.leak_start + 16 * self.leak_spacing - offset
+            for r in range(9):
+                c = r_start + r * 16 * self.leak_spacing
+                if 0 <= c < n:
+                    idx = np.arange(max(0, c - 40), min(n, c + 40))
+                    r_idx.append(idx)
+                    r_shape.append(0.12 * np.exp(-0.5 * ((idx - c) / 15.0) ** 2))
+            cat = lambda parts, dt: np.concatenate(parts) if parts else np.zeros(0, dt)  # noqa: E731
+            geo = (cat(b_idx, np.intp), cat(b_win, np.intp), cat(b_shape, np.float64),
+                   cat(r_idx, np.intp), cat(r_shape, np.float64))
+        self._geo_cache = (geo_key, geo)
+        return geo
+
+    def _synth(self, pt: bytes, key: bytes) -> np.ndarray:
+        n = int(self.adc.samples)
+        gain_scale = (0.6 + self.gain.gain / 78.0) * (1.4 if self.gain.mode == "high" else 0.7)
+        # Background: clock ripple + slow envelope + noise
+        wave = self._background(n) + self._rng.normal(0, self.noise, n).astype(np.float32)
+        offset = int(self.adc.offset)
+        has_key = bool(pt and key and len(pt) >= 16 and len(key) >= 16)
+        geo = self._leak_geometry(n, offset)
+        if geo is not None:
+            b_idx, b_win, b_shape, r_idx, r_shape = geo
+            # Round 1 S-box leakage: one bump per byte, amplitude ~ HW(sbox(pt^k)); windows are disjoint so one scatter is exact
+            if has_key and b_idx.shape[0]:
+                x = np.frombuffer(bytes(pt[:16]), np.uint8) ^ np.frombuffer(bytes(key[:16]), np.uint8)
+                amp = self.leak_amplitude * (HW[SBOX[x]].astype(np.int64) - 4) + 0.15
+                wave[b_idx] -= amp[b_win] * b_shape
+            # Rounds 2..10 as generic activity (no key dependence)
+            if r_idx.shape[0]:
+                wave[r_idx] -= r_shape
+        else:
+            if has_key:
+                for b in range(16):
+                    center = self.leak_start + b * self.leak_spacing - offset
+                    if 0 <= center < n:
+                        hw = int(HW[SBOX[pt[b] ^ key[b]]])
+                        width = 6
+                        lo, hi = max(0, center - 3 * width), min(n, center + 3 * width)
+                        idx = np.arange(lo, hi)
+                        bump = np.exp(-0.5 * ((idx - center) / width) ** 2)
+                        wave[lo:hi] -= (self.leak_amplitude * (hw - 4) + 0.15) * bump
+            r_start = self.leak_start + 16 * self.leak_spacing - offset
+            for r in range(9):
+                c = r_start + r * 16 * self.leak_spacing
+                if 0 <= c < n:
+                    lo, hi = max(0, c - 40), min(n, c + 40)
                     idx = np.arange(lo, hi)
-                    bump = np.exp(-0.5 * ((idx - center) / width) ** 2)
-                    wave[lo:hi] -= (self.leak_amplitude * (hw - 4) + 0.15) * bump
-        # Rounds 2..10 as generic activity (no key dependence)
-        r_start = self.leak_start + 16 * self.leak_spacing - int(self.adc.offset)
-        for r in range(9):
-            c = r_start + r * 16 * self.leak_spacing
-            if 0 <= c < n:
-                lo, hi = max(0, c - 40), min(n, c + 40)
-                idx = np.arange(lo, hi)
-                wave[lo:hi] -= 0.12 * np.exp(-0.5 * ((idx - c) / 15.0) ** 2)
+                    wave[lo:hi] -= 0.12 * np.exp(-0.5 * ((idx - c) / 15.0) ** 2)
         wave *= gain_scale
         return np.clip(wave, -0.5, 0.5).astype(np.float32)
 

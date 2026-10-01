@@ -388,7 +388,7 @@ class Session:
             return trace_event("traces", np.zeros(0, np.float32), {"indices": [], "samples": 0}).frame()
         waves = [self.store.waves[i] for i in idx]
         s = min(len(w) for w in waves)
-        block = np.stack([w[:s] for w in waves]).astype(np.float32)
+        block = np.stack([w[:s] for w in waves]).astype(np.float32, copy=False)
         return trace_event("traces", block.ravel(), {"indices": idx, "samples": s,
                                                      "generation": self.store.generation}).frame()
 
@@ -397,7 +397,7 @@ class Session:
         if not st:
             return trace_event("stats", np.zeros(0, np.float32), {"fields": [], "samples": 0}).frame()
         fields = ["mean", "std", "min", "max"]
-        block = np.stack([st[f] for f in fields]).astype(np.float32)
+        block = np.stack([st[f] for f in fields]).astype(np.float32, copy=False)
         return trace_event("stats", block.ravel(), {"fields": fields, "samples": int(block.shape[1]),
                                                     "count": len(self.store)}).frame()
 

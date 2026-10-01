@@ -4,6 +4,8 @@ Not constant time, not for production use - just to make the simulated target re
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 
 SBOX = np.array([
@@ -53,6 +55,14 @@ def _mul(a: int, b: int) -> int:
     return r
 
 
+# Plain Python lookup tables: indexing a list with an int is much faster than indexing a numpy array and converting back.
+_SBOX = SBOX.tolist()
+_MUL2 = [_mul(a, 2) for a in range(256)]
+_MUL3 = [_mul(a, 3) for a in range(256)]
+# ShiftRows source index for each state position (column-major state: index = col*4 + row)
+_SHIFT_ROWS = [(i + 4 * (i % 4)) % 16 for i in range(16)]
+
+
 def expand_key(key: bytes):
     assert len(key) == 16
     w = [list(key[4 * i:4 * i + 4]) for i in range(4)]
@@ -60,31 +70,38 @@ def expand_key(key: bytes):
         t = list(w[i - 1])
         if i % 4 == 0:
             t = t[1:] + t[:1]
-            t = [int(SBOX[b]) for b in t]
+            t = [_SBOX[b] for b in t]
             t[0] ^= RCON[i // 4 - 1]
         w.append([w[i - 4][j] ^ t[j] for j in range(4)])
     return [sum(w[4 * r:4 * r + 4], []) for r in range(11)]
 
 
+@functools.lru_cache(maxsize=64)
+def _round_keys(key: bytes):
+    """Cached, immutable key schedule: captures usually reuse one key for thousands of blocks."""
+    return tuple(tuple(rk) for rk in expand_key(key))
+
+
 def encrypt_block(key: bytes, pt: bytes) -> bytes:
-    rk = expand_key(bytes(key))
+    rk = _round_keys(bytes(key))
+    sbox, mul2, mul3 = _SBOX, _MUL2, _MUL3
     s = [pt[i] ^ rk[0][i] for i in range(16)]
     for rnd in range(1, 11):
-        s = [int(SBOX[b]) for b in s]
-        # ShiftRows (column-major state: index = col*4 + row)
-        s = [s[(i + 4 * (i % 4)) % 16] for i in range(16)]
+        # SubBytes and ShiftRows in one pass
+        s = [sbox[s[j]] for j in _SHIFT_ROWS]
         if rnd != 10:
             ns = []
-            for c in range(4):
-                a = s[4 * c:4 * c + 4]
+            for c in range(0, 16, 4):
+                a0, a1, a2, a3 = s[c], s[c + 1], s[c + 2], s[c + 3]
                 ns += [
-                    _mul(a[0], 2) ^ _mul(a[1], 3) ^ a[2] ^ a[3],
-                    a[0] ^ _mul(a[1], 2) ^ _mul(a[2], 3) ^ a[3],
-                    a[0] ^ a[1] ^ _mul(a[2], 2) ^ _mul(a[3], 3),
-                    _mul(a[0], 3) ^ a[1] ^ a[2] ^ _mul(a[3], 2),
+                    mul2[a0] ^ mul3[a1] ^ a2 ^ a3,
+                    a0 ^ mul2[a1] ^ mul3[a2] ^ a3,
+                    a0 ^ a1 ^ mul2[a2] ^ mul3[a3],
+                    mul3[a0] ^ a1 ^ a2 ^ mul2[a3],
                 ]
             s = ns
-        s = [s[i] ^ rk[rnd][i] for i in range(16)]
+        k = rk[rnd]
+        s = [s[i] ^ k[i] for i in range(16)]
     return bytes(s)
 
 

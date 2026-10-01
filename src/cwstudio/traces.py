@@ -28,6 +28,9 @@ class TraceStore:
         self.meta: Dict[str, Any] = {}
         self.created = time.time()
         self.generation = 0  # bumped on clear/import so clients can resync
+        # Running totals so summary() is O(1) instead of a pass over every wave
+        self._len_counts: Dict[int, int] = {}
+        self._nbytes = 0
 
     # --- basic ------------------------------------------------------------
     def __len__(self) -> int:
@@ -39,6 +42,8 @@ class TraceStore:
             self.textins.clear()
             self.textouts.clear()
             self.keys.clear()
+            self._len_counts = {}
+            self._nbytes = 0
             self.meta = {}
             self.generation += 1
 
@@ -47,7 +52,10 @@ class TraceStore:
         with self._lock:
             if len(self.waves) >= self.max_traces:
                 raise RuntimeError(f"trace store full ({self.max_traces} traces)")
-            self.waves.append(np.asarray(wave, dtype=np.float32))
+            w = np.asarray(wave, dtype=np.float32)
+            self.waves.append(w)
+            self._len_counts[len(w)] = self._len_counts.get(len(w), 0) + 1
+            self._nbytes += w.nbytes
             self.textins.append(bytes(textin) if textin is not None else b"")
             self.textouts.append(bytes(textout) if textout is not None else b"")
             self.keys.append(bytes(key) if key is not None else b"")
@@ -65,13 +73,13 @@ class TraceStore:
     def summary(self) -> Dict[str, Any]:
         with self._lock:
             n = len(self.waves)
-            lens = {len(w) for w in self.waves} if n else set()
+            lens = self._len_counts
             return {
                 "count": n,
                 "samples": (min(lens) if lens else 0),
                 "uniform": len(lens) <= 1,
                 "generation": self.generation,
-                "memory_bytes": int(sum(w.nbytes for w in self.waves)),
+                "memory_bytes": int(self._nbytes),
                 "meta": self.meta,
             }
 
@@ -90,17 +98,24 @@ class TraceStore:
         if not waves:
             return (np.zeros((0, 0), np.float32), np.zeros((0, 16), np.uint8),
                     np.zeros((0, 16), np.uint8), np.zeros((0, 16), np.uint8))
-        s = min(len(w) for w in waves)
-        W = np.stack([w[:s] for w in waves]).astype(np.float32, copy=False)
-        return W, _bytes_matrix(tins), _bytes_matrix(touts), _bytes_matrix(keys)
+        return _waves_matrix(waves), _bytes_matrix(tins), _bytes_matrix(touts), _bytes_matrix(keys)
 
     def stats(self, start: int = 0, end: Optional[int] = None) -> Dict[str, np.ndarray]:
-        W, _, _, _ = self.as_arrays(start, end)
+        with self._lock:
+            end = len(self.waves) if end is None else min(end, len(self.waves))
+            waves = self.waves[start:end]
+        if not waves:
+            return {}
+        W = _waves_matrix(waves)
         if W.shape[0] == 0:
             return {}
+        mean = W.mean(axis=0)
+        # Same arithmetic as W.std(axis=0) but reuses the mean instead of summing W a second time
+        dev = W - mean
+        np.square(dev, out=dev)
         return {
-            "mean": W.mean(axis=0),
-            "std": W.std(axis=0),
+            "mean": mean,
+            "std": np.sqrt(dev.mean(axis=0)),
             "min": W.min(axis=0),
             "max": W.max(axis=0),
         }
@@ -188,11 +203,22 @@ def _to_bytes(v) -> bytes:
     return bytes(v)
 
 
+def _waves_matrix(waves: List[np.ndarray]) -> np.ndarray:
+    """Stack waves into a float32 [N, S] array, truncated to the shortest wave."""
+    s = min(len(w) for w in waves)
+    return np.stack([w[:s] for w in waves]).astype(np.float32, copy=False)
+
+
 def _bytes_matrix(items: List[bytes]) -> np.ndarray:
     if not items:
         return np.zeros((0, 16), np.uint8)
     lens = [len(b) for b in items]
-    L = max(set(lens), key=lens.count)
+    uniq = set(lens)
+    if len(uniq) == 1 and lens[0]:
+        # Common case (every trace has the same text length): one join instead of a loop
+        L = lens[0]
+        return np.frombuffer(b"".join(items), np.uint8).reshape(len(items), L).copy()
+    L = max(uniq, key=lens.count)
     out = np.zeros((len(items), L), np.uint8)
     for i, b in enumerate(items):
         n = min(L, len(b))

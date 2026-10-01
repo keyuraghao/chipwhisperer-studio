@@ -1,5 +1,6 @@
 // Notebook tab: Jupyter-style cells that run inside Studio (sharing its scope and target), .ipynb files, NewAE's tutorials.
 import { h, get, post, put, del, upload, toast, fmtBytes } from './api.js';
+import { renderMarkdown as markdownHtml, sanitize } from './markdown.js';
 
 const I = {
   play: '<svg class="i" viewBox="0 0 24 24"><polygon points="7,4 20,12 7,20" fill="currentColor"/></svg>',
@@ -23,9 +24,7 @@ function applyCR(text) {
 }
 
 export function renderMarkdown(src, baseDir) {
-  const html = window.marked ? window.marked.parse(src || '', { gfm: true, breaks: false }) : h('pre', {}, src).outerHTML;
-  const clean = window.DOMPurify ? window.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } }) : '';
-  const div = h('div', { class: 'md', html: clean });
+  const div = h('div', { class: 'md', html: markdownHtml(src) });
   div.querySelectorAll('img').forEach((img) => {
     const s = img.getAttribute('src') || '';
     if (s && !/^(https?:|data:|\/)/.test(s)) img.src = `/api/notebooks/asset?path=${encodeURIComponent((baseDir ? baseDir + '/' : '') + s)}`;
@@ -112,7 +111,7 @@ export function initNotebook(ctx, sideEl, viewEl) {
     const d = o.data || {};
     if (d['image/png']) return h('div', { class: 'nb-out img' }, h('img', { src: 'data:image/png;base64,' + d['image/png'] }));
     if (d['image/jpeg']) return h('div', { class: 'nb-out img' }, h('img', { src: 'data:image/jpeg;base64,' + d['image/jpeg'] }));
-    if (d['image/svg+xml']) return h('div', { class: 'nb-out img', html: window.DOMPurify ? window.DOMPurify.sanitize(d['image/svg+xml'], { USE_PROFILES: { svg: true } }) : '' });
+    if (d['image/svg+xml']) return h('div', { class: 'nb-out img', html: sanitize(d['image/svg+xml'], { svg: true }) });
     if (d['text/html']) {
       // Untrusted HTML (e.g. saved outputs of imported notebooks) is shown in a script-free sandbox.
       const fr = h('iframe', { class: 'nb-out html', sandbox: '', srcdoc: `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:13px system-ui,sans-serif;color:${getComputedStyle(document.body).color}}table{border-collapse:collapse}td,th{border:1px solid #8884;padding:2px 6px}</style>${d['text/html']}` });

@@ -29,7 +29,7 @@ cw-studio --simulate --log-level debug
 | Path | Contents |
 |------|----------|
 | `src/cwstudio/` | The Python package (see the module table on [Architecture](Architecture)). |
-| `src/cwstudio/static/` | The web UI: `index.html`, `css/app.css`, `js/*.js`, `vendor/` (uPlot, marked, DOMPurify). |
+| `src/cwstudio/static/` | The web UI: `index.html`, `css/app.css`, `js/*.js` (including `markdown.js`, the Markdown renderer and sanitiser), `vendor/` (uPlot). |
 | `src/cwstudio/resources/` | `toolchains.json` (pinned compilers and firmware source settings) and `50-newae.rules`. |
 | `tests/` | pytest suite. |
 | `tools/` | `screenshots.py` (wiki and README images) and `release_notes.py`. |
@@ -53,7 +53,7 @@ The suite runs against the simulator and needs no hardware or network access. It
 | `test_toolchains.py` | Toolchain registry pinning, install with checksum verification, mirror fallback, path traversal protection, aliases, custom toolchains, the clang wrapper's flag translation, platform parsing, firmware folder checks. |
 | `test_net.py` | HTTPS certificate source selection and the error shown when verification fails. |
 | `test_notebook.py` | Notebook kernel: results and errors, tutorial-style capture loops reaching the trace store, shell and cell magics, `%run`, simulated programming, notebook files API, interrupt and restart, notes, calculator and statistics. |
-| `test_mcp.py` | Starts `cw-studio mcp` over stdio with the official MCP client and runs a full session: connect, settings, capture, CPA key recovery, glitch sweep, notebook code, calculator, notes and notebook runs. |
+| `test_mcp.py` | Unit tests of the MCP protocol layer, a raw stdio session and the streamable HTTP transport, then (when the `mcp` package is installed, as with `pip install -e ".[test-mcp]"`) starts `cw-studio mcp` over stdio with the official MCP client and runs a full session: connect, settings, capture, CPA key recovery, glitch sweep, notebook code, calculator, notes and notebook runs. |
 
 Real compiler downloads and firmware builds are exercised in CI rather than in the unit tests.
 

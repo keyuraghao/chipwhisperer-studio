@@ -1,15 +1,18 @@
-"""End-to-end test of ``cw-studio mcp`` over stdio with the official MCP client and the simulator."""
+"""Tests of Studio's MCP server: protocol unit tests, a raw stdio session, and an end-to-end run with the official MCP client (when installed) against the simulator."""
 import asyncio
 import json
 import os
 import socket
+import subprocess
 import sys
+import threading
+import time
+import urllib.request
+from typing import Any, Dict, List, Literal, Optional
 
 import pytest
 
-mcp = pytest.importorskip("mcp")
-from mcp import ClientSession, StdioServerParameters  # noqa: E402
-from mcp.client.stdio import stdio_client  # noqa: E402
+from cwstudio.mcplite import Server
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 KEY = "2b7e151628aed2a6abf7158809cf4f3c"
@@ -29,6 +32,9 @@ def _result(res):
 
 
 async def _session(tmp_path):
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
     params = StdioServerParameters(command=sys.executable, args=["-m", "cwstudio", "mcp", "--simulate", "--data-dir", str(tmp_path), "--port", str(_free_port()), "--url", f"http://127.0.0.1:{_free_port()}"], env={**os.environ, "PYTHONPATH": SRC})
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as s:
@@ -70,4 +76,99 @@ async def _session(tmp_path):
 
 
 def test_mcp_end_to_end(tmp_path):
+    pytest.importorskip("mcp")
     asyncio.run(asyncio.wait_for(_session(tmp_path), 240))
+
+
+def _demo_server() -> Server:
+    srv = Server(name="demo", version="1.0", instructions="hi")
+
+    @srv.tool(annotations={"readOnlyHint": True})
+    def add(a: int, b: int = 2, mode: Literal["sum", "diff"] = "sum", tags: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Add or subtract."""
+        return {"value": a + b if mode == "sum" else a - b, "tags": tags}
+
+    @srv.tool()
+    def boom() -> List[int]:
+        """Always fails."""
+        raise RuntimeError("bad")
+
+    @srv.prompt()
+    def plan(n: int = 3) -> str:
+        """A plan."""
+        return f"do {n} things"
+
+    @srv.resource("demo://x", mime_type="application/json")
+    def res() -> str:
+        """A resource."""
+        return json.dumps({"x": 1})
+    return srv
+
+
+def test_mcplite_protocol():
+    srv = _demo_server()
+    rpc = lambda method, params=None, i=1: srv.handle({"jsonrpc": "2.0", "id": i, "method": method, "params": params or {}})  # noqa: E731
+    init = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})["result"]
+    assert init["protocolVersion"] == "2025-06-18" and init["serverInfo"]["name"] == "demo" and init["instructions"] == "hi"
+    assert rpc("initialize", {"protocolVersion": "1999-01-01"})["result"]["protocolVersion"] == "2025-11-25"
+    assert srv.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+    tool = rpc("tools/list")["result"]["tools"][0]
+    sch = tool["inputSchema"]
+    assert tool["annotations"] == {"readOnlyHint": True} and tool["description"] == "Add or subtract."
+    assert sch["required"] == ["a"] and sch["properties"]["mode"]["enum"] == ["sum", "diff"] and sch["properties"]["tags"]["anyOf"][0]["items"] == {"type": "string"}
+    res = rpc("tools/call", {"name": "add", "arguments": {"a": "5", "mode": "diff"}})["result"]
+    assert not res["isError"] and res["structuredContent"] == {"value": 3, "tags": None} and json.loads(res["content"][0]["text"])["value"] == 3
+    assert rpc("tools/call", {"name": "add", "arguments": {"b": 1}})["result"]["isError"]
+    assert "must be one of" in rpc("tools/call", {"name": "add", "arguments": {"a": 1, "mode": "x"}})["result"]["content"][0]["text"]
+    bad = rpc("tools/call", {"name": "boom"})["result"]
+    assert bad["isError"] and "bad" in bad["content"][0]["text"]
+    assert rpc("tools/call", {"name": "nope"})["error"]["code"] == -32602
+    assert rpc("nope/nope")["error"]["code"] == -32601
+    assert rpc("prompts/get", {"name": "plan", "arguments": {"n": "5"}})["result"]["messages"][0]["content"]["text"] == "do 5 things"
+    assert json.loads(rpc("resources/read", {"uri": "demo://x"})["result"]["contents"][0]["text"]) == {"x": 1}
+    batch = srv.handle_raw(json.dumps([{"jsonrpc": "2.0", "id": 1, "method": "ping"}, {"jsonrpc": "2.0", "method": "notifications/cancelled"}]).encode())
+    assert batch == [{"jsonrpc": "2.0", "id": 1, "result": {}}]
+    assert srv.handle_raw(b"{oops")["error"]["code"] == -32700
+
+
+def test_mcplite_streamable_http():
+    srv, port = _demo_server(), _free_port()
+    threading.Thread(target=srv.run, args=("streamable-http", "127.0.0.1", port), daemon=True).start()
+
+    def post(msg):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/mcp", data=json.dumps(msg).encode(), headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.headers, r.read()
+    for _ in range(50):
+        try:
+            status, headers, raw = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
+            break
+        except OSError:
+            time.sleep(0.1)
+    assert status == 200 and headers["Mcp-Session-Id"] and json.loads(raw)["result"]["serverInfo"]["name"] == "demo"
+    assert post({"jsonrpc": "2.0", "method": "notifications/initialized"})[0] == 202
+    out = json.loads(post({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "add", "arguments": {"a": 1, "b": 2}}})[2])
+    assert out["result"]["structuredContent"]["value"] == 3
+
+
+def test_mcp_stdio_raw(tmp_path):
+    """A full stdio session without the MCP SDK: handshake, tool calls on the simulator, and stdout kept clean."""
+    env = {**os.environ, "PYTHONPATH": SRC}
+    p = subprocess.Popen([sys.executable, "-m", "cwstudio", "mcp", "--simulate", "--data-dir", str(tmp_path), "--port", str(_free_port()), "--url", f"http://127.0.0.1:{_free_port()}"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+    try:
+        def ask(i, method, params=None):
+            p.stdin.write((json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params or {}}) + "\n").encode())
+            p.stdin.flush()
+            return json.loads(p.stdout.readline())
+        assert ask(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})["result"]["serverInfo"]["name"] == "chipwhisperer-studio"
+        p.stdin.write(b'{"jsonrpc": "2.0", "method": "notifications/initialized"}\n')
+        assert len(ask(2, "tools/list")["result"]["tools"]) >= 60
+        r = ask(3, "tools/call", {"name": "scope_connect", "arguments": {"kind": "sim"}})["result"]
+        assert not r["isError"], r
+        r = ask(4, "tools/call", {"name": "notebook_run_code", "arguments": {"code": "print('noise on stdout')\n1 + 1"}})["result"]
+        assert not r["isError"] and "noise on stdout" in r["structuredContent"]["text"]
+        assert ask(5, "ping") == {"jsonrpc": "2.0", "id": 5, "result": {}}
+    finally:
+        p.stdin.close()
+        p.terminate()
+        p.wait(10)

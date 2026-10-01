@@ -16,7 +16,7 @@ import numpy as np
 
 
 class Event:
-    __slots__ = ("kind", "payload", "binary", "droppable")
+    __slots__ = ("kind", "payload", "binary", "droppable", "_frame")
 
     def __init__(self, kind: str, payload: Dict[str, Any], binary: Optional[bytes] = None,
                  droppable: bool = False):
@@ -24,15 +24,22 @@ class Event:
         self.payload = payload
         self.binary = binary
         self.droppable = droppable
+        self._frame: Any = None
 
     def frame(self) -> Any:
-        """Serialise to a WebSocket frame: str (JSON) or bytes (binary)."""
-        msg = dict(self.payload)
-        msg["type"] = self.kind
-        if self.binary is None:
-            return json.dumps(msg, default=_json_default)
-        header = json.dumps(msg, default=_json_default).encode("utf-8")
-        return struct.pack("<I", len(header)) + header + self.binary
+        """Serialise to a WebSocket frame: str (JSON) or bytes (binary).
+
+        The frame is encoded once and reused for every subscriber; events are not modified after `EventBus.publish_event` stamps them.
+        """
+        if self._frame is None:
+            msg = dict(self.payload)
+            msg["type"] = self.kind
+            if self.binary is None:
+                self._frame = json.dumps(msg, default=_json_default)
+            else:
+                header = json.dumps(msg, default=_json_default).encode("utf-8")
+                self._frame = b"".join((struct.pack("<I", len(header)), header, self.binary))
+        return self._frame
 
 
 def _json_default(o):
@@ -130,6 +137,7 @@ class EventBus:
             self._seq += 1
             ev.payload.setdefault("seq", self._seq)
             ev.payload.setdefault("ts", time.time())
+            ev._frame = None  # payload just changed; encode lazily on first delivery
             if ev.binary is None:
                 rec = dict(ev.payload)
                 rec["type"] = ev.kind

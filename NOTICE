@@ -8,8 +8,6 @@ It uses the ChipWhisperer Python library (https://github.com/newaetech/chipwhisp
 
 - src/cwstudio/resources/50-newae.rules: udev rules from the ChipWhisperer project, Copyright NewAE Technology Inc., Apache License 2.0.
 - src/cwstudio/static/vendor/uPlot*: uPlot by Leon Sorokin, MIT License (see LICENSE.uPlot).
-- src/cwstudio/static/vendor/marked.umd.js: marked by the MarkedJS contributors, MIT License (see LICENSE.marked).
-- src/cwstudio/static/vendor/purify.min.js: DOMPurify by Cure53 and contributors, Apache License 2.0 or Mozilla Public License 2.0 (see LICENSE.dompurify).
 
 The standalone bundles also contain Python, the chipwhisperer library, matplotlib, numpy and the other packages Studio depends on, each under its own licence.
 
