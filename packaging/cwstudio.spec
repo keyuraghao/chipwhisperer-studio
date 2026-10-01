@@ -81,6 +81,27 @@ pyz = PYZ(a.pure)
 # Strip debug symbols from shared libraries on Linux (libpython alone shrinks by tens of MB); macOS needs its code signatures intact and Windows has no strip.
 STRIP = sys.platform.startswith("linux")
 
+# Application icon (drawn from the UI logo by tools/make_icon.py) and, on Windows, version information so Explorer, the taskbar and Task Manager show "ChipWhisperer Studio" and its version.
+ICON = os.path.join(ROOT, "packaging", "icon.icns" if sys.platform == "darwin" else "icon.ico")
+if not os.path.exists(ICON):
+    raise SystemExit(f"missing {ICON}: run python tools/make_icon.py")
+VERSION_FILE = None
+if sys.platform == "win32":
+    from cwstudio import __version__
+    nums = tuple(int(x) for x in (__version__.split(".") + ["0", "0", "0"])[:4])
+    fields = {"CompanyName": "ChipWhisperer Studio contributors", "FileDescription": "ChipWhisperer Studio", "FileVersion": __version__, "InternalName": APP_NAME, "LegalCopyright": "Apache License 2.0", "OriginalFilename": APP_NAME + ".exe", "ProductName": "ChipWhisperer Studio", "ProductVersion": __version__}
+    # PyInstaller's version file format (the output of pyi-grab_version), read on Windows by PyInstaller.utils.win32.versioninfo
+    os.makedirs(workpath, exist_ok=True)
+    VERSION_FILE = os.path.join(workpath, "version_info.txt")
+    with open(VERSION_FILE, "w", encoding="utf-8") as f:
+        f.write("VSVersionInfo(\n"
+                f"  ffi=FixedFileInfo(filevers={nums}, prodvers={nums}, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),\n"
+                "  kids=[\n"
+                "    StringFileInfo([StringTable('040904B0', [" + ", ".join(f"StringStruct({k!r}, {v!r})" for k, v in fields.items()) + "])]),\n"
+                "    VarFileInfo([VarStruct('Translation', [1033, 1200])])\n"
+                "  ]\n"
+                ")\n")
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -97,7 +118,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(ROOT, "packaging", "icon.ico") if os.path.exists(os.path.join(ROOT, "packaging", "icon.ico")) else None,
+    icon=ICON,
+    version=VERSION_FILE,
 )
 coll = COLLECT(
     exe,

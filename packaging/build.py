@@ -55,6 +55,7 @@ def main():
     shutil.copy(os.path.join(HERE, "BUNDLE_README.md"), os.path.join(bundle, "README.md"))
     shutil.copy(os.path.join(ROOT, "LICENSE"), os.path.join(bundle, "LICENSE.txt"))
     shutil.copy(os.path.join(ROOT, "NOTICE"), os.path.join(bundle, "NOTICE.txt"))
+    shutil.copy(os.path.join(HERE, "icon.png"), os.path.join(bundle, "ChipWhispererStudio.png"))  # for desktop shortcuts and launchers
     if os.name == "nt":
         with open(os.path.join(bundle, "ChipWhispererStudio-simulator.bat"), "w") as f:
             f.write("@echo off\r\n\"%~dp0ChipWhispererStudio.exe\" --simulate %*\r\n")
