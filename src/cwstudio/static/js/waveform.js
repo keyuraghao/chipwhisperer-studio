@@ -125,7 +125,8 @@ export class Waveform {
         corr: { range: [-1, 1] },
       },
       axes: [
-        axisStyle({ values: (u, vals) => vals.map((v) => self.timeAxis && self.sampleRate ? fmtTime(v / self.sampleRate) : v) }),
+        // Time labels ("12.345 µs") are much wider than sample numbers, so they need more room between ticks or they run into each other.
+        axisStyle({ space: () => (self.timeAxis && self.sampleRate ? 95 : 50), values: (u, vals) => vals.map((v) => self.timeAxis && self.sampleRate ? fmtTime(v / self.sampleRate) : v) }),
         axisStyle({ size: 60 }),
       ],
       series: this.seriesConfig(),

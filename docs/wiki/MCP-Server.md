@@ -2,7 +2,7 @@
 
 ChipWhisperer Studio includes a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, so AI agents such as Claude can drive everything the Studio window can do: connect hardware, change settings, build and flash firmware, capture traces, run CPA, sweep glitches, run notebooks and keep notes. This page explains how it works, how to set it up in each client, and lists every tool.
 
-![MCP setup instructions in the Help tab](images/mcp-setup.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/mcp-setup-light.png"><img alt="MCP setup instructions in the Help tab" src="images/mcp-setup.png"></picture>
 
 ## What MCP gives you
 

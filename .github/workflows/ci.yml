@@ -43,12 +43,15 @@ jobs:
           bad = []
           for doc in ("README.md", "docs/DESIGN.md", "CHANGELOG.md", "packaging/BUNDLE_README.md"):
               base = os.path.dirname(doc)
-              for target in re.findall(r"\]\(([^)\s#]+)(?:#[^)]*)?\)", open(doc, encoding="utf-8").read()):
+              text = open(doc, encoding="utf-8").read()
+              for target in re.findall(r"\]\(([^)\s#]+)(?:#[^)]*)?\)", text) + re.findall(r'(?:src|srcset)="([^"#]+)"', text):
                   if not target.startswith(("http://", "https://", "mailto:")) and not os.path.exists(os.path.join(base, target)):
                       bad.append(f"{doc}: missing {target}")
           print("\n".join(bad) or "links ok")
-          sys.exit(1 if bad else 0)
+          if bad:
+              sys.exit(1)
           EOF
+          python3 tools/theme_images.py --check
 
   firmware:
     # Exercises the real toolchain downloads and ChipWhisperer makefiles on every OS.

@@ -2,7 +2,7 @@
 
 The **Scope** tab shows every setting of the connected ChipWhisperer scope as an editable tree, read directly from the hardware. This page explains how the tree works and which settings matter most for a first capture.
 
-![The Scope tab with the gain, adc and clock groups expanded](images/scope.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/scope-light.png"><img alt="The Scope tab with the gain, adc and clock groups expanded" src="images/scope.png"></picture>
 
 *The settings tree: groups on the left, current values on the right, documentation on hover.*
 
@@ -130,7 +130,7 @@ Studio reads the ADC sample rate from the clock settings to label the waveform's
 
 The `glitch` group is closed by default. Open it, or filter for `glitch`, when you want to inject faults.
 
-![The glitch group of the scope settings tree](images/scope-glitch.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/scope-glitch-light.png"><img alt="The glitch group of the scope settings tree" src="images/scope-glitch.png"></picture>
 
 *The glitch module settings, reached by typing glitch into the filter box.*
 

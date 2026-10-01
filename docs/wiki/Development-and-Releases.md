@@ -63,7 +63,7 @@ There is no build step: edit files under `src/cwstudio/static/` and reload the b
 
 ## Screenshots
 
-`tools/screenshots.py` regenerates every image used in the wiki and README from a scripted simulator session: it starts a temporary Studio, captures traces, runs CPA, sweeps glitches, builds firmware with clang, creates a sample notebook and notes, then photographs each view in dark and light themes with Playwright.
+`tools/screenshots.py` regenerates every image used in the wiki and README from a scripted simulator session: it starts a temporary Studio, captures traces, runs CPA, sweeps glitches, builds firmware with clang, creates a sample notebook and notes, then photographs each view with Playwright twice: `name.png` in the dark theme and `name-light.png` in the light theme. `tools/theme_images.py` then turns every screenshot reference in the README and the wiki into a `<picture>` that shows the variant matching the reader's GitHub theme (run it after adding a new screenshot; `--check` reports anything left to convert).
 
 ```bash
 pip install playwright
@@ -80,6 +80,18 @@ python tools/screenshots.py
 | `--no-firmware` | off | Skip toolchain downloads and the firmware build. |
 
 The script exits with an error if the browser console reported any JavaScript errors, which makes it a useful UI smoke test.
+
+## Demo video
+
+`tools/demo_video.py` records the [Video Tour](Video-Tour): it starts a Studio with the simulator and drives the real UI through every feature with Playwright, with a caption bar explaining each step and a visible pointer. It writes `chipwhisperer-studio-demo.mp4` (H.264), `waveform-zoom.gif` (the zoom chapter, used in the README), `demo-poster.png` and `chapters.json` with the chapter timestamps.
+
+```bash
+pip install playwright imageio-ffmpeg
+playwright install chromium
+python tools/demo_video.py --data-dir build/screenshot-data
+```
+
+Use the same data folder as the screenshots, so the firmware chapter finds the compilers and sources. ffmpeg comes from `imageio-ffmpeg` when it is not installed system-wide. The video is attached to the GitHub release rather than committed; copy the GIF and poster into `docs/wiki/images`.
 
 ## Standalone bundles
 

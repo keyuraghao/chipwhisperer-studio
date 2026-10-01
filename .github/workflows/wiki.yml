@@ -35,7 +35,7 @@ jobs:
               if not f.endswith(".md"):
                   continue
               text = open(os.path.join(root, f), encoding="utf-8").read()
-              for target in re.findall(r"\]\(([^)\s#]+)(?:#[^)]*)?\)", text):
+              for target in re.findall(r"\]\(([^)\s#]+)(?:#[^)]*)?\)", text) + re.findall(r'(?:src|srcset)="([^"#]+)"', text):
                   if target.startswith(("http://", "https://", "mailto:")):
                       continue
                   if target.startswith("images/"):

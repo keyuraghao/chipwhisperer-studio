@@ -2,7 +2,7 @@
 
 The waveform viewer is the large plot in the middle of Studio. It shows every trace as it is captured, lets you overlay and average traces, browse stored traces, zoom, and measure with two cursors.
 
-![The waveform viewer showing an overlay of recent traces](images/waveform-overlay.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/waveform-overlay-light.png"><img alt="The waveform viewer showing an overlay of recent traces" src="images/waveform-overlay.png"></picture>
 
 *The toolbar at the top controls what is drawn; the footer below the plot shows statistics of the displayed trace.*
 
@@ -32,11 +32,15 @@ The mean and min/max statistics are computed over all stored traces. They are re
 - Press the **zoom in** and **zoom out** buttons (or the **+** and **-** keys) to zoom in steps of two around cursor A or the middle of the view.
 - **Double-click** or press **Fit** to zoom back out.
 
+<picture><source media="(prefers-color-scheme: light)" srcset="images/waveform-zoom-light.png"><img alt="Zoomed in around cursor A, with the zoom buttons next to Fit" src="images/waveform-zoom.png"></picture>
+
+![Zooming with the buttons, the keys and a drag, then Fit](images/waveform-zoom.gif)
+
 While you are zoomed in, new live traces keep your zoom. The CPA Analysis tab's **use zoom** button copies the zoomed range into the attack's sample range, so you can attack only the part of the trace you are looking at.
 
 ## Cursors and measurements
 
-![Cursors A and B with the measurement read-out in the footer](images/waveform-cursors.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/waveform-cursors-light.png"><img alt="Cursors A and B with the measurement read-out in the footer" src="images/waveform-cursors.png"></picture>
 
 *Cursor A (pink) and cursor B (purple) with the difference shown in the footer.*
 

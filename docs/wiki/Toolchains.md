@@ -2,7 +2,7 @@
 
 Studio does not ship compilers inside its download, because they would add hundreds of megabytes for every platform. Instead it downloads official compiler releases the first time a [firmware build](Firmware-Builds) needs them, checks each download against a pinned SHA-256 checksum, and works offline from then on. This page explains the pinned toolchains, how installation works, and how to add your own.
 
-![The Toolchains card on the Firmware tab](images/toolchains.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/toolchains-light.png"><img alt="The Toolchains card on the Firmware tab" src="images/toolchains.png"></picture>
 
 *The Toolchains card (bottom of the Firmware tab) with the status of each compiler.*
 
@@ -69,7 +69,7 @@ The pinned list of toolchains (versions, URLs and checksums) ships with Studio i
 
 Use a custom toolchain when Studio has no download for your target (TriCore for CW308_AURIX, PowerPC for CW308_MPC5676R, Renesas RX for CW308_RX65N), or when you want a specific compiler version. Open **Add a custom toolchain** at the bottom of the card.
 
-![Adding a custom toolchain](images/toolchains-custom.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/toolchains-custom-light.png"><img alt="Adding a custom toolchain" src="images/toolchains-custom.png"></picture>
 
 *The custom toolchain form.*
 

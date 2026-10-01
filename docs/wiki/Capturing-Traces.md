@@ -2,7 +2,7 @@
 
 The **Capture** tab records power traces: for each trace Studio sends data to the target, arms the scope, waits for the trigger and stores the recorded waveform together with the plaintext, ciphertext and key. The waveform view updates live while it runs.
 
-![Capturing traces with the waveform updating live](images/capture.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/capture-light.png"><img alt="Capturing traces with the waveform updating live" src="images/capture.png"></picture>
 
 *A capture in progress: options on the left, the latest trace and the running mean in the main view.*
 
@@ -16,7 +16,7 @@ The **Capture** tab records power traces: for each trace Studio sends data to th
 
 ## Capture options
 
-![The capture options card](images/capture-panel.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/capture-panel-light.png"><img alt="The capture options card" src="images/capture-panel.png"></picture>
 
 *The Capture card with its default values.*
 

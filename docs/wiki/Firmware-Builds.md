@@ -2,7 +2,7 @@
 
 The **Firmware** tab compiles ChipWhisperer's own target firmware (simpleserial-aes, simpleserial-glitch and the other example projects) for any supported platform, with GCC or clang, and can flash the result onto your target in the same click. You do not need to install a compiler, `make` (on Windows) or the ChipWhisperer repository yourself: Studio downloads what it needs the first time.
 
-![The Firmware tab after a clang build for the CW-Lite Arm](images/firmware.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/firmware-light.png"><img alt="The Firmware tab after a clang build for the CW-Lite Arm" src="images/firmware.png"></picture>
 
 *The Firmware tab: build options at the top, the result of a successful build below.*
 
@@ -118,7 +118,7 @@ After a successful build a green box shows:
 
 If the build fails, a red box shows *Build failed* and the first error line from the log, and the build output opens automatically.
 
-![Build output with coloured errors and warnings](images/firmware-build-output.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/firmware-build-output-light.png"><img alt="Build output with coloured errors and warnings" src="images/firmware-build-output.png"></picture>
 
 *The build output streams live. Errors are red, warnings amber, and make's own commands grey.*
 

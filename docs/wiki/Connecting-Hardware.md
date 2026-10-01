@@ -2,16 +2,16 @@
 
 The **Connect** tab is where you choose which ChipWhisperer scope to use and which protocol to speak to the target device. This page explains every option on it, which choice fits which hardware, and how to fix common connection problems.
 
-![The Connect tab](images/connect.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/connect-light.png"><img alt="The Connect tab" src="images/connect.png"></picture>
 *The Connect tab with the Scope, Target, Status and Platform cards.*
 
 Studio talks to the hardware only through NewAE's `chipwhisperer` Python library (`cw.scope()`, `cw.target()` and friends), so any device that library supports should work in Studio.
 
-> **Note:** Studio 0.4.2 has been tested with the built-in [simulator](Simulator) and in CI. It has not yet been tested on physical ChipWhisperer hardware.
+> **Note:** Studio 0.4.3 has been tested with the built-in [simulator](Simulator) and in CI. It has not yet been tested on physical ChipWhisperer hardware.
 
 ## Scope card
 
-![The Scope and Target cards](images/connect-panel.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/connect-panel-light.png"><img alt="The Scope and Target cards" src="images/connect-panel.png"></picture>
 *The Scope card (device, serial number, options) and the Target card (protocol).*
 
 | Option | What it does | Default |

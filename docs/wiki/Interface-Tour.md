@@ -17,7 +17,7 @@ This page explains every part of the Studio window: the top bar, the navigation,
 
 ## Top bar
 
-- **Logo, name and version.** The small badge shows the version you are running, for example `v0.4.2`.
+- **Logo, name and version.** The small badge shows the version you are running, for example `v0.4.3`.
 - **Status chips.** Three rounded chips show the scope, the target and the current job:
   - The **scope** chip shows the device name and serial number (for example `ChipWhisperer-Simulator · SIM000001`) with a green dot when connected, or **No scope**.
   - The **target** chip shows the target type (for example `SimpleSerial2`) or **No target**.
@@ -68,7 +68,7 @@ The bottom of the main area holds the log.
 - Errors also appear as a toast (see below).
 - **Selection statistics.** When you select text that contains numbers anywhere in Studio (a note, a notebook output, the log, the serial console), a blue badge appears in the log bar with the count, sum, mean, min and max. Click it to open the Calc tab with the full statistics. See [Notes and Calculator](Notes-and-Calculator).
 
-![Selection statistics in the log bar](images/selection-stats.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/selection-stats-light.png"><img alt="Selection statistics in the log bar" src="images/selection-stats.png"></picture>
 *Selecting numbers in a note shows their statistics instantly in the log bar.*
 
 When you open Studio, the most recent log messages from before the page loaded are shown too, so you do not miss what happened.
@@ -128,5 +128,5 @@ Several browser windows can be open at the same time; they all show the same liv
 
 The **Help** tab repeats the quick start, lists the keyboard shortcuts, explains remote use and the HTTP API, and shows ready-to-copy configuration for connecting AI agents through MCP.
 
-![The Help tab](images/help.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/help-light.png"><img alt="The Help tab" src="images/help.png"></picture>
 *The Help tab with quick start steps and shortcuts.*

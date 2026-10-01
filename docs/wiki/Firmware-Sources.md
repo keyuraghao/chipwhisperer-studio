@@ -2,7 +2,7 @@
 
 To build target firmware, Studio needs ChipWhisperer's firmware source tree (`firmware/mcu`). Studio does not bundle it: it downloads it straight from NewAE's GitHub repository and can keep it up to date, so new examples and fixes from NewAE reach you without a new Studio release. You can also point Studio at your own ChipWhisperer checkout.
 
-![The Firmware sources card](images/firmware-sources.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/firmware-sources-light.png"><img alt="The Firmware sources card" src="images/firmware-sources.png"></picture>
 
 *The Firmware sources card on the Firmware tab, showing the installed commit and the update status.*
 

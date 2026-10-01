@@ -4,6 +4,18 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-01
+
+### Added
+
+- **Video tour:** a walkthrough of every feature in under three minutes (`chipwhisperer-studio-demo.mp4`, attached to this release), with a chapter list on the new [Video Tour](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Video-Tour) wiki page. `tools/demo_video.py` records it from the real UI with captions, so it can be regenerated after UI changes.
+- **Screenshots in both themes:** every screenshot in the README and the wiki now exists in the dark and the light theme, and GitHub shows the one matching your theme. New screenshots show the zoom buttons and the glitch sweep, and an animated GIF shows zooming. `tools/theme_images.py` keeps the docs in sync, and CI checks it.
+
+### Fixed
+
+- With **time axis** on, the waveform's time labels no longer run into each other when the whole trace is shown.
+- The README's pip instructions install the wheel from the release (Studio is not on PyPI yet), and the README images that referred to old screenshots use the current ones.
+
 ## [0.4.2] - 2026-10-01
 
 ### Added
@@ -168,7 +180,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.3.0...v0.4.0

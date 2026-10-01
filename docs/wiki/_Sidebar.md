@@ -3,6 +3,7 @@
 **Getting started**
 - [Installation](Installation)
 - [Quick start](Quick-Start)
+- [Video tour](Video-Tour)
 - [Interface tour](Interface-Tour)
 - [Connecting hardware](Connecting-Hardware)
 - [Simulator](Simulator)

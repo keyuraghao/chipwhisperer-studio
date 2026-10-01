@@ -2,7 +2,7 @@
 
 The **Target** tab is where you put firmware on the target microcontroller and talk to it: program a `.hex` file, watch the serial port, send SimpleSerial commands by hand and change the target interface settings.
 
-![The Target tab with programming, SimpleSerial and serial console cards](images/target.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/target-light.png"><img alt="The Target tab with programming, SimpleSerial and serial console cards" src="images/target.png"></picture>
 
 *Program firmware at the top, SimpleSerial helper and serial console below.*
 
@@ -58,7 +58,7 @@ Both directions also appear in the serial console, so you can see exactly what w
 
 The serial console shows everything the target sends, plus what you send.
 
-![The serial console showing sent and received lines](images/target-serial.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/target-serial-light.png"><img alt="The serial console showing sent and received lines" src="images/target-serial.png"></picture>
 
 *Sent lines start with →, received lines with ←.*
 

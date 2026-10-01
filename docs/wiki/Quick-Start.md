@@ -31,7 +31,7 @@ Click **Single** in the top bar (or press **S**). One power trace appears in the
 
 The waveform updates live while the progress bar fills. When the capture finishes, the top bar shows **500 traces** and the **Trace set** card shows the number of traces, samples per trace and memory used.
 
-![Capture tab after a capture](images/capture.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/capture-light.png"><img alt="Capture tab after a capture" src="images/capture.png"></picture>
 *The Capture tab with a finished capture; the waveform shows the latest trace.*
 
 ### 4. Recover the key with CPA
@@ -42,7 +42,7 @@ The waveform updates live while the progress bar fills. When the capture finishe
 
 Within a few seconds all 16 key bytes appear as tiles under **Result**. Because the key is stored with every trace, Studio knows the correct key and colours each tile green when the best guess is correct. The line below shows `best guess:` and `known:`; with 500 simulated traces they match. The **Convergence** plot shows the partial guessing entropy (PGE) of every byte dropping to 0 as more traces are used.
 
-![CPA result with all key bytes recovered](images/analysis.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/analysis-light.png"><img alt="CPA result with all key bytes recovered" src="images/analysis.png"></picture>
 *All 16 key bytes recovered; the PGE plot shows how many traces each byte needed.*
 
 That is the whole attack. From here you can try Glitching (the simulator also models glitches), explore the [Waveform Viewer](Waveform-Viewer), or open a [notebook](Notebooks).
@@ -51,7 +51,7 @@ That is the whole attack. From here you can try Glitching (the simulator also mo
 
 This walkthrough uses a ChipWhisperer-Lite with its built-in STM32F3 (ARM) target, platform `CWLITEARM`. Other hardware works the same way with a different platform and programmer; see [Firmware Builds](Firmware-Builds) and [Target and Programming](Target-and-Programming).
 
-> **Note:** Studio 0.4.2 has been tested with the simulator and in CI, not yet on physical hardware. If a step behaves differently on your device, please [open an issue](https://github.com/keyuraghao/chipwhisperer-studio/issues).
+> **Note:** Studio 0.4.3 has been tested with the simulator and in CI, not yet on physical hardware. If a step behaves differently on your device, please [open an issue](https://github.com/keyuraghao/chipwhisperer-studio/issues).
 
 ### 1. Prepare the computer (once)
 
@@ -81,7 +81,7 @@ The target needs NewAE's `simpleserial-aes` firmware. Studio builds it for you.
 
 Studio builds the firmware, shows the result (sizes and the `.hex` path), and programs the target with the STM32F programmer. A toast confirms how many bytes were written.
 
-![Firmware tab after a successful build](images/firmware.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/firmware-light.png"><img alt="Firmware tab after a successful build" src="images/firmware.png"></picture>
 *A successful build of simpleserial-aes for CWLITEARM, ready to program.*
 
 ### 4. Check the target answers

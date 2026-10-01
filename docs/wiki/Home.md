@@ -2,7 +2,7 @@
 
 ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chipwhisperer) side-channel and fault-injection hardware. It lets you connect a scope, build and flash target firmware, capture power traces while the waveform updates live, recover AES keys with correlation power analysis (CPA) and sweep glitch parameters, all from one window and without setting up Python or Jupyter.
 
-![ChipWhisperer Studio capturing traces with a live waveform](images/overview.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/overview-light.png"><img alt="ChipWhisperer Studio capturing traces with a live waveform" src="images/overview.png"></picture>
 *The main window: navigation on the left, the panel for the current tab in the middle, and the live waveform on the right.*
 
 > **Note:** ChipWhisperer Studio is an independent community project. It is not affiliated with or endorsed by NewAE Technology Inc. It uses NewAE's open source `chipwhisperer` Python library for all hardware access. "ChipWhisperer" is a trademark of NewAE Technology Inc.
@@ -13,7 +13,7 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 - **Lab and workshop instructors** who need something that installs in one step on Windows, macOS and Linux, and that works with a built-in simulator when there is not enough hardware for everyone.
 - **Researchers and engineers** who want a fast interactive tool for tuning a capture setup, plus notebooks, an HTTP API and an MCP server for automation.
 
-> **Note:** Version 0.4.2 has been tested extensively with the built-in [simulator](Simulator) and in continuous integration on Windows, macOS and Linux. It has not yet been tested on physical ChipWhisperer hardware. Please [report](https://github.com/keyuraghao/chipwhisperer-studio/issues) anything that behaves differently on your device.
+> **Note:** Version 0.4.3 has been tested extensively with the built-in [simulator](Simulator) and in continuous integration on Windows, macOS and Linux. It has not yet been tested on physical ChipWhisperer hardware. Please [report](https://github.com/keyuraghao/chipwhisperer-studio/issues) anything that behaves differently on your device.
 
 ## What you can do
 
@@ -41,7 +41,7 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 
 1. [Install Studio](Installation) (a download for your OS, nothing else to install).
 2. Follow the [Quick Start](Quick-Start) to capture traces and recover a key in a few minutes, with the simulator or with real hardware.
-3. Take the [Interface Tour](Interface-Tour) to learn where everything is.
+3. Watch the [Video Tour](Video-Tour) (every feature in a few minutes), or take the [Interface Tour](Interface-Tour) to learn where everything is.
 4. Stuck? Check [Troubleshooting](Troubleshooting) and the [FAQ](FAQ).
 
 ## All pages
@@ -50,6 +50,7 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 
 - [Installation](Installation)
 - [Quick Start](Quick-Start)
+- [Video Tour](Video-Tour)
 - [Interface Tour](Interface-Tour)
 - [Connecting Hardware](Connecting-Hardware)
 - [Simulator](Simulator)

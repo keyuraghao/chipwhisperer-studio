@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the screenshots used by the README and the wiki (docs/wiki/images).
 
-Starts a Studio with the simulator in a temporary data folder, runs a realistic session through the HTTP API (400 captured traces, a CPA attack, a glitch sweep and a clang firmware build), then photographs every tab with Playwright in dark and light themes.
+Starts a Studio with the simulator in a temporary data folder, runs a realistic session through the HTTP API (400 captured traces, a CPA attack, a glitch sweep and a clang firmware build), then photographs every scene with Playwright twice: ``name.png`` in the dark theme and ``name-light.png`` in the light theme. The README and the wiki show whichever matches the reader's GitHub theme.
 
     pip install -e ".[test]" playwright && playwright install chromium
     python tools/screenshots.py [--data-dir DIR] [--out docs/images]
@@ -120,6 +120,8 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
                 await page.wait_for_timeout(300)
 
             async def snap(name: str, element: str = None):
+                if scheme == "light":
+                    name = name[:-4] + "-light.png"
                 path = os.path.join(out, name)
                 if element:
                     await page.locator(element).first.screenshot(path=path)
@@ -131,14 +133,6 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
                 await page.fill("#panel-capture input[type=number] >> nth=0", str(count))
                 await page.click("#btn-run")
                 await page.wait_for_timeout(2500)
-
-            if scheme == "light":
-                await tab("capture")
-                await page.locator("#wave-toolbar label", has_text="mean").locator("input").check()
-                await run_capture()
-                await snap("overview-light.png")
-                await page.close()
-                continue
 
             # Connect
             await tab("connect")
@@ -220,9 +214,24 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             await page.keyboard.up("Shift")
             await page.wait_for_timeout(600)
             await snap("waveform-cursors.png")
+            # Zoom buttons: two steps in around cursor A, so the toolbar's magnifier buttons and the zoomed view show together
+            await page.locator("#wave-toolbar button[title='Reset zoom (double-click plot)']").click()
+            await page.locator("#wave-toolbar button[title='Clear cursors']").click()
+            await page.wait_for_timeout(300)
+            await page.mouse.click(box["x"] + box["width"] * 0.42, box["y"] + box["height"] * 0.5)
+            for _ in range(2):
+                await page.locator("#wave-toolbar button[title='Zoom in (+)']").click()
+                await page.wait_for_timeout(250)
+            await page.wait_for_timeout(400)
+            await snap("waveform-zoom.png")
+            await page.locator("#wave-toolbar button[title='Reset zoom (double-click plot)']").click()
             # Analysis
             await tab("analysis", 380)
             await snap("analysis.png")
+            # Glitch sweep results from prepare()
+            await tab("glitch", 99999)
+            await page.wait_for_timeout(600)
+            await snap("glitch.png")
             # Notebook
             await tab("notebook")
             await page.locator(".nb-file", has_text="Studio tour").first.click()

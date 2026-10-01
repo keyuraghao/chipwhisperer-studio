@@ -4,7 +4,7 @@ Two small tools for everyday lab work. **Notes** is a text pad for keys you reco
 
 ## Notes
 
-![The Notes tab with live selection statistics in the log bar](images/notes.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/notes-light.png"><img alt="The Notes tab with live selection statistics in the log bar" src="images/notes.png"></picture>
 
 *The Notes tab. Selecting numbers in a note shows their statistics in the log bar at the bottom.*
 
@@ -27,7 +27,7 @@ Notes are plain text files written in [Markdown](https://www.markdownguide.org/b
 
 ## Calculator
 
-![The Calc tab with calculator history and statistics between the waveform cursors](images/calc.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/calc-light.png"><img alt="The Calc tab with calculator history and statistics between the waveform cursors" src="images/calc.png"></picture>
 
 *The Calc tab: calculator history at the top, statistics of the waveform between cursors A and B below.*
 
@@ -95,7 +95,7 @@ The **Selection statistics** card computes statistics of a set of numbers you pi
 | **Stored traces: value at cursor A across traces** | The value of one sample (the one under cursor A) in every stored trace: how that point varies from trace to trace. |
 | **Numbers I type or paste** | Numbers you type or paste into the box, separated by spaces, commas or new lines. |
 
-![Live selection statistics in the log bar](images/selection-stats.png)
+<picture><source media="(prefers-color-scheme: light)" srcset="images/selection-stats-light.png"><img alt="Live selection statistics in the log bar" src="images/selection-stats.png"></picture>
 
 *Selecting numbers anywhere shows their count, sum, mean, min and max in the log bar.*
 
