@@ -54,6 +54,8 @@ export class Waveform {
     this.timeChk = h('input', { type: 'checkbox', onchange: () => { this.timeAxis = this.timeChk.checked; this.rebuild(); } });
     this.pauseBtn = h('button', { class: 'btn sm', onclick: () => { this.paused = !this.paused; this.pauseBtn.innerHTML = this.paused ? PLAY_HTML : PAUSE_HTML; this.pauseBtn.classList.toggle('active', this.paused); }, html: PAUSE_HTML });
     this.resetBtn = h('button', { class: 'btn sm', title: 'Reset zoom (double-click plot)', onclick: () => { this.userZoomed = false; this.render(true); }, html: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Fit</span>' });
+    this.zoomInBtn = h('button', { class: 'btn sm', title: 'Zoom in (+)', onclick: () => this.zoom(0.5), html: '<svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5M8 11h6M11 8v6"/></svg>' });
+    this.zoomOutBtn = h('button', { class: 'btn sm', title: 'Zoom out (-)', onclick: () => this.zoom(2), html: '<svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5M8 11h6"/></svg>' });
     this.pngBtn = h('button', { class: 'btn sm', onclick: () => this.exportPng(), html: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg><span>PNG</span>' });
     this.clearCurBtn = h('button', { class: 'btn sm', title: 'Clear cursors', onclick: () => { this.cursors = { a: null, b: null }; this.redraw(); }, html: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg><span>Cursors</span>' });
     this.browseBox = h('span', { style: 'display:none;align-items:center;gap:6px' }, mk('#', this.idxInput), this.idxRange);
@@ -65,9 +67,9 @@ export class Waveform {
       h('span', { class: 'sep' }),
       mk(this.autoChk, 'auto Y'), mk(this.timeChk, 'time axis'),
       h('span', { class: 'sep' }),
-      this.pauseBtn, this.resetBtn, this.clearCurBtn, this.pngBtn,
+      this.pauseBtn, this.zoomInBtn, this.zoomOutBtn, this.resetBtn, this.clearCurBtn, this.pngBtn,
       h('span', { class: 'spacer' }),
-      h('span', { class: 'muted', style: 'font-size:11px' }, 'drag: zoom · dbl-click: fit · click: cursor A · shift+click: cursor B'),
+      h('span', { class: 'muted', style: 'font-size:11px' }, 'drag or +/-: zoom · dbl-click: fit · click: cursor A · shift+click: cursor B'),
     );
   }
 
@@ -245,6 +247,22 @@ export class Waveform {
   }
 
   redraw() { if (this.u) this.u.redraw(false, true); }
+
+  /** Zoom the sample axis by a factor (0.5 = in, 2 = out), centred on cursor A when it is in view, otherwise on the middle of the view. */
+  zoom(factor) {
+    const u = this.u;
+    const n = u && u.data[0] ? u.data[0].length : 0;
+    if (n < 2) return;
+    const s = u.scales.x, lo = s.min ?? 0, hi = s.max ?? n - 1;
+    const a = this.cursors.a;
+    const centre = a != null && a >= lo && a <= hi ? a : (lo + hi) / 2;
+    const half = Math.max(5, ((hi - lo) / 2) * factor); // never narrower than about 10 samples
+    if (half * 2 >= n - 1) { this.userZoomed = false; this.render(true); return; }
+    let min = centre - half, max = centre + half;
+    if (min < 0) { max -= min; min = 0; }
+    if (max > n - 1) { min -= max - (n - 1); max = n - 1; }
+    u.setScale('x', { min: Math.max(0, min), max });
+  }
 
   // ---------- cursors ----------
   drawCursors(u) {

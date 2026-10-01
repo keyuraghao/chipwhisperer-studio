@@ -190,6 +190,8 @@ async function boot() {
     else if (e.key === 'r' || e.key === 'R') ctx.capture.start();
     else if (e.key === 'Escape') ctx.capture.stop();
     else if (e.key === ' ') { e.preventDefault(); ctx.wave.pauseBtn.click(); }
+    else if ((e.key === '+' || e.key === '=') && !e.ctrlKey && !e.metaKey) ctx.wave.zoom(0.5);
+    else if ((e.key === '-' || e.key === '_') && !e.ctrlKey && !e.metaKey) ctx.wave.zoom(2);
     else if (e.key === 'ArrowLeft' && ctx.wave.mode === 'browse') ctx.wave.gotoIndex(+ctx.wave.idxInput.value - 1);
     else if (e.key === 'ArrowRight' && ctx.wave.mode === 'browse') ctx.wave.gotoIndex(+ctx.wave.idxInput.value + 1);
   });

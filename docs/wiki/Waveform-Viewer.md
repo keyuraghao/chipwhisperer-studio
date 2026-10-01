@@ -19,6 +19,7 @@ The viewer is visible on every tab except [Notebooks](Notebooks), which uses the
 | auto Y | Rescales the vertical axis to fit each trace. Turn it off to keep the vertical scale fixed while traces update. | on |
 | time axis | Labels the horizontal axis in time units instead of sample numbers, using the ADC sample rate read from the scope's clock settings. If Studio does not know the sample rate, the axis keeps showing sample numbers. | off |
 | Pause / Resume | Freezes the display while captures continue in the background. Also on the **Space** key. | running |
+| Zoom in / Zoom out (magnifier buttons) | Halves or doubles the visible range of samples, centred on cursor A when it is in view, otherwise on the middle of the view. The **+** and **-** keys do the same. | |
 | Fit | Resets the zoom to show the whole trace. Double-clicking the plot does the same. | |
 | Cursors | Removes both cursors. | |
 | PNG | Saves the current plot as `trace.png`, with a background matching the current theme. | |
@@ -28,6 +29,7 @@ The mean and min/max statistics are computed over all stored traces. They are re
 ## Zooming
 
 - **Drag** horizontally across the plot to zoom into that range of samples.
+- Press the **zoom in** and **zoom out** buttons (or the **+** and **-** keys) to zoom in steps of two around cursor A or the middle of the view.
 - **Double-click** or press **Fit** to zoom back out.
 
 While you are zoomed in, new live traces keep your zoom. The CPA Analysis tab's **use zoom** button copies the zoomed range into the attack's sample range, so you can attack only the part of the trace you are looking at.

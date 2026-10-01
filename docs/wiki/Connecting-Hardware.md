@@ -7,7 +7,7 @@ The **Connect** tab is where you choose which ChipWhisperer scope to use and whi
 
 Studio talks to the hardware only through NewAE's `chipwhisperer` Python library (`cw.scope()`, `cw.target()` and friends), so any device that library supports should work in Studio.
 
-> **Note:** Studio 0.4.1 has been tested with the built-in [simulator](Simulator) and in CI. It has not yet been tested on physical ChipWhisperer hardware.
+> **Note:** Studio 0.4.2 has been tested with the built-in [simulator](Simulator) and in CI. It has not yet been tested on physical ChipWhisperer hardware.
 
 ## Scope card
 

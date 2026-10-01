@@ -4,6 +4,12 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-01
+
+### Added
+
+- **Zoom buttons in the waveform view:** zoom in and zoom out (magnifier buttons next to **Fit**, or the **+** and **-** keys) halve or double the visible range of samples, centred on cursor A when it is in view and otherwise on the middle of the view. The zoom stops at the ends of the trace and at about 10 samples, keeps across live traces, and zooming out past the whole trace fits it.
+
 ## [0.4.1] - 2026-10-01
 
 A full review of 0.4.0 against 0.3.0 (every HTTP route, all 68 MCP tools on three transports, every tab in the browser, the numerics and the published packages) found the issues below. They are fixed here, together with several older bugs it uncovered.
@@ -162,7 +168,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.2.0...v0.3.0

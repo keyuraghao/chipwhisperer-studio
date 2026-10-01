@@ -39,6 +39,7 @@ export function initHelp(ctx, el) {
       h('span', { class: 'k' }, 'Space'), h('span', {}, 'pause or resume the display'),
       h('span', { class: 'k' }, 'Left / Right'), h('span', {}, 'previous or next trace (browse mode)'),
       h('span', { class: 'k' }, 'Drag'), h('span', {}, 'zoom X'),
+      h('span', { class: 'k' }, '+ / -'), h('span', {}, 'zoom in or out (around cursor A)'),
       h('span', { class: 'k' }, 'Double-click'), h('span', {}, 'fit'),
       h('span', { class: 'k' }, 'Click / Shift+click'), h('span', {}, 'cursor A / B'))),
     h('h2', {}, 'Remote use and scripting'),

@@ -17,7 +17,7 @@ This page explains every part of the Studio window: the top bar, the navigation,
 
 ## Top bar
 
-- **Logo, name and version.** The small badge shows the version you are running, for example `v0.4.1`.
+- **Logo, name and version.** The small badge shows the version you are running, for example `v0.4.2`.
 - **Status chips.** Three rounded chips show the scope, the target and the current job:
   - The **scope** chip shows the device name and serial number (for example `ChipWhisperer-Simulator · SIM000001`) with a green dot when connected, or **No scope**.
   - The **target** chip shows the target type (for example `SimpleSerial2`) or **No target**.
@@ -95,6 +95,7 @@ These work when the cursor is not in a text field:
 | Esc | Stop the running capture or glitch sweep |
 | Space | Pause or resume the waveform display (capturing continues) |
 | Left / Right arrow | Previous or next stored trace, when the waveform Source is "Browse stored traces" |
+| + / - | Zoom the waveform in or out by a factor of two, around cursor A or the middle of the view |
 
 In the waveform plot: drag to zoom into a range, double-click to fit, click to place cursor A, Shift+click to place cursor B. See [Waveform Viewer](Waveform-Viewer).
 
