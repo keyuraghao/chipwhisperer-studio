@@ -19,7 +19,7 @@ This release makes Studio smaller and faster. Heavy libraries that Studio used o
 ### Changed
 
 - **Fewer dependencies:** `fastapi`, `mcp`, `python-multipart` and the `uvicorn[standard]` extras are gone, and with them pydantic, pydantic-core, jsonschema, rpds, httpx2, opentelemetry, pyjwt, cryptography, uvloop, httptools, watchfiles and PyYAML. Studio now needs Starlette, uvicorn, websockets, numpy, matplotlib and a few small packages.
-- **Smaller bundles:** the Linux bundle zip shrinks from 108 MB to 65 MB. Besides the dependencies above, the bundles leave out Cython, setuptools, matplotlib's GUI backends and sample data, and Pillow's AVIF, WebP and colour management codecs, and strip debug symbols on Linux.
+- **Smaller bundles:** the Linux bundle zip shrinks from 108 MB to 64 MB (macOS 80 MB to 61 MB, Windows 67 MB to 49 MB). Besides the dependencies above, the bundles leave out Cython, setuptools, matplotlib's GUI backends and sample data, and Pillow's AVIF, WebP and colour management codecs, and strip debug symbols on Linux.
 - **Smaller frontend:** the notebook and notes Markdown renderer and HTML sanitizer are now one 14 KB module (`markdown.js`) instead of marked and DOMPurify (76 KB). It renders NewAE's tutorial notebooks like before, leaves LaTeX math untouched, and keeps notebook output safe from scripts.
 - **Faster CPA:** about 3 times faster with live progress (5000 traces of 5000 samples: 27 s to 9 s) and 1.6 times faster without, with identical results; progress reports no longer allocate hundreds of MB.
 - **Faster capture and simulator:** the simulator synthesises traces 3 times faster and AES runs 7 times faster, so simulated captures run about 2.7 times faster. The same seed still gives the same traces.
@@ -27,6 +27,23 @@ This release makes Studio smaller and faster. Heavy libraries that Studio used o
 - The Connect tab now preselects SimpleSerial v2, which current ChipWhisperer firmware uses, instead of the legacy v1 protocol.
 - In notebooks, `cw.plot()` returns a plot object that combines with `*` and `+` like ChipWhisperer's holoviews version (`cw.plot(a) * cw.plot(b)`, `fig = cw.plot()`), and `plt.show()` shows figures immediately.
 - `studio.build_firmware()` defaults to SimpleSerial v2.1, like the Firmware tab.
+
+### Performance
+
+Measured before and after on the same machine (about 15% noise); results are identical. On real hardware, captures are mostly limited by USB and the target, so the gains show mainly in CPA and the live view.
+
+| Operation | Before | After | Speedup |
+|---|---|---|---|
+| Live update encoding (500 events, 8 open windows) | 30.6 ms | 3.8 ms | 8.1x |
+| AES encryption (5000 blocks) | 650 ms | 93 ms | 7.0x |
+| CPA, 5000 traces of 5000 samples, progress every 50 traces | 26.6 s | 8.8 s | 3.0x |
+| Simulator trace generation (5000 traces) | 1340 ms | 441 ms | 3.0x |
+| Simulated capture loop (1000 traces) | 460 ms | 168 ms | 2.7x |
+| Trace export as arrays | 33 ms | 20 ms | 1.65x |
+| CPA, progress every 1000 traces | 3.1 s | 1.9 s | 1.6x |
+| Trace block fetch for the waveform view | 11.4 ms | 7.8 ms | 1.5x |
+| Mean, min and max statistics | 81 ms | 64 ms | 1.3x |
+| Trace store summary | 3.3 ms | about 0 | effectively instant |
 
 ### Fixed
 
