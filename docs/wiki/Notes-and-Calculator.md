@@ -2,6 +2,10 @@
 
 Two small tools for everyday lab work. **Notes** is a text pad for keys you recovered, glitch settings that worked and to-dos, saved automatically. **Calc** is a calculator with side-channel helpers, plus statistics (count, sum, mean, median, min, max, peak to peak, standard deviation, RMS) of whatever you select: part of the waveform, one sample across all traces, or numbers anywhere in Studio.
 
+![Inserting the CPA key into a note and previewing it (animated)](images/clips/notes.webp)
+
+![Calculator expressions and statistics between the waveform cursors (animated)](images/clips/calculator.webp)
+
 ## Notes
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/notes-light.png"><img alt="The Notes tab with live selection statistics in the log bar" src="images/notes.png"></picture>

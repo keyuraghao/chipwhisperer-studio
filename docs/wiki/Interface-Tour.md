@@ -5,6 +5,8 @@ This page explains every part of the Studio window: the top bar, the navigation,
 ![The Studio window in the dark theme](images/overview.png)
 *The Studio window: top bar, navigation on the left, the panel of the current tab, the main area with the waveform, and the log drawer at the bottom.*
 
+![Switching between the dark and light themes (animated)](images/clips/themes.webp)
+
 ## Layout at a glance
 
 | Area | Where | What it is for |

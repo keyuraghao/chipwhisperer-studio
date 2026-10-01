@@ -8,6 +8,8 @@ The **Scope** tab shows every setting of the connected ChipWhisperer scope as an
 
 > **Note:** ChipWhisperer Studio has so far been tested with its built-in [Simulator](Simulator) and in CI, not yet on physical ChipWhisperer hardware. The settings tree is generic (it reads whatever the `chipwhisperer` library exposes), so it should work with every scope, but please report anything that behaves differently on your device.
 
+![Browsing and searching the scope settings (animated)](images/clips/scope-settings.webp)
+
 ## How the settings tree works
 
 Studio does not have a hand-written form for each scope model. Instead it asks the `chipwhisperer` library for the scope's settings (the same values you see when you `print(scope)` in Python) and builds the tree from them. That means Nano, Lite, Pro and Husky all work without special code, and new settings added to the library appear automatically.
@@ -129,6 +131,8 @@ Studio reads the ADC sample rate from the clock settings to label the waveform's
 ### glitch: the fault injection module
 
 The `glitch` group is closed by default. Open it, or filter for `glitch`, when you want to inject faults.
+
+![A clock glitch sweep with the live result plot (animated)](images/clips/glitch-sweep.webp)
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/scope-glitch-light.png"><img alt="The glitch group of the scope settings tree" src="images/scope-glitch.png"></picture>
 

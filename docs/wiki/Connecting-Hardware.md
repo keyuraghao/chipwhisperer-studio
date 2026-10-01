@@ -9,6 +9,8 @@ Studio talks to the hardware only through NewAE's `chipwhisperer` Python library
 
 > **Note:** Studio 0.4.3 has been tested with the built-in [simulator](Simulator) and in CI. It has not yet been tested on physical ChipWhisperer hardware.
 
+![Connecting the simulator scope and target (animated)](images/clips/connect.webp)
+
 ## Scope card
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/connect-panel-light.png"><img alt="The Scope and Target cards" src="images/connect-panel.png"></picture>

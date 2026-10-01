@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record a captioned walkthrough video of every ChipWhisperer Studio feature.
 
-Starts a Studio with the simulator, then drives the real UI with Playwright: connecting, scope settings, target I/O, capture, the waveform view (overlay, mean, cursors, zoom), CPA, a glitch sweep, a firmware build, notebooks, notes, the calculator, the MCP setup and both themes. A caption bar explains each step and a pointer shows where the mouse goes. The recording is converted to MP4 (H.264) and a short GIF of the waveform zoom is cut for the README; a chapter list with timestamps is written next to them.
+Starts a Studio with the simulator, then drives the real UI with Playwright: connecting, scope settings, target I/O, capture, the waveform view (overlay, mean, cursors, zoom), CPA, a glitch sweep, a firmware build, notebooks, notes, the calculator, the MCP setup and both themes. A caption bar explains each step and a pointer shows where the mouse goes. The recording is converted to MP4 (H.264), and every chapter is also cut into a short looping animated WebP clip (``clips/<chapter>.webp``) that plays by itself in the README and the wiki, which cannot play MP4 files inline. A chapter list with timestamps is written next to them.
 
     pip install -e ".[test]" playwright imageio-ffmpeg && playwright install chromium
     python tools/demo_video.py --data-dir DIR [--out build/demo]
@@ -351,22 +351,43 @@ def ffmpeg_exe() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def convert(webm: str, out: str, chapters, gif_chapter: str, width: int):
+def slug(name: str) -> str:
+    out = "".join(c if c.isalnum() else "-" for c in name.lower())
+    while "--" in out:
+        out = out.replace("--", "-")
+    return out.strip("-")
+
+
+def duration(ff: str, path: str) -> float:
+    err = subprocess.run([ff, "-i", path], capture_output=True, text=True).stderr
+    h, m, sec = err.split("Duration: ")[1].split(",")[0].split(":")
+    return int(h) * 3600 + int(m) * 60 + float(sec)
+
+
+def make_clips(ff: str, mp4: str, chapters, folder: str, skip=("Introduction", "Get it")):
+    """Cut every chapter into a looping animated WebP (10 fps, 960 px wide); GitHub plays these inline, unlike MP4."""
+    os.makedirs(folder, exist_ok=True)
+    total = duration(ff, mp4)
+    for i, (start, name) in enumerate(chapters):
+        if name in skip:
+            continue
+        end = chapters[i + 1][0] if i + 1 < len(chapters) else total
+        path = os.path.join(folder, slug(name) + ".webp")
+        subprocess.check_call([ff, "-y", "-loglevel", "error", "-ss", f"{start + 0.2:.2f}", "-t", f"{end - start - 0.3:.2f}", "-i", mp4, "-vf", "fps=10,scale=960:-1:flags=lanczos", "-c:v", "libwebp_anim", "-quality", "60", "-compression_level", "3", "-loop", "0", path])
+        print(f"clip {name}: {path} ({os.path.getsize(path) / 1e6:.1f} MB)", flush=True)
+
+
+def convert(webm: str, out: str, chapters, width: int):
     ff = ffmpeg_exe()
     mp4 = os.path.join(out, "chipwhisperer-studio-demo.mp4")
     subprocess.check_call([ff, "-y", "-loglevel", "error", "-i", webm, "-vf", f"scale={width}:-2:flags=lanczos,fps=30", "-c:v", "libx264", "-preset", "slow", "-crf", "26", "-pix_fmt", "yuv420p", "-movflags", "+faststart", mp4])
+    make_clips(ff, mp4, chapters, os.path.join(out, "clips"))
     names = [n for _t, n in chapters]
-    i = names.index(gif_chapter)
-    start = chapters[i][0]
-    end = chapters[i + 1][0] if i + 1 < len(chapters) else start + 15
-    gif = os.path.join(out, "waveform-zoom.gif")
-    vf = "fps=10,scale=900:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle"
-    subprocess.check_call([ff, "-y", "-loglevel", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", mp4, "-vf", vf, gif])
     poster = os.path.join(out, "demo-poster.png")
     t = chapters[names.index("Waveform view")][0] + 4
     subprocess.check_call([ff, "-y", "-loglevel", "error", "-ss", f"{t:.2f}", "-i", mp4, "-frames:v", "1", poster])
     _play_button(poster)
-    return mp4, gif, poster
+    return mp4, poster
 
 
 def _play_button(path: str):
@@ -388,7 +409,13 @@ def main() -> int:
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "demo"))
     ap.add_argument("--size", default="1600x1000", help="browser size while recording")
     ap.add_argument("--width", type=int, default=1440, help="width of the MP4")
+    ap.add_argument("--clips-only", action="store_true", help="only cut the clips again from the MP4 and chapters.json already in --out")
     args = ap.parse_args()
+    if args.clips_only:
+        with open(os.path.join(args.out, "chapters.json")) as f:
+            chapters = [(c["t"], c["name"]) for c in json.load(f)]
+        make_clips(ffmpeg_exe(), os.path.join(args.out, "chipwhisperer-studio-demo.mp4"), chapters, os.path.join(args.out, "clips"))
+        return 0
     os.makedirs(args.out, exist_ok=True)
     width, height = (int(v) for v in args.size.split("x"))
     port = _free_port()
@@ -411,10 +438,10 @@ def main() -> int:
             proc.wait(10)
         except subprocess.TimeoutExpired:
             proc.kill()
-    mp4, gif, poster = convert(d.video_path, args.out, d.chapters, "Cursors and zoom", args.width)
+    mp4, poster = convert(d.video_path, args.out, d.chapters, args.width)
     with open(os.path.join(args.out, "chapters.json"), "w") as f:
         json.dump([{"t": round(t, 1), "name": n} for t, n in d.chapters], f, indent=1)
-    for path in (mp4, gif, poster):
+    for path in (mp4, poster):
         print(f"wrote {path} ({os.path.getsize(path) / 1e6:.1f} MB)")
     return 0
 

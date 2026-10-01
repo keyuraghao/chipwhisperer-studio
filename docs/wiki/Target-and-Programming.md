@@ -10,6 +10,8 @@ The **Target** tab is where you put firmware on the target microcontroller and t
 
 Before using this tab, connect a scope and a target on the [Connect](Connecting-Hardware) tab. Programming only needs the scope; the serial console and SimpleSerial helper need the target connection too.
 
+![Sending a key and a plaintext over SimpleSerial (animated)](images/clips/target-i-o.webp)
+
 ## Programming firmware
 
 ### Choosing the programmer

@@ -39,7 +39,7 @@ jobs:
                   if target.startswith(("http://", "https://", "mailto:")):
                       continue
                   if target.startswith("images/"):
-                      if target[7:] not in images:
+                      if not os.path.isfile(os.path.join(root, target)):
                           bad.append(f"{f}: missing image {target}")
                   elif target not in pages:
                       bad.append(f"{f}: broken page link {target}")

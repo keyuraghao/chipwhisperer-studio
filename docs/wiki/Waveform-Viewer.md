@@ -8,6 +8,8 @@ The waveform viewer is the large plot in the middle of Studio. It shows every tr
 
 The viewer is visible on every tab except [Notebooks](Notebooks), which uses the main area for its cells. Traces captured by notebook code still appear here when you switch back.
 
+![Overlay of recent traces with the mean and min/max envelope (animated)](images/clips/waveform-view.webp)
+
 ## Toolbar
 
 | Control | What it does | Default |
@@ -34,7 +36,7 @@ The mean and min/max statistics are computed over all stored traces. They are re
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/waveform-zoom-light.png"><img alt="Zoomed in around cursor A, with the zoom buttons next to Fit" src="images/waveform-zoom.png"></picture>
 
-![Zooming with the buttons, the keys and a drag, then Fit](images/waveform-zoom.gif)
+![Cursors, the zoom buttons, the + and - keys, drag to zoom and Fit (animated)](images/clips/cursors-and-zoom.webp)
 
 While you are zoomed in, new live traces keep your zoom. The CPA Analysis tab's **use zoom** button copies the zoomed range into the attack's sample range, so you can attack only the part of the trace you are looking at.
 

@@ -42,6 +42,8 @@ The waveform updates live while the progress bar fills. When the capture finishe
 
 Within a few seconds all 16 key bytes appear as tiles under **Result**. Because the key is stored with every trace, Studio knows the correct key and colours each tile green when the best guess is correct. The line below shows `best guess:` and `known:`; with 500 simulated traces they match. The **Convergence** plot shows the partial guessing entropy (PGE) of every byte dropping to 0 as more traces are used.
 
+![CPA recovering the AES key, then the correlation overlaid on the waveform (animated)](images/clips/cpa-key-recovery.webp)
+
 <picture><source media="(prefers-color-scheme: light)" srcset="images/analysis-light.png"><img alt="CPA result with all key bytes recovered" src="images/analysis.png"></picture>
 *All 16 key bytes recovered; the PGE plot shows how many traces each byte needed.*
 

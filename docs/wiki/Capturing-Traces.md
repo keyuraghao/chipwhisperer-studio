@@ -8,6 +8,8 @@ The **Capture** tab records power traces: for each trace Studio sends data to th
 
 > **Note:** ChipWhisperer Studio has so far been tested with its built-in [Simulator](Simulator) and in CI, not yet on physical hardware.
 
+![Capturing 500 traces (animated)](images/clips/capture.webp)
+
 ## Before you start
 
 1. Connect a scope and, for normal captures, a target on the [Connect](Connecting-Hardware) tab.

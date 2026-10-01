@@ -8,6 +8,8 @@ The **Notebook** tab is a Jupyter-style editor built into Studio. You write Pyth
 
 > **Note:** Notebooks have been tested with the built-in [Simulator](Simulator) and in CI. They use the same `chipwhisperer` library calls as Jupyter, but have not yet been verified on physical hardware.
 
+![Running a notebook that captures through Studio and plots the mean (animated)](images/clips/notebooks.webp)
+
 ## Creating and opening notebooks
 
 The **Notebooks** card on the left lists every notebook in Studio's notebooks folder, grouped by sub-folder (click a folder name to expand it). Click a notebook to open it; the last one you opened reopens when you return.

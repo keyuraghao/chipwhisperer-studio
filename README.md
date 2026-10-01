@@ -8,7 +8,7 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/capture-light.png"><img alt="ChipWhisperer Studio capturing traces with a live waveform" src="docs/wiki/images/capture.png"></picture>
 
-**Watch the tour:** a [video walkthrough of every feature](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer-studio-demo.mp4) (under three minutes, made with the built-in simulator), with chapters listed on the [Video Tour](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Video-Tour) wiki page. Screenshots on this page follow your GitHub theme.
+**See it in action:** every section below has a short clip that plays by itself. There is also a full [video walkthrough of every feature](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer-studio-demo.mp4) (under three minutes, made with the built-in simulator), with chapters listed on the [Video Tour](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Video-Tour) wiki page. Screenshots on this page follow your GitHub theme.
 
 [![Video walkthrough: click to watch](docs/wiki/images/demo-poster.png)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer-studio-demo.mp4)
 
@@ -76,11 +76,15 @@ Options: `--port 8765`, `--host 0.0.0.0` (remote access), `--no-browser`, `--win
 
 Choose your ChipWhisperer (or Auto-detect, or the Simulator) and press **Connect scope**, then **Connect target**. Use SimpleSerial v2 for current ChipWhisperer firmware.
 
+![Connecting the simulator scope and target (animated)](docs/wiki/images/clips/connect.webp)
+
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/connect-light.png"><img alt="Connect tab" src="docs/wiki/images/connect.png"></picture>
 
 ### 2. Configure the scope
 
 Every scope setting is listed with its documentation (hover a name) and read back from the hardware after each change. Press **Single** in the header to check the waveform while you adjust gain, samples, offset and trigger.
+
+![Browsing and searching the scope settings (animated)](docs/wiki/images/clips/scope-settings.webp)
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/scope-light.png"><img alt="Scope settings tree" src="docs/wiki/images/scope.png"></picture>
 
@@ -88,11 +92,17 @@ Every scope setting is listed with its documentation (hover a name) and read bac
 
 Program a `.hex` from disk or straight from a Studio build, check the target answers in the serial console, and send SimpleSerial commands by hand.
 
+![Sending a key and a plaintext over SimpleSerial (animated)](docs/wiki/images/clips/target-i-o.webp)
+
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/target-light.png"><img alt="Target tab" src="docs/wiki/images/target.png"></picture>
 
 ### 4. Capture traces
 
 Pick a trace count and key/plaintext mode and press **Run**. Traces stream to the waveform view as they are captured. Overlay the last N traces, show the mean and min/max envelope, zoom, and place cursors. Export as a ChipWhisperer project (`.cwp`) or `.npz` to continue in Python.
+
+![Capturing 500 traces (animated)](docs/wiki/images/clips/capture.webp)
+
+![Overlay of recent traces with the mean and min/max envelope (animated)](docs/wiki/images/clips/waveform-view.webp)
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/capture-light.png"><img alt="Capture with the live trace and the running mean" src="docs/wiki/images/capture.png"></picture>
 
@@ -100,11 +110,13 @@ Zoom with the magnifier buttons next to **Fit** (or the **+** and **-** keys): e
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/waveform-zoom-light.png"><img alt="Waveform zoomed in around cursor A with the time axis" src="docs/wiki/images/waveform-zoom.png"></picture>
 
-![Zooming in and out with the buttons and keys](docs/wiki/images/waveform-zoom.gif)
+![Cursors, the zoom buttons, the + and - keys, drag to zoom and Fit (animated)](docs/wiki/images/clips/cursors-and-zoom.webp)
 
 ### 5. Recover the key with CPA
 
 Run a correlation power analysis attack with the leakage model that matches your target. With a known key the partial guessing entropy (PGE) plot shows every byte converging to rank 0; click a byte to see where it leaks in the trace.
+
+![CPA recovering the AES key, then the correlation overlaid on the waveform (animated)](docs/wiki/images/clips/cpa-key-recovery.webp)
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/analysis-light.png"><img alt="CPA result with all 16 key bytes recovered" src="docs/wiki/images/analysis.png"></picture>
 
@@ -112,11 +124,15 @@ Run a correlation power analysis attack with the leakage model that matches your
 
 Configure the glitch module in the Scope tab, then sweep parameters such as `glitch.ext_offset` and `glitch.width`. Each point is classified as normal, success (a valid but wrong answer) or reset, and plotted live.
 
+![A clock glitch sweep with the live result plot (animated)](docs/wiki/images/clips/glitch-sweep.webp)
+
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/glitch-light.png"><img alt="Glitch sweep scatter plot" src="docs/wiki/images/glitch.png"></picture>
 
 ### 7. Work in a notebook
 
 The **Notebook** tab is a Jupyter-style editor that runs inside Studio. Write Python cell by cell (Shift+Enter runs a cell), mix in Markdown text cells, and see output, errors and matplotlib figures inline. Cells share Studio's hardware connection: `cw.scope()` and `cw.target()` return the devices you connected, and every trace captured with `cw.capture_trace()` or a manual `scope.arm()` / `scope.capture()` loop shows up live in the waveform view. Press **View traces** to jump to the Capture tab with them.
+
+![Running a notebook that captures through Studio and plots the mean (animated)](docs/wiki/images/clips/notebooks.webp)
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/notebook-light.png"><img alt="Notebook running a capture and plotting the mean trace" src="docs/wiki/images/notebook.png"></picture>
 
@@ -125,6 +141,10 @@ Notebooks are standard `.ipynb` files: import your own, or export them to use wi
 ### 8. Take notes and do the maths
 
 **Notes** is a text pad for keys, glitch settings that worked and to-dos, saved automatically as Markdown files. **Calc** evaluates expressions with side-channel helpers (`0x2b ^ 0x7e`, `hw(x)`, `hd(a, b)`, `sbox(x)`, `mean(...)`) and computes count, sum, mean, median, min, max, peak to peak, standard deviation and RMS of the current selection: the waveform between cursors or in the zoomed range, one sample across all traces, or any selected text.
+
+![Inserting the CPA key into a note and previewing it (animated)](docs/wiki/images/clips/notes.webp)
+
+![Calculator expressions and statistics between the waveform cursors (animated)](docs/wiki/images/clips/calculator.webp)
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/notes-light.png"><img alt="Notes with live selection statistics in the log bar" src="docs/wiki/images/notes.png"></picture>
 
@@ -135,6 +155,8 @@ Select numbers anywhere in Studio (a note, notebook output, the log or the seria
 ## Building firmware
 
 The **Firmware** tab builds ChipWhisperer's own firmware projects (simpleserial-aes, simpleserial-glitch, simpleserial-ecc and the others) with ChipWhisperer's makefiles, for any of the 38 platforms they support. Choose a project, a platform and GCC or clang, then press **Build & program**: Studio compiles the firmware and flashes the connected target with the right programmer.
+
+![Building simpleserial-aes for CWLITEARM with clang (animated)](docs/wiki/images/clips/firmware-build.webp)
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/firmware-light.png"><img alt="Firmware tab after a clang build for CW-Lite Arm" src="docs/wiki/images/firmware.png"></picture>
 
@@ -170,6 +192,8 @@ Every Arm, AVR and RISC-V platform in ChipWhisperer builds with GCC, apart from 
 
 If Studio is already running, the MCP server attaches to it, so you can watch the agent capture and analyse in the browser. Otherwise it starts a headless Studio in the background.
 
+![The MCP setup for AI agents (animated)](docs/wiki/images/clips/ai-agents-mcp.webp)
+
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/mcp-setup-light.png"><img alt="MCP setup in the Help tab" src="docs/wiki/images/mcp-setup.png"></picture>
 
 **Claude Code:**
@@ -201,6 +225,8 @@ Studio has a light and a dark theme (the sun and moon button in the top bar):
 | Dark | Light |
 |------|-------|
 | ![Dark theme](docs/wiki/images/overview.png) | ![Light theme](docs/wiki/images/overview-light.png) |
+
+![Switching between the dark and light themes (animated)](docs/wiki/images/clips/themes.webp)
 
 ## Architecture
 

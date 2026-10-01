@@ -8,6 +8,8 @@ The **Firmware** tab compiles ChipWhisperer's own target firmware (simpleserial-
 
 > **Note:** Studio has so far been tested with its built-in [Simulator](Simulator) and in CI on Linux, Windows and macOS, where it downloads real compilers and builds real firmware. Flashing the built firmware onto physical hardware has not been verified yet.
 
+![Building simpleserial-aes for CWLITEARM with clang (animated)](images/clips/firmware-build.webp)
+
 ## What happens when you press Build
 
 ![How Studio builds and flashes firmware](images/firmware-flow.svg)

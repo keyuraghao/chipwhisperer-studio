@@ -4,6 +4,8 @@ ChipWhisperer Studio includes a [Model Context Protocol](https://modelcontextpro
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/mcp-setup-light.png"><img alt="MCP setup instructions in the Help tab" src="images/mcp-setup.png"></picture>
 
+![The MCP setup for AI agents (animated)](images/clips/ai-agents-mcp.webp)
+
 ## What MCP gives you
 
 MCP is an open standard that lets an AI application call "tools" provided by another program. Studio's MCP server turns each Studio feature into a tool with a description and typed parameters, so an agent can plan and run a whole side-channel experiment from a sentence such as "capture 500 traces from the simulator and recover the key".
