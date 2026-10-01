@@ -81,6 +81,10 @@ python tools/screenshots.py
 
 The script exits with an error if the browser console reported any JavaScript errors, which makes it a useful UI smoke test.
 
+## Benchmarks and stress tests
+
+`tools/benchmark.py` measures large trace sets, large files, CPA, capture throughput, the server under load and many windows, runs memory leak checks against a real Studio process, and watches the browser during long live captures. `--quick` takes a few minutes, the full set about 45. `--publish results.json` keeps the run in `docs/benchmarks` and rebuilds the [Performance](Performance) page and the README section; `--compare before.json after.json` prints what changed. Run it before a release that touches capture, storage, analysis or the server.
+
 ## Demo video
 
 `tools/demo_video.py` records the [Video Tour](Video-Tour): it starts a Studio with the simulator and drives the real UI through every feature with Playwright, with a caption bar explaining each step and a visible pointer. It writes `chipwhisperer-studio-demo.mp4` (H.264), one short looping animated WebP per chapter in `clips/` (GitHub plays these inline in the README and the wiki, which it cannot do for MP4 files), `demo-poster.png` and `chapters.json` with the chapter timestamps. `--clips-only` cuts the clips again from an existing recording.

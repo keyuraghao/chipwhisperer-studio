@@ -1,0 +1,302 @@
+{
+ "environment": {
+  "date": "2026-10-01",
+  "studio": "0.4.3",
+  "commit": "7a3473a",
+  "cpu": "AMD Ryzen 9 5900HS with Radeon Graphics",
+  "cores": 16,
+  "ram_gb": 39,
+  "os": "Linux 7.1.5+kali-amd64",
+  "python": "3.12.12",
+  "numpy": "2.5.3"
+ },
+ "quick": false,
+ "store": [
+  {
+   "traces": 10000,
+   "samples": 5000,
+   "data_mb": 190.73486328125,
+   "append_traces_per_s": 68040.58710857363,
+   "rss_mb": 197.58984375,
+   "overhead_bytes_per_trace": 718.7968,
+   "summary_us": 0.5115170006320113,
+   "stats_s": 0.14105713400022069,
+   "stats_peak_extra_mb": 381.84765625,
+   "matrix_s": 0.045307252999919,
+   "matrix_peak_extra_mb": 192.484375,
+   "trace_fetch_ms": 0.009677885000201059,
+   "block_200_ms": 5.428348000350525,
+   "wall_s": 0.7316114902496338
+  },
+  {
+   "traces": 100000,
+   "samples": 5000,
+   "data_mb": 1907.3486328125,
+   "append_traces_per_s": 73528.69967163999,
+   "rss_mb": 1942.43359375,
+   "overhead_bytes_per_trace": 367.89248,
+   "summary_us": 0.4964990002918057,
+   "stats_s": 1.2525803509997786,
+   "stats_peak_extra_mb": 3827.96875,
+   "matrix_s": 0.43784914900061267,
+   "matrix_peak_extra_mb": 1926.12890625,
+   "trace_fetch_ms": 0.00989184500213014,
+   "block_200_ms": 1.42886000139697,
+   "wall_s": 3.620814085006714
+  },
+  {
+   "traces": 200000,
+   "samples": 5000,
+   "data_mb": 3814.697265625,
+   "append_traces_per_s": 74568.2040897046,
+   "rss_mb": 3877.70703125,
+   "overhead_bytes_per_trace": 330.35264,
+   "summary_us": 0.5378860005293973,
+   "stats_s": 2.469242397000926,
+   "stats_peak_extra_mb": 7652.34375,
+   "matrix_s": 0.8487294950009527,
+   "matrix_peak_extra_mb": 3860.80078125,
+   "trace_fetch_ms": 0.009826120003708638,
+   "block_200_ms": 5.28789300005883,
+   "wall_s": 6.808664083480835
+  },
+  {
+   "traces": 10000,
+   "samples": 100000,
+   "data_mb": 3814.697265625,
+   "append_traces_per_s": 4459.593457465506,
+   "rss_mb": 3821.6015625,
+   "overhead_bytes_per_trace": 723.968,
+   "summary_us": 0.49115899855678435,
+   "stats_s": 2.2330437900000106,
+   "stats_peak_extra_mb": 7631.5546875,
+   "matrix_s": 0.5890131750002183,
+   "matrix_peak_extra_mb": 3815.0703125,
+   "trace_fetch_ms": 0.04224999499456317,
+   "block_200_ms": 38.98712899899692,
+   "wall_s": 5.916304588317871
+  },
+  {
+   "traces": 1000,
+   "samples": 1000000,
+   "data_mb": 3814.697265625,
+   "append_traces_per_s": 684.5031916356521,
+   "rss_mb": 3820.1484375,
+   "overhead_bytes_per_trace": 5715.968,
+   "summary_us": 0.4899960003967863,
+   "stats_s": 2.282779375998871,
+   "stats_peak_extra_mb": 7644.74609375,
+   "matrix_s": 0.5862475249996351,
+   "matrix_peak_extra_mb": 3814.7109375,
+   "trace_fetch_ms": 0.28439299500860216,
+   "block_200_ms": 467.22384200074885,
+   "wall_s": 6.4399333000183105
+  }
+ ],
+ "files": [
+  {
+   "traces": 10000,
+   "samples": 5000,
+   "format": "npz",
+   "data_mb": 190.73486328125,
+   "file_mb": 73.65903759002686,
+   "export_s": 34.139679889000035,
+   "export_mb_per_s": 5.586896652264911,
+   "export_peak_extra_mb": 219.59765625,
+   "import_s": 0.6786016219994053,
+   "import_mb_per_s": 281.07045002232127,
+   "import_peak_extra_mb": 191.6328125,
+   "imported": 10000,
+   "wall_s": 35.16112518310547
+  },
+  {
+   "traces": 10000,
+   "samples": 5000,
+   "format": "npy",
+   "data_mb": 190.73486328125,
+   "file_mb": 191.193115234375,
+   "export_s": 0.08457170099973155,
+   "export_mb_per_s": 2255.303618427344,
+   "export_peak_extra_mb": 192.609375,
+   "import_s": 0.041545059999407385,
+   "import_mb_per_s": 4591.035932646883,
+   "import_peak_extra_mb": 190.81640625,
+   "imported": 10000,
+   "wall_s": 0.4735398292541504
+  },
+  {
+   "traces": 100000,
+   "samples": 5000,
+   "format": "npz",
+   "data_mb": 1907.3486328125,
+   "file_mb": 736.5662412643433,
+   "export_s": 346.6839475699999,
+   "export_mb_per_s": 5.501692957466346,
+   "export_peak_extra_mb": 1948.37890625,
+   "import_s": 6.694789491999472,
+   "import_mb_per_s": 284.90046402382836,
+   "import_peak_extra_mb": 1941.51953125,
+   "imported": 100000,
+   "wall_s": 355.17727875709534
+  },
+  {
+   "traces": 100000,
+   "samples": 5000,
+   "format": "npy",
+   "data_mb": 1907.3486328125,
+   "file_mb": 1911.9267578125,
+   "export_s": 0.820829036001669,
+   "export_mb_per_s": 2323.685626550645,
+   "export_peak_extra_mb": 1939.16015625,
+   "import_s": 0.402207109000301,
+   "import_mb_per_s": 4742.2051727362,
+   "import_peak_extra_mb": 1922.84765625,
+   "imported": 100000,
+   "wall_s": 3.0692873001098633
+  }
+ ],
+ "latency": {
+  "traces": 50000,
+  "workers": 8,
+  "seconds": 30,
+  "endpoints": {
+   "status": {
+    "n": 35,
+    "p50_ms": 2.6862650011025835,
+    "p95_ms": 18.341115001021535,
+    "p99_ms": 33.088338999732514
+   },
+   "one trace": {
+    "n": 37,
+    "p50_ms": 2.184226999816019,
+    "p95_ms": 6.116688000474824,
+    "p99_ms": 33.08234799987986
+   },
+   "trace block (200)": {
+    "n": 39,
+    "p50_ms": 83.1552780000493,
+    "p95_ms": 206.63875399986864,
+    "p99_ms": 223.9705860010872
+   },
+   "mean/min/max": {
+    "n": 40,
+    "p50_ms": 6315.927903000556,
+    "p95_ms": 7106.359469999006,
+    "p99_ms": 7149.139080000168
+   },
+   "settings tree": {
+    "n": 33,
+    "p50_ms": 12.63868000023649,
+    "p95_ms": 43.36550800144323,
+    "p99_ms": 84.21732500028156
+   }
+  }
+ },
+ "fanout": [
+  {
+   "clients": 0,
+   "count": 5000,
+   "samples": 5000,
+   "traces_per_s": 5470.199615209653,
+   "frames_per_client": 0,
+   "server_cpu_pct": 96.27551322768987
+  },
+  {
+   "clients": 1,
+   "count": 5000,
+   "samples": 5000,
+   "traces_per_s": 5477.406096848774,
+   "frames_per_client": 35.0,
+   "server_cpu_pct": 97.49782852390817
+  },
+  {
+   "clients": 5,
+   "count": 5000,
+   "samples": 5000,
+   "traces_per_s": 5448.813832176746,
+   "frames_per_client": 35.0,
+   "server_cpu_pct": 107.8865138770996
+  },
+  {
+   "clients": 20,
+   "count": 5000,
+   "samples": 5000,
+   "traces_per_s": 4964.793242120649,
+   "frames_per_client": 37.0,
+   "server_cpu_pct": 139.01421077937817
+  }
+ ],
+ "leaks": [
+  {
+   "what": "continuous capture, 2 live windows",
+   "minutes": 5,
+   "operations": 2029653,
+   "unit": "traces",
+   "start_mb": 59.37890625,
+   "end_mb": 60.90625,
+   "growth_after_warmup_mb": 0.53515625,
+   "slope_mb_per_min": 0.14681331901367356
+  },
+  {
+   "what": "browser windows opening and closing during a capture",
+   "operations": 2000,
+   "unit": "WebSocket connections",
+   "start_mb": 59.703125,
+   "end_mb": 61.91015625,
+   "growth_after_warmup_mb": 0.30078125,
+   "slope_mb_per_min": 12.144285042239435,
+   "max_mb": 61.91015625,
+   "subscribers_left": 0
+  },
+  {
+   "what": "API requests of 7 kinds",
+   "operations": 30000,
+   "unit": "requests",
+   "start_mb": 69.296875,
+   "end_mb": 69.7578125,
+   "growth_after_warmup_mb": -19.0703125,
+   "slope_mb_per_min": 0.018221883468747306,
+   "max_mb": 88.828125
+  },
+  {
+   "what": "capture 5000 traces then clear",
+   "operations": 30,
+   "unit": "cycles",
+   "start_mb": 59.21875,
+   "end_mb": 157.49609375,
+   "growth_after_warmup_mb": 0.2421875,
+   "slope_mb_per_min": 0.5325777341288572,
+   "max_mb": 157.49609375
+  },
+  {
+   "what": "CPA on 2000 traces",
+   "operations": 30,
+   "unit": "attacks",
+   "start_mb": 98.76953125,
+   "end_mb": 208.3203125,
+   "growth_after_warmup_mb": 5.8125,
+   "slope_mb_per_min": 8.978976345951107,
+   "max_mb": 208.3203125
+  },
+  {
+   "what": "notebook cells with a capture and a figure",
+   "operations": 300,
+   "unit": "cells",
+   "start_mb": 59.0234375,
+   "end_mb": 444.921875,
+   "growth_after_warmup_mb": 27.7578125,
+   "slope_mb_per_min": 29.485758699821616,
+   "max_mb": 460.5078125
+  },
+  {
+   "what": "MCP tool calls over stdio (5 kinds)",
+   "operations": 5000,
+   "unit": "tool calls",
+   "calls_per_s": 932.3151784669564,
+   "start_mb": 40.03515625,
+   "end_mb": 40.86328125,
+   "growth_after_warmup_mb": 0.05859375,
+   "slope_mb_per_min": 0.9227714968371529
+  }
+ ]
+}

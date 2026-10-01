@@ -75,7 +75,7 @@ Studio is not on PyPI yet. Install the wheel from the latest GitHub release inst
 ```bash
 python -m venv studio-env
 source studio-env/bin/activate            # Windows: studio-env\Scripts\activate
-pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer_studio-0.4.3-py3-none-any.whl
+pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.4/chipwhisperer_studio-0.4.4-py3-none-any.whl
 cw-studio
 ```
 
@@ -90,7 +90,7 @@ The USB driver (Windows) and udev rule (Linux) steps above apply to the Python p
 By default Studio opens in your web browser. To open it in its own desktop window instead, install the `window` extra and start Studio with `--window`:
 
 ```bash
-pip install "chipwhisperer-studio[window] @ https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer_studio-0.4.3-py3-none-any.whl"
+pip install "chipwhisperer-studio[window] @ https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.4/chipwhisperer_studio-0.4.4-py3-none-any.whl"
 cw-studio --window
 ```
 

@@ -31,6 +31,7 @@
 - [FAQ](FAQ)
 
 **Developers**
+- [Performance and stress tests](Performance)
 - [Architecture](Architecture)
 - [Development and releases](Development-and-Releases)
 

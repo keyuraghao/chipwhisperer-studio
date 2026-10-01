@@ -23,6 +23,7 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 - [Building firmware](#building-firmware)
 - [AI agents (MCP)](#ai-agents-mcp)
 - [HTTP API and remote use](#http-api-and-remote-use)
+- [Performance](#performance)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Releases](#releases)
@@ -61,7 +62,7 @@ Your browser opens `http://127.0.0.1:8765/` automatically.
 ### With Python
 
 ```bash
-pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.3/chipwhisperer_studio-0.4.3-py3-none-any.whl
+pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.4/chipwhisperer_studio-0.4.4-py3-none-any.whl
 cw-studio              # opens the UI in your browser
 cw-studio --simulate   # try it without hardware
 ```
@@ -227,6 +228,32 @@ Studio has a light and a dark theme (the sun and moon button in the top bar):
 | ![Dark theme](docs/wiki/images/overview.png) | ![Light theme](docs/wiki/images/overview-light.png) |
 
 ![Switching between the dark and light themes (animated)](docs/wiki/images/clips/themes.webp)
+
+## Performance
+
+<!-- performance:start -->
+
+Latest run: 2026-10-01, Studio 0.4.4, on AMD Ryzen 9 5900HS with Radeon Graphics with 39 GB RAM (Linux 7.1.5+kali-amd64). Captures use the built-in simulator, so they measure Studio itself; with real hardware the scope and target set the capture rate. The detailed tables, the comparison with the previous run and how to run the tests are on the [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance) wiki page.
+
+| Test | Result |
+|---|---|
+| Largest trace set held (200,000 x 5,000 samples) | 3.73 GB of traces in 3.79 GB of memory |
+| Mean/min/max of all 200,000 traces | 2.6 s the first time, extra memory +65 MB |
+| API under load (50,000 traces, 8 clients, capture running) | status 1.5 ms, one trace 1.5 ms, trace block (200) 31.6 ms, mean/min/max 5.9 ms, settings tree 3.9 ms (medians) |
+| Simulated capture, 5,000 samples per trace | 5,685 traces/s (108 MB/s) stored |
+| CPA on 100,000 x 5,000 traces | 27 s, key recovered: yes |
+| Export 100,000 traces (1.9 GB) to .npz | 35 s (54 MB/s), import 9 s |
+| Memory leak tests | 7 of 7 workloads without growth |
+| Browser during a long live capture | 5,000 samples: 60 fps, heap +0.0 MB; 100,000 samples: 24 fps, heap -0.1 MB; 131,070 samples: 20 fps, heap -0.1 MB |
+
+**Run history**
+
+| Date | Studio | Commit | Machine | Result files |
+|---|---|---|---|---|
+| 2026-10-01 | 0.4.4 | `1f274ab` | AMD Ryzen 9 5900HS with Radeon Graphics, 39 GB, Linux | [2026-10-01-v0.4.4.json](docs/benchmarks/2026-10-01-v0.4.4.json) |
+| 2026-10-01 | 0.4.3 | `7a3473a` | AMD Ryzen 9 5900HS with Radeon Graphics, 39 GB, Linux | [2026-10-01-v0.4.3.json](docs/benchmarks/2026-10-01-v0.4.3.json) |
+
+<!-- performance:end -->
 
 ## Architecture
 

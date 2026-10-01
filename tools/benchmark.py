@@ -864,7 +864,11 @@ def publish(results_path: str):
     with open(readme) as f:
         text = f.read()
     e = latest["environment"]
-    block = "\n".join([README_START, "", f"Measured on {e['date']} with Studio {e['studio']} on {e['cpu']} with {e['ram_gb']} GB RAM ({e['os']}). Every run, the comparison with the previous one and the detailed tables are on the [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance) wiki page.", ""] + summary + ["", README_END])
+    short = ["| Date | Studio | Commit | Machine | Result files |", "|---|---|---|---|---|"]
+    for fname, r in reversed(runs):
+        env = r["environment"]
+        short.append(f"| {env['date']} | {env['studio']} | `{env['commit']}` | {env['cpu']}, {env['ram_gb']} GB, {env['os'].split()[0]} | [{fname}](docs/benchmarks/{fname}) |")
+    block = "\n".join([README_START, "", f"Latest run: {e['date']}, Studio {e['studio']}, on {e['cpu']} with {e['ram_gb']} GB RAM ({e['os']}). Captures use the built-in simulator, so they measure Studio itself; with real hardware the scope and target set the capture rate. The detailed tables, the comparison with the previous run and how to run the tests are on the [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance) wiki page.", ""] + summary + ["", "**Run history**", ""] + short + ["", README_END])
     if README_START in text:
         a, b = text.index(README_START), text.index(README_END) + len(README_END)
         text = text[:a] + block + text[b:]
