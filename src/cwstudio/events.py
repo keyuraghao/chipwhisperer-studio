@@ -99,12 +99,15 @@ class Subscriber:
             self.dropped += 1
 
 
+HISTORY_KINDS = frozenset(("log", "capture", "glitch"))
+
+
 class EventBus:
     def __init__(self):
         self._lock = threading.Lock()
         self._subs: List[Subscriber] = []
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        # Recent JSON events kept for late joiners / REST polling of logs.
+        # Recent log, capture and glitch events for REST polling of logs (/api/logs, the MCP get_logs tool). Other kinds are not kept: notebook outputs carry whole figures and CPA results whole arrays, and 2000 of them could pin hundreds of MB.
         self.history: Deque[Dict[str, Any]] = deque(maxlen=2000)
         self._seq = 0
 
@@ -138,7 +141,7 @@ class EventBus:
             ev.payload.setdefault("seq", self._seq)
             ev.payload.setdefault("ts", time.time())
             ev._frame = None  # payload just changed; encode lazily on first delivery
-            if ev.binary is None:
+            if ev.binary is None and ev.kind in HISTORY_KINDS:
                 rec = dict(ev.payload)
                 rec["type"] = ev.kind
                 self.history.append(rec)

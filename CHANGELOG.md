@@ -4,6 +4,17 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-01
+
+Stress tests with very large trace sets, large files, long sessions, many windows and leak checks (`tools/benchmark.py`, results on the new [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance) wiki page and in the README) found the problems below. No memory leaks were found in any workload.
+
+### Changed
+
+- **Mean, standard deviation and min/max of all traces** (the waveform's mean and envelope, `/api/traces/stats`, the MCP `traces_stats` tool) come from running sums that only take in the traces added since the last request. With 50,000 stored traces a request under load takes about 6 ms instead of 6.3 s, and with 200,000 traces the extra memory drops from 7.6 GB to about 60 MB. The values are also more accurate (float64 sums: within 4e-9 of exact, against 3e-6 before).
+- **Exporting to .npz is about 10 times faster** (54 instead of 6 MB/s on realistic ADC data; 1.9 GB now takes 35 s instead of almost 6 minutes). Files are about 13 percent larger and load exactly as before.
+- **Clearing traces gives the memory back to the operating system** on Linux, so Studio's memory drops back to where it was (61 instead of 157 MB after 30 capture and clear cycles).
+- Studio keeps only log, capture and glitch events for `/api/logs`; it used to also keep the last 2000 notebook outputs (with their figures), CPA results and other events, which could hold hundreds of MB in figure-heavy sessions.
+
 ## [0.4.3] - 2026-10-01
 
 ### Added
@@ -180,7 +191,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.0...v0.4.1

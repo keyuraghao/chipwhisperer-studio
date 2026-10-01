@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 
@@ -130,3 +131,52 @@ def test_sim_glitch_outcomes():
         r = t.simpleserial_read_witherrors("r", 4)
         normal += bool(r["valid"] and bytes(r["payload"]) == (2500).to_bytes(4, "little"))
     assert normal >= 15
+
+
+def test_running_stats_match_numpy_and_follow_changes():
+    """Whole-set statistics come from running sums updated with new traces only; they match numpy and reset on clear and import."""
+    import numpy as np
+    from cwstudio.traces import TraceStore
+    st = TraceStore()
+    rng = np.random.default_rng(3)
+    for _ in range(700):
+        st.append((rng.standard_normal(300) * 0.1).astype(np.float32), b"", b"", b"")
+    st.stats()
+    for _ in range(123):  # added after the first call: folded in incrementally
+        st.append((rng.standard_normal(300) * 0.1).astype(np.float32), b"", b"", b"")
+    got, W = st.stats(), np.stack(st.waves)
+    assert np.allclose(got["mean"], W.mean(0), atol=1e-6) and np.allclose(got["std"], W.std(0), atol=1e-6)
+    assert np.array_equal(got["min"], W.min(0)) and np.array_equal(got["max"], W.max(0))
+    part = st.stats(10, 20)  # a sub-range is computed directly
+    assert np.allclose(part["mean"], W[10:20].mean(0))
+    st.clear()
+    assert st.stats() == {}
+    st.append(np.full(5, 2, np.float32), b"", b"", b"")
+    assert np.array_equal(st.stats()["mean"], np.full(5, 2, np.float32))
+    st.append(np.full(4, 4, np.float32), b"", b"", b"")  # mixed lengths: truncated to the shortest, as before
+    assert np.array_equal(st.stats()["mean"], np.full(4, 3, np.float32))
+
+
+def test_npz_export_is_readable_and_round_trips(tmp_path):
+    import json
+    import numpy as np
+    from cwstudio.traces import TraceStore
+    st = TraceStore()
+    st.meta = {"scope": "sim"}
+    for i in range(20):
+        st.append(np.arange(50, dtype=np.float32) * i, bytes([i]) * 16, bytes(16), bytes(range(16)))
+    path = st.export(str(tmp_path / "t"), "npz")
+    d = np.load(path, allow_pickle=False)
+    assert d["waves"].shape == (20, 50) and json.loads(str(d["meta"])) == {"scope": "sim"} and not os.path.exists(path + ".part")
+    st2 = TraceStore()
+    assert st2.import_file(path) == 20 and np.array_equal(np.stack(st2.waves), np.stack(st.waves)) and st2.textins == st.textins
+
+
+def test_event_history_keeps_only_log_kinds():
+    """Only log, capture and glitch events are kept for /api/logs; notebook outputs with figures are not."""
+    from cwstudio.events import EventBus
+    bus = EventBus()
+    bus.publish("nb", {"data": {"image/png": "x" * 100000}})
+    bus.publish("log", {"msg": "hello"})
+    bus.publish("cpa", {"history": list(range(1000))})
+    assert [e["type"] for e in bus.history] == ["log"]
