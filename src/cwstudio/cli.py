@@ -27,7 +27,7 @@ def _port_free(host: str, port: int) -> bool:
             s.bind((host, port))
         except OSError:
             return False
-    return not _listening(host, port)
+    return os.name == "nt" or not _listening(host, port)  # on Windows the exclusive wildcard bind already covers every address (and a probe of a free port takes a second)
 
 
 def _listening(host: str, port: int) -> bool:
