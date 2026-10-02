@@ -43,6 +43,8 @@ try:
 except Exception as e:  # noqa: BLE001
     print("WARNING: libusb-package not available, relying on system libusb:", e)
 binaries += collect_dynamic_libs("usb1")
+# Unicorn (code map emulation of Arm and RISC-V firmware): only its shared library, not the 33 MB static archive next to it
+binaries += collect_dynamic_libs("unicorn")
 
 hiddenimports = []
 # ChipWhisperer's modules are listed from the filesystem: collect_submodules imports each package, and chipwhisperer.capture.trace fails to import without pkg_resources (Studio supplies a stand-in at run time).
@@ -88,6 +90,8 @@ a = Analysis(
 )
 # Matplotlib's example data is only used by its gallery scripts.
 a.datas = [d for d in a.datas if "mpl-data/sample_data" not in d[0].replace("\\", "/")]
+a.datas = [d for d in a.datas if not d[0].replace("\\", "/").endswith(".a")]  # static libraries (Unicorn ships a 33 MB one) are never loaded at run time
+a.binaries = [b for b in a.binaries if not b[0].replace("\\", "/").endswith(".a")]
 pyz = PYZ(a.pure)
 # Strip debug symbols from shared libraries on Linux (libpython alone shrinks by tens of MB); macOS needs its code signatures intact and Windows has no strip.
 STRIP = sys.platform.startswith("linux")

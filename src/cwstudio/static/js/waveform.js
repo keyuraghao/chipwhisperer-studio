@@ -31,6 +31,12 @@ export class Waveform {
     this.userZoomed = false;
     this.traceCount = 0;
     this.onBrowse = null;        // callback(index) -> fetch trace
+    this.highlights = [];        // shaded sample ranges [{a, b, kind}] (code map: a function or line clicked in the Code panel)
+    this.region = null;          // [a, b] sample range picked with ctrl+drag (or from cursors) for the code map
+    this.viewListeners = [];     // called with the plot geometry after every zoom, pan, resize or redraw (the Code band follows the x axis)
+    this.regionListeners = [];
+    this.showCode = false;
+    try { this.showCode = localStorage.getItem('cw.codeband') === '1'; } catch (e) { /* ignore */ }
     this.buildToolbar();
     this.buildPlot();
     new ResizeObserver(() => this.resize()).observe(plotEl);
@@ -52,6 +58,7 @@ export class Waveform {
     this.envChk = h('input', { type: 'checkbox', onchange: () => { this.showEnv = this.envChk.checked; this.rebuild(); if (this.showEnv && this.onNeedStats) this.onNeedStats(); } });
     this.autoChk = h('input', { type: 'checkbox', checked: true, onchange: () => { this.autoY = this.autoChk.checked; this.render(true); } });
     this.timeChk = h('input', { type: 'checkbox', onchange: () => { this.timeAxis = this.timeChk.checked; this.rebuild(); } });
+    this.codeChk = h('input', { type: 'checkbox', id: 'wave-code-toggle', checked: this.showCode, onchange: () => this.setShowCode(this.codeChk.checked) });
     this.pauseBtn = h('button', { class: 'btn sm', onclick: () => { this.paused = !this.paused; this.pauseBtn.innerHTML = this.paused ? PLAY_HTML : PAUSE_HTML; this.pauseBtn.classList.toggle('active', this.paused); }, html: PAUSE_HTML });
     this.resetBtn = h('button', { class: 'btn sm', title: 'Reset zoom (double-click plot)', onclick: () => { this.userZoomed = false; this.render(true); }, html: '<svg class="i" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Fit</span>' });
     this.zoomInBtn = h('button', { class: 'btn sm', title: 'Zoom in (+)', onclick: () => this.zoom(0.5), html: '<svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5M8 11h6M11 8v6"/></svg>' });
@@ -66,10 +73,11 @@ export class Waveform {
       mk(this.meanChk, 'mean'), mk(this.envChk, 'min/max'),
       h('span', { class: 'sep' }),
       mk(this.autoChk, 'auto Y'), mk(this.timeChk, 'time axis'),
+      h('label', { title: 'Show which firmware code runs when, under the plot (build the code map in the Code tab)' }, this.codeChk, 'code'),
       h('span', { class: 'sep' }),
       this.pauseBtn, this.zoomInBtn, this.zoomOutBtn, this.resetBtn, this.clearCurBtn, this.pngBtn,
       h('span', { class: 'spacer' }),
-      h('span', { class: 'muted', style: 'font-size:11px' }, 'drag or +/-: zoom · dbl-click: fit · click: cursor A · shift+click: cursor B'),
+      h('span', { class: 'muted', style: 'font-size:11px' }, 'drag or +/-: zoom · dbl-click: fit · click: cursor A · shift+click: cursor B · ctrl+drag: code region'),
     );
   }
 
@@ -134,10 +142,23 @@ export class Waveform {
       bands: this.showEnv ? [{ series: [this.envIdx() + 1, this.envIdx()], fill: COLORS.env }] : [],
       hooks: {
         setCursor: [(u) => self.onCursorMove(u)],
-        setScale: [(u, key) => { if (key === 'x') { const s = u.scales.x; const full = u.data[0] ? u.data[0].length - 1 : 0; self.userZoomed = !(s.min <= 0 && s.max >= full); } }],
-        draw: [(u) => self.drawCursors(u)],
+        setScale: [(u, key) => { if (key === 'x') { const s = u.scales.x; const full = u.data[0] ? u.data[0].length - 1 : 0; self.userZoomed = !(s.min <= 0 && s.max >= full); self.notifyView(); } }],
+        draw: [(u) => { self.drawOverlays(u); self.drawCursors(u); self.notifyView(); }],
+        setSelect: [(u) => {
+          // ctrl/cmd/alt+drag picks a sample range for the code map instead of zooming
+          if (!self.regionDrag || u.select.width < 2) return;
+          const a = Math.max(0, Math.round(u.posToVal(u.select.left, 'x'))), b = Math.round(u.posToVal(u.select.left + u.select.width, 'x'));
+          u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+          self.suppressClick = true;
+          self.setRegion(a, b, 'drag');
+        }],
         ready: [(u) => {
+          u.over.addEventListener('mousedown', (e) => {
+            self.regionDrag = e.ctrlKey || e.metaKey || e.altKey;
+            u.cursor.drag.setScale = !self.regionDrag;
+          }, true);
           u.over.addEventListener('click', (e) => {
+            if (self.suppressClick) { self.suppressClick = false; return; }
             if (u.select.width > 0) return; // was a drag selection
             const idx = u.cursor.idx;
             if (idx == null) return;
@@ -264,6 +285,67 @@ export class Waveform {
     if (min < 0) { max -= min; min = 0; }
     if (max > n - 1) { min -= max - (n - 1); max = n - 1; }
     u.setScale('x', { min: Math.max(0, min), max });
+  }
+
+  // ---------- code map hooks ----------
+  setShowCode(on) {
+    this.showCode = !!on;
+    this.codeChk.checked = this.showCode;
+    try { localStorage.setItem('cw.codeband', this.showCode ? '1' : '0'); } catch (e) { /* ignore */ }
+    if (this.onCodeToggle) this.onCodeToggle(this.showCode);
+    setTimeout(() => this.resize(), 0);
+  }
+
+  /** Plot area in CSS pixels relative to the plot element, and the visible sample range. */
+  geometry() {
+    const u = this.u;
+    if (!u || !u.bbox) return null;
+    const dpr = devicePixelRatio || 1;
+    const n = u.data[0] ? u.data[0].length : 0;
+    return { left: u.bbox.left / dpr, width: u.bbox.width / dpr, min: u.scales.x.min, max: u.scales.x.max, n };
+  }
+
+  addViewListener(fn) { this.viewListeners.push(fn); }
+  notifyView() {
+    if (this.viewPending) return;
+    this.viewPending = true;
+    requestAnimationFrame(() => { this.viewPending = false; const g = this.geometry(); if (g) this.viewListeners.forEach((f) => { try { f(g); } catch (e) { console.error(e); } }); });
+  }
+
+  onRegionChange(fn) { this.regionListeners.push(fn); }
+  setRegion(a, b, source) {
+    this.region = a == null ? null : [Math.min(a, b), Math.max(a, b)];
+    this.redraw();
+    this.regionListeners.forEach((f) => { try { f(this.region, source); } catch (e) { console.error(e); } });
+  }
+
+  setHighlights(list) { this.highlights = list || []; this.redraw(); }
+
+  /** Zoom to samples a..b with a margin on both sides. */
+  showRange(a, b) {
+    const u = this.u;
+    const n = u && u.data[0] ? u.data[0].length : 0;
+    if (n < 2) return;
+    const w = Math.max(8, b - a), m = w * 0.25;
+    const min = Math.max(0, a - m), max = Math.min(n - 1, b + m);
+    if (max - min < 4) return;
+    u.setScale('x', { min, max });
+  }
+
+  drawOverlays(u) {
+    const ctx = u.ctx;
+    const xmin = u.scales.x.min, xmax = u.scales.x.max;
+    const band = (a, b, fill, edge) => {
+      if (b < xmin || a > xmax) return;
+      const x0 = u.valToPos(Math.max(a, xmin), 'x', true), x1 = u.valToPos(Math.min(b, xmax), 'x', true);
+      ctx.save();
+      ctx.fillStyle = fill;
+      ctx.fillRect(x0, u.bbox.top, Math.max(1, x1 - x0), u.bbox.height);
+      if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, u.bbox.top + 0.5, Math.max(1, x1 - x0) - 1, u.bbox.height - 1); }
+      ctx.restore();
+    };
+    for (const hl of this.highlights) band(hl.a, hl.b, COLORS.codeHl, null);
+    if (this.region) band(this.region[0], this.region[1], COLORS.codeSel, COLORS.codeSelEdge);
   }
 
   // ---------- cursors ----------

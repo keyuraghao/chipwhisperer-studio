@@ -95,9 +95,10 @@ def program_target(scope, programmer: str, fw_path: str, **kwargs):
     from cwstudio.capabilities import capabilities, require
     require(capabilities(scope)["programmers"].get(programmer), f"{programmer} programmer")
     if getattr(scope, "_getCWType", lambda: "")() == "cwsim":
-        import time
-        time.sleep(0.5)
-        return {"ok": True, "simulated": True, "bytes": os.path.getsize(fw_path)}
+        res = {"ok": True, "simulated": True, "bytes": os.path.getsize(fw_path)}
+        if hasattr(scope, "load_firmware"):  # an ELF (or a .hex with its .elf) runs in the emulator: real responses and traces from the firmware's execution
+            res["emulation"] = scope.load_firmware(fw_path)
+        return res
     if entry.get("fpga"):
         from chipwhisperer.hardware.naeusb import programmer_targetfpga
         getattr(programmer_targetfpga, entry["fpga"])(scope).program(fw_path, sck_speed=float(kwargs.get("sck_speed", 10e6)))

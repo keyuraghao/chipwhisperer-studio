@@ -21,6 +21,9 @@ dependencies = [
     "certifi",
     "matplotlib>=3.7",
     "tqdm",
+    # Code map: ELF/DWARF parsing, and the CPU emulator for Arm Cortex-M and RISC-V firmware (AVR runs in Studio's own emulator)
+    "pyelftools>=0.30",
+    "unicorn>=2.0.1",
     # Studio's own window: Edge WebView2 on Windows and WebKit on macOS through pywebview. Linux uses the distribution's WebKitGTK through the system Python, so it needs nothing here.
     "pywebview>=5; sys_platform == 'win32' or sys_platform == 'darwin'",
 ]

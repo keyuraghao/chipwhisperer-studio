@@ -211,6 +211,7 @@ class SimScope:
         self._bg_cache: Optional[np.ndarray] = None
         self._geo_cache: Optional[tuple] = None
         self._measure_hook = None      # set by the logic analyser's analog-to-logic source: a callable(n) giving what the measure input sees instead of the AES leakage
+        self.firmware = None           # codemap.sim.FirmwareSim when an ELF was programmed: the target runs it in the emulator and traces come from its execution
         self.LA = None
         if sim_model in ("husky", "huskyplus"):
             from cwstudio.logic.sources import SimLA
@@ -285,12 +286,24 @@ class SimScope:
             time.sleep(0.0005)
         if self.capture_delay:
             time.sleep(self.capture_delay)
-        self._last_trace = self._synth(self.target._last_pt, self.target._key)
+        fw_run = getattr(self.target, "_last_run", None)
+        if fw_run is not None:
+            from cwstudio.codemap.sim import synth
+            self._last_trace, trig = synth(self, *fw_run)
+            self.target._last_run = None
+        else:
+            self._last_trace = self._synth(self.target._last_pt, self.target._key)
+            trig = int(self.leak_start + 16 * self.leak_spacing)
         self.target._triggered = False
         self._armed = False
         self.adc._state = False
-        self.adc._trig_count = int(self.leak_start + 16 * self.leak_spacing)
+        self.adc._trig_count = trig
         return False
+
+    def load_firmware(self, path: str) -> Dict[str, Any]:
+        """Program the simulated target: an ELF (or a .hex with its .elf next to it) runs in the emulator from now on; anything else keeps the built-in AES model."""
+        from cwstudio.codemap.sim import load
+        return load(self, path)
 
     def get_last_trace(self, as_int: bool = False) -> np.ndarray:
         if as_int:
@@ -405,6 +418,7 @@ class SimTarget:
         self.connectStatus = True
         self._pending_response: Optional[bytes] = None
         self._pending_cmd: Optional[str] = None
+        self._last_run = None  # (Run, per-cycle power) of the last emulated command that raised the trigger
         self._reset_count = 0
         self.glitch_window = (20, 60)   # ext_offset window where glitches succeed
         self.glitch_width_ok = (5.0, 40.0)
@@ -474,9 +488,39 @@ class SimTarget:
             return "reset" if self.scope._rng.random() < 0.3 else "normal"
         return "normal"
 
+    def _firmware(self):
+        return getattr(self.scope, "firmware", None) if self.scope is not None else None
+
+    def _fw_write(self, fw, cmd: str, data: bytes) -> None:
+        """A command for the emulated firmware: run it and keep its response (and, for commands that raise the trigger, the run the scope turns into a trace)."""
+        if cmd == "k":
+            self._key = bytes(data)
+            return
+        try:
+            run, resp, P = fw.command(cmd, data, self._key if cmd == "p" else None)
+        except Exception as e:  # noqa: BLE001
+            log.warning("emulated firmware: %s", e)
+            self._pending_response = None
+            return
+        if cmd == "p":
+            self._last_pt = data
+            self._last_ct = resp or b""
+        if run.trig:
+            self._last_run = (run, P)
+            self._triggered = True
+            self._trigger_count += 1
+        self._pending_response = resp
+        self._pending_cmd = "r"
+        with self._lock:
+            self._rx += run.output  # what the firmware really sent (binary frames for SimpleSerial 2.1)
+
     def simpleserial_write(self, cmd, num, end="\n", var_len=False):
         data = bytes(num)
         self.simpleserial_last_sent = f"{cmd}{data.hex()}"
+        fw = self._firmware()
+        if fw is not None:
+            self._fw_write(fw, cmd, data)
+            return
         if cmd == "p":
             self._last_pt = data
             self._last_ct = encrypt_block(self._key, data) if len(data) == 16 else b""
@@ -537,6 +581,16 @@ class SimTarget:
         if isinstance(data, str):
             data = data.encode()
         line = bytes(data)
+        fw = self._firmware()
+        if fw is not None:  # raw serial traffic goes straight to the emulated firmware
+            try:
+                out = fw.raw(line)
+            except Exception as e:  # noqa: BLE001
+                log.warning("emulated firmware: %s", e)
+                out = b""
+            with self._lock:
+                self._rx += out
+            return
         text = line.decode(errors="replace").strip()
         if text.startswith("p") and len(text) == 33:
             self.simpleserial_write("p", bytes.fromhex(text[1:]))

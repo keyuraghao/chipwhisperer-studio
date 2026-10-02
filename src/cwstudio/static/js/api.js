@@ -167,6 +167,7 @@ export function themeColors() {
     overlay: (i, n) => `rgba(${ov},${Math.max(0.04, 0.32 * (1 - i / Math.max(1, n)))})`,
     cursorA: v('--c-cursor-a'), cursorB: v('--c-cursor-b'), corr: v('--c-corr'),
     info: v('--info'), ok: v('--ok'), err: v('--err'), warn: v('--warn'),
+    codeSel: v('--cm-sel'), codeSelEdge: v('--cm-sel-edge'), codeHl: v('--cm-hl'),
   };
 }
 

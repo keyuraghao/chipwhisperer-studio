@@ -81,6 +81,7 @@ class Session:
         self.tutorials = Tutorials(self.notebooks, self.firmware, publish)
         self.notes = NotesStore(os.path.join(self.data_dir, "notes"))
         self.calc_vars: Dict[str, Any] = {}
+        self.programmed: Optional[Dict[str, Any]] = None  # the firmware programmed in this session: path, its ELF, whether the simulator emulates it
         self.worker.start()
         self.kernels = KernelManager(self, self.notebooks.root)  # one kernel per notebook, all cells on the hardware thread in one queue
         self.kernel = self.kernels.default  # the shared default kernel (API and MCP calls without a notebook)
@@ -259,7 +260,14 @@ class Session:
         log.info("Programming target with %s using %s", os.path.basename(fw_path), programmer)
         res = self.worker.call(hardware.program_target, self.scope, programmer, fw_path, timeout=600, **kwargs)
         log.info("Programming complete")
+        self.note_programmed(fw_path, res.get("emulation"))
         return res
+
+    def note_programmed(self, fw_path: str, emulation: Optional[Dict[str, Any]] = None) -> None:
+        """Remember the firmware programmed in this session (the code map uses its ELF by default)."""
+        from cwstudio.codemap.sim import elf_for
+        self.programmed = {"path": os.path.abspath(fw_path), "elf": elf_for(fw_path), "emulated": bool(emulation and emulation.get("emulated")), "t": time.time()}
+        self.bus.publish("programmed", self.programmed)
 
     def program_build(self, path: Optional[str] = None, programmer: Optional[str] = None) -> Dict[str, Any]:
         """Program the last successful firmware build (or ``path``) with the platform's programmer."""

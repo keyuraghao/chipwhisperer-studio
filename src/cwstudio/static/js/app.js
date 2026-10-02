@@ -12,6 +12,7 @@ import { initNotebook } from './notebook.js';
 import { initNotes, initCalc, initSelectionStats } from './tools.js';
 import { initInterfaces } from './interfaces.js';
 import { initLogic } from './logic.js';
+import { initCodeMap } from './codemap.js';
 
 const ctx = new Emitter();
 ctx.status = null;
@@ -25,6 +26,7 @@ const PANELS = {
   interfaces: ['Interfaces', 'Protocols the connected hardware supports; the rest are shown disabled with the reason.'],
   firmware: ['Firmware', 'Build ChipWhisperer firmware with GCC or clang, no toolchain setup needed.'],
   capture: ['Capture', 'Record power traces while the waveform updates live.'],
+  code: ['Code', 'See which firmware code runs when: functions and source lines on the waveform, from an emulation of the firmware.'],
   analysis: ['Analysis', 'Recover the AES key with correlation power analysis.'],
   notebook: ['Notebook', 'Run Python cell by cell with the connected hardware; traces land in the Capture tab.'],
   logic: ['Logic', 'Capture digital signals from the Husky, the analog input, the simulator, sigrok or a file, and decode them.'],
@@ -182,6 +184,7 @@ async function boot() {
   ctx.interfaces = initInterfaces(ctx, document.getElementById('panel-interfaces'));
   ctx.firmware = initFirmware(ctx, document.getElementById('panel-firmware'));
   ctx.capture = initCapture(ctx, document.getElementById('panel-capture'));
+  ctx.codemap = initCodeMap(ctx, document.getElementById('panel-code'));
   initAnalysis(ctx, document.getElementById('panel-analysis'));
   initGlitch(ctx, document.getElementById('panel-glitch'));
   ctx.notebook = initNotebook(ctx, document.getElementById('panel-notebook'), document.getElementById('nb-view'));
@@ -225,7 +228,7 @@ async function boot() {
   sock.on('cpa', (ev) => ctx.emit('cpa', ev));
   sock.on('glitch', (ev) => { ctx.emit('glitch', ev); if (ev.state === 'running') ensureRunning(); else ctx.refreshStatus(); });
   sock.on('glitch_result', (ev) => ctx.emit('glitch_result', ev));
-  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials', 'openocd', 'spi', 'la']) sock.on(k, (ev) => ctx.emit(k, ev));
+  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials', 'openocd', 'spi', 'la', 'codemap', 'programmed']) sock.on(k, (ev) => ctx.emit(k, ev));
 
   // Restore last tab; fall back to Connect.
   let tab = 'connect';

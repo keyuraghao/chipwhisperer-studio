@@ -39,7 +39,7 @@ export function initTarget(ctx, el) {
       else if (pathIn.value) r = await post('/api/target/program', { programmer: progSel.value, path: pathIn.value });
       else throw new Error('choose a firmware file');
       progStatus.textContent = `Done: ${r.bytes} bytes written${r.simulated ? ' (simulated)' : ''}`; progStatus.className = 'help ok';
-      toast('Target programmed', 'ok');
+      toast(r && r.emulation && r.emulation.emulated ? 'Target programmed: the simulator runs this firmware in the emulator' : 'Target programmed', 'ok');
     } catch (e) { progStatus.textContent = e.message; progStatus.className = 'help err'; toast(e.message, 'err', 8000); } finally { btnProg.disabled = false; }
   }
 

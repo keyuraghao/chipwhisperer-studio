@@ -1226,7 +1226,13 @@ class _CWProxy(types.ModuleType):
         if s.scope_kind == "sim":
             if not os.path.isfile(fw_path):
                 raise FileNotFoundError(fw_path)
-            print(f"Simulator: pretending to program {os.path.basename(fw_path)} ({os.path.getsize(fw_path)} bytes)")
+            sc = unwrap(scope)
+            res = s.worker.call(sc.load_firmware, fw_path, timeout=120) if hasattr(sc, "load_firmware") else {"emulated": False}
+            if res.get("emulated"):
+                print(f"Simulator: {os.path.basename(fw_path)} runs in the emulator ({res.get('core_label')}, SimpleSerial {res.get('protocol')})")
+                s.note_programmed(fw_path, res)
+            else:
+                print(f"Simulator: pretending to program {os.path.basename(fw_path)} ({os.path.getsize(fw_path)} bytes)")
             return True
         return self._real.program_target(unwrap(scope), prog_type, fw_path, **kwargs)
 

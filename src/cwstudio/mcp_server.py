@@ -29,6 +29,7 @@ INSTRUCTIONS = (
     "then capture_start with wait=true, traces_summary, cpa_start with wait=true and cpa_result. For fault injection configure glitch.* with scope_set_setting, then glitch_start and glitch_results. "
     "Settings are addressed by dotted paths from scope_get_settings / target_get_settings (e.g. 'gain.db', 'adc.samples', 'clock.clkgen_freq', 'glitch.width'). "
     "For custom experiments, notebook_run_code runs Python in Studio's shared notebook kernel (or, with notebook_path, in that notebook's own kernel) with cw bound to the connected hardware; notebook_run runs a whole stored notebook (e.g. NewAE's tutorials after tutorials_fetch). "
+    "To see which firmware code a part of a trace is, run code_map_build after capturing (it emulates the programmed or newest built ELF for that trace), then code_map_region with a sample range or code_map_lookup with a function or file:line. "
     "Long jobs (capture, glitch, CPA, builds, downloads) run in the background; pass wait=true or poll the matching status tool. Only one hardware job runs at a time; capture_stop stops it."
 )
 
@@ -661,6 +662,8 @@ def build_server(client: StudioClient, url_note: str = ""):
     register_interface_tools(mcp, client, RO, HW, DESTRUCTIVE)  # protocols and interfaces: UART, SPI, GPIO, triggers, bit-banger, 1-Wire, OpenOCD
     from cwstudio.mcp_logic import register_logic_tools
     register_logic_tools(mcp, client, RO, HW)  # logic analyser: sources, capture, import/export, decoders, measurements, channels
+    from cwstudio.mcp_codemap import register_codemap_tools
+    register_codemap_tools(mcp, client, RO, HW)  # code map: firmware emulation, code on the waveform, alignment, exact mode
 
     # ----- resources and prompts --------------------------------------------------------------
     @mcp.resource("studio://status", mime_type="application/json")

@@ -18,6 +18,7 @@ from cwstudio import tools
 from cwstudio.firmware import CRYPTO_TARGETS, SS_VERSIONS
 from cwstudio.interfaces import register_routes as register_interface_routes
 from cwstudio.logic.service import register_routes as register_logic_routes
+from cwstudio.codemap.service import register_routes as register_codemap_routes
 from cwstudio.session import Session
 
 log = logging.getLogger("cwstudio.app")
@@ -37,6 +38,7 @@ def create_app(session: Session) -> App:
     app.state.session = session
     register_interface_routes(app, session)  # /api/interfaces/*: UART, SimpleSerial, SPI, GPIO, triggers, bit-banger, 1-Wire, OpenOCD
     register_logic_routes(app, session)  # /api/la/*: logic analyser captures, files, decoders, measurements
+    register_codemap_routes(app, session)  # /api/codemap/*: firmware emulation, code on the waveform, alignment
 
     async def run(fn, *args, **kwargs):
         """Run a blocking session method off the event loop."""

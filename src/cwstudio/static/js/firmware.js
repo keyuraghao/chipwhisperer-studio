@@ -104,7 +104,8 @@ export function initFirmware(ctx, el) {
   async function programLast() {
     try {
       const r = await post('/api/firmware/program', {});
-      toast(`Programmed ${r.bytes} bytes with ${r.programmer}${r.simulated ? ' (simulated)' : ''}`, 'ok', 6000);
+      const emu = r.emulation;
+      toast(`Programmed ${r.bytes} bytes with ${r.programmer}${r.simulated ? (emu && emu.emulated ? ': the simulator runs this firmware in the emulator' : ' (simulated)') : ''}`, 'ok', 6000);
     } catch (e) { toast(e.message, 'err', 8000); }
   }
   function appendLog(lines) {
