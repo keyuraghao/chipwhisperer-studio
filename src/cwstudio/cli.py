@@ -20,12 +20,14 @@ def _port_free(host: str, port: int) -> bool:
         if os.name != "nt":
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)  # fails while any socket holds the port, on any address
+            # Windows: an exclusive bind of the wildcard address fails while any socket holds the port on any address (a plain bind of 127.0.0.1 succeeds next to a listener on 0.0.0.0)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            host = "::" if family == socket.AF_INET6 else "0.0.0.0"
         try:
             s.bind((host, port))
         except OSError:
             return False
-    return os.name == "nt" or not _listening(host, port)
+    return not _listening(host, port)
 
 
 def _listening(host: str, port: int) -> bool:
