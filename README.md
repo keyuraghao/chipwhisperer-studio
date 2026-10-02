@@ -53,25 +53,26 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 
 ### Standalone bundle (no Python needed)
 
-Download `ChipWhispererStudio-<os>-<arch>.zip` from the [latest release](https://github.com/keyuraghao/chipwhisperer-studio/releases/latest), unzip it and run:
+Every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases/latest) has two builds per platform: **ChipWhisperer Studio** (`ChipWhispererStudio-<os>-<arch>.zip`) opens in its own application window, and **ChipWhisperer Studio Web** (`ChipWhispererStudio-Web-<os>-<arch>.zip`) opens in your web browser. Unzip one and run:
 
 - **Windows:** `ChipWhispererStudio.exe`. If the device is not detected, install the NewAE WinUSB driver.
 - **macOS:** `ChipWhisperer Studio.app` (right-click and choose Open the first time).
 - **Linux:** `./chipwhisperer-studio.sh`. Install the udev rule once; the Connect tab shows the exact command. `./ChipWhispererStudio --install-desktop` adds Studio with its icon to the applications menu.
 
-Your browser opens `http://127.0.0.1:8765/` automatically.
+The window uses the system's web engine (Edge WebView2 on Windows, WebKit on macOS, WebKitGTK on Linux, where `sudo apt install python3-gi gir1.2-webkit2-4.1` may be needed once; without it Studio opens in the browser). Details are on the [Installation](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Installation) wiki page.
 
 ### With Python
 
 ```bash
 pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer_studio-0.4.5-py3-none-any.whl
-cw-studio              # opens the UI in your browser
+cw-studio              # opens Studio in its own window
+cw-studio-web          # or in your web browser
 cw-studio --simulate   # try it without hardware
 ```
 
 The wheel is attached to every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases) (Studio is not on PyPI yet). Use Python 3.10 to 3.12: `chipwhisperer` 6.0.0 on PyPI pins numpy 1.26, which has no wheels for newer Pythons.
 
-Options: `--simulate` (pre-select the simulator), `--port 8765`, `--host 0.0.0.0` (remote access), `--no-browser`, `--window` (native window, needs `pip install "pywebview>=5"`), `--data-dir DIR` (exports, firmware, toolchains, notebooks and notes; default `~/ChipWhispererStudio`), `--log-level debug|info|warning|error`.
+Options: `--simulate` (pre-select the simulator), `--port 8765`, `--host 0.0.0.0` (remote access), `--browser` (use the web browser), `--no-browser` (server only), `--data-dir DIR` (exports, firmware, toolchains, notebooks and notes; default `~/ChipWhispererStudio`), `--log-level debug|info|warning|error`.
 
 ## Walkthrough
 

@@ -188,7 +188,8 @@ class SimScope:
     _is_husky = False
     _name = "ChipWhisperer-Simulator"
 
-    def __init__(self, seed: Optional[int] = None):
+    def __init__(self, seed: Optional[int] = None, sim_model: str = "husky"):
+        self.sim_model = sim_model  # which ChipWhisperer the simulator stands in for (capabilities.SIM_MODELS); decides which protocols and features Studio offers
         self.sn = "SIM000001"
         self.fw_version = {"major": 0, "minor": 1, "debug": 0}
         self.gain = SimGain()
@@ -230,7 +231,9 @@ class SimScope:
         return "cwsim"
 
     def get_name(self):
-        return self._name
+        from cwstudio.capabilities import LABELS
+        label = LABELS.get(self.sim_model, "").replace("ChipWhisperer-", "")
+        return f"{self._name} ({label})" if label else self._name
 
     def default_setup(self, verbose=True):
         self.gain.gain = 30
@@ -382,6 +385,8 @@ class SimTarget:
         self._lock = threading.Lock()
         self.output_len = 16
         self.baud = 38400
+        self.parity = "none"
+        self.stop_bits = 1
         self.simpleserial_last_read = ""
         self.simpleserial_last_sent = ""
         self.protver = "2.1"
@@ -396,6 +401,8 @@ class SimTarget:
         rtn = OrderedDict()
         rtn["output_len"] = self.output_len
         rtn["baud"] = self.baud
+        rtn["parity"] = self.parity
+        rtn["stop_bits"] = self.stop_bits
         rtn["simpleserial_last_read"] = self.simpleserial_last_read
         rtn["simpleserial_last_sent"] = self.simpleserial_last_sent
         rtn["protver"] = self.protver

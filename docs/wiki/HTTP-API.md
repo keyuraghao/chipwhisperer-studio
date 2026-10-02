@@ -62,7 +62,7 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `firmware_sources` | text | Firmware source status changed (download progress, installed, update check). |
 | `build` | text | Firmware build state: `state` (running, ok, failed, cancelled), `hex`, `size`, `error`. |
 | `build_log` | text | New build output: `start` (line number) and `lines`. |
-| `nb` | text | Notebook kernel: `kind` (queued, running, output, done, cancelled, restarted), `cell`, `exec`, and `output`, or `ok`, `execution_count` and `outputs` when done. |
+| `nb` | text | Notebook kernels: `kind` (queued, running, output, done, cancelled, restarted, shutdown, renamed), `kernel` (the kernel id: the notebook's path, or `default`), `path` (the notebook path, or null for the default kernel), `cell`, `exec`, and `output`, or `ok`, `execution_count` and `outputs` when done. `restarted` carries the kernel status; `renamed` carries the new id in `kernel` and the previous one in `old`. Each event belongs to exactly one kernel, so a client showing several notebooks routes it by `kernel`. |
 | `tutorials` | text | Tutorial notebook download status. |
 
 ## Endpoints
@@ -169,13 +169,20 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `GET /api/notebooks/download?path=` | Download as `.ipynb`. |
 | `GET /api/notebooks/asset?path=` | An image referenced by notebook Markdown. |
 | `POST /api/notebooks/tutorials/fetch` | Download NewAE's tutorial notebooks. |
-| `POST /api/notebooks/run` | Body: `path`, `timeout`, `stop_on_error`. Run all cells, save outputs, wait. |
-| `GET /api/kernel` | Kernel status: `busy`, `cell`, `queued`, `execution_count`, `store_traces`. |
-| `GET /api/kernel/variables` | Defined variables. |
-| `POST /api/kernel/execute` | Body: `cells` ([{id, code}]), `path`. Queue cells; results arrive as `nb` events. |
-| `POST /api/kernel/run` | Body: `code`, `path`, `timeout`. Run one cell and wait for its outputs. |
-| `POST /api/kernel/interrupt` | Interrupt the running cell and drop queued cells. |
-| `POST /api/kernel/restart` | Clear the namespace. |
+| `POST /api/notebooks/run` | Body: `path`, `timeout`, `stop_on_error`, `kernel`. Run all cells in the notebook's own kernel (or `kernel`), save outputs, wait. |
+| `GET /api/kernel?kernel=` | Kernel status: `kernel`, `path`, `started` (false until the notebook first runs a cell), `busy` (a cell of this kernel is running), `cell`, `queued` (this kernel's queued cells), `execution_count`, `store_traces`, `running_kernel` (whose cell runs now, in any kernel), `queued_total`. |
+| `GET /api/kernel/variables?kernel=` | Variables defined in the kernel. |
+| `POST /api/kernel/execute` | Body: `cells` ([{id, code}]), `path` (working directory, by default the notebook's folder), `kernel`. Queue cells; results arrive as `nb` events. |
+| `POST /api/kernel/run` | Body: `code`, `path`, `kernel`, `timeout`. Run one cell and wait for its outputs (the reply includes `kernel`). |
+| `POST /api/kernel/interrupt` | Body: `kernel`. Interrupt that kernel's running cell and drop its queued cells; other kernels are untouched. `"kernel": "all"` interrupts every kernel. |
+| `POST /api/kernel/restart` | Body: `kernel`. Clear that kernel's namespace and execution count. |
+| `GET /api/kernels` | Every running kernel: the status above plus `holders` (windows that have the notebook open) and `variables` (how many). |
+| `POST /api/kernels/shutdown` | Body: `kernel`. Stop the kernel and free its namespace; it starts again, empty, on the next cell. For the default kernel this is a restart. |
+| `POST /api/kernels/rename` | Body: `kernel`, `to`. Re-key a kernel, keeping its variables (for example a temporary id that becomes a path when a notebook is saved). |
+| `POST /api/kernels/attach` | Body: `client` (a window id), `kernels` (the ids that window has open, all of them each time; `[]` when it closes). Studio's own windows call it so that a notebook's kernel is shut down about 20 seconds after it is closed in the last window. |
+| `POST /api/notebooks/rename` | Body: `path`, `to`. Rename or move a notebook; its kernel moves with it. 409 if `to` exists. |
+
+Each notebook has its own kernel. The optional `kernel` parameter (query parameter for `GET`, body field or query parameter for `POST`) is a notebook path relative to the notebooks folder (the id the Notebook tab uses for that notebook), any other string as a temporary id, or empty for the shared **default** kernel. Requests without it behave as before, against the default kernel. Kernels are created by the first `execute` or `run` that names them; status and variables of a kernel that has not started report it as idle and empty without creating it. `POST /api/notebooks/run` runs in the notebook's own kernel unless its body names another `kernel`, and deleting a notebook shuts its kernel down. Cells of all kernels share one queue and run one at a time on the hardware thread.
 
 ### Notes and calculator
 
@@ -252,6 +259,9 @@ The compiler and firmware sources must be installed first (see [Toolchains](Tool
 ```python
 r = s.post(f"{B}/api/kernel/run", json={"code": "import chipwhisperer as cw\nscope = cw.scope()\nlen(studio.traces)"}).json()
 print(r["ok"], [o.get("data", {}).get("text/plain") or o.get("text") for o in r["outputs"]])
+# the same in the kernel of a notebook (sees the variables its tab in the Notebook tab defined)
+r = s.post(f"{B}/api/kernel/run", json={"code": "sorted(k for k in globals() if not k.startswith('_'))", "kernel": "lab/attack.ipynb"}).json()
+print(r["kernel"], r["outputs"][-1]["data"]["text/plain"])
 ```
 
 ### Python: follow live events

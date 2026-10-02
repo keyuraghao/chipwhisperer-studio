@@ -209,14 +209,16 @@ Every tool carries MCP annotations that clients can use to decide when to ask yo
 
 | Tool | What it does | Key parameters | Changes |
 |------|--------------|----------------|---------|
-| `notebook_run_code` | Runs Python in Studio's notebook kernel (the same namespace as the Notebook tab) and returns the text output, image count and errors. | `code`, `notebook_path=None` (sets the working directory), `timeout_s=600` | hardware |
+| `notebook_run_code` | Runs Python and returns the text output, image count and errors. Without `notebook_path` it uses the shared default kernel; with `notebook_path` it runs in that notebook's own kernel (the namespace its tab in the Notebook tab uses) with the notebook's folder as working directory. | `code`, `notebook_path=None`, `timeout_s=600` | hardware |
 | `notebook_list` | Stored notebooks and the tutorial download state. | none | read only |
 | `notebook_read` | A notebook's cells with an optional text summary of the outputs. | `path`, `include_outputs=True` | read only |
 | `notebook_write` | Creates or overwrites a notebook from `[{"type": "code" or "markdown", "source": "..."}]`. | `path`, `cells` | hardware |
-| `notebook_run` | Runs every code cell of a stored notebook in order, saves the outputs into it and returns a per-cell summary. | `path`, `stop_on_error=True`, `timeout_s=1800` | hardware |
-| `kernel_variables` | Variables currently defined in the kernel (name, type, shape, short repr). | none | read only |
-| `kernel_interrupt` | Interrupts the running cell and drops queued cells. | none | hardware |
-| `kernel_restart` | Clears all notebook variables; the hardware connection is kept. | none | destructive |
+| `notebook_run` | Runs every code cell of a stored notebook in order, in that notebook's own kernel, saves the outputs into it and returns a per-cell summary. | `path`, `stop_on_error=True`, `timeout_s=1800` | hardware |
+| `kernel_list` | Running kernels: id (notebook path or `default`), busy, queued cells, execution count, number of variables, windows that have the notebook open. | none | read only |
+| `kernel_variables` | Variables defined in a kernel (name, type, shape, short repr). | `notebook_path=None` (default kernel) | read only |
+| `kernel_interrupt` | Interrupts a kernel's running cell and drops its queued cells; `notebook_path="all"` interrupts every kernel. | `notebook_path=None` (default kernel) | hardware |
+| `kernel_restart` | Clears a kernel's variables; other notebooks and the hardware connection are kept. | `notebook_path=None` (default kernel) | destructive |
+| `kernel_shutdown` | Stops a notebook's kernel and frees its memory (it starts again, empty, on the next cell). Useful after `notebook_run` on many notebooks. | `notebook_path` | destructive |
 | `tutorials_fetch` | Downloads NewAE's chipwhisperer-jupyter tutorials matched to the installed firmware sources. | `wait=True`, `timeout_s=900` | network |
 
 ### Notes and calculator
@@ -258,7 +260,7 @@ These are phrased the way you would type them to an agent. The agent chooses the
 
 ## Safety
 
-- Destructive tools are marked with `destructiveHint`: `target_program`, `firmware_program`, `traces_clear`, `toolchain_remove`, `toolchain_remove_custom` and `kernel_restart`. Configure your client to ask before running them if it supports that.
+- Destructive tools are marked with `destructiveHint`: `target_program`, `firmware_program`, `traces_clear`, `toolchain_remove`, `toolchain_remove_custom`, `kernel_restart` and `kernel_shutdown`. Configure your client to ask before running them if it supports that.
 - `notebook_run_code` and `notebook_run` execute arbitrary Python on the Studio machine, with the same rights as the user running Studio. Only connect agents you trust, and review what they plan to run on real hardware.
 - The HTTP API behind the MCP server has no authentication. Keep Studio bound to `127.0.0.1` unless you are on a trusted network (see [Command Line and Configuration](Command-Line-and-Configuration)).
 

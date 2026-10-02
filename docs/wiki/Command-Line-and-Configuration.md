@@ -6,11 +6,12 @@ This page lists every command line option of ChipWhisperer Studio, the environme
 
 | How you installed it | Command |
 |----------------------|---------|
-| pip | `cw-studio` (or `python -m cwstudio`) |
-| Standalone bundle, Windows | `ChipWhispererStudio.exe` |
-| Standalone bundle, macOS and Linux | `./ChipWhispererStudio` or the `chipwhisperer-studio.sh` launcher next to it |
+| pip | `cw-studio` (own window) or `cw-studio-web` (browser); `python -m cwstudio` also works |
+| Standalone bundle, Windows | `ChipWhispererStudio.exe`; from a terminal or for AI agents use `cw-studio.exe` (window build) |
+| Standalone bundle, macOS | `ChipWhisperer Studio.app`; from a terminal: `"ChipWhisperer Studio.app/Contents/MacOS/ChipWhispererStudio"` |
+| Standalone bundle, Linux | `./ChipWhispererStudio` or the `chipwhisperer-studio.sh` launcher next to it |
 
-All forms accept the same options. Studio starts a local web server and opens your browser at the printed URL, `http://127.0.0.1:8765/` by default.
+All forms accept the same options. Studio starts a local web server (`http://127.0.0.1:8765/` by default) and shows it in its own window, or in your web browser for the Web build and `cw-studio-web`. See [Installation](Installation#standalone-bundle) for the two builds.
 
 ## `cw-studio` options
 
@@ -18,8 +19,9 @@ All forms accept the same options. Studio starts a local web server and opens yo
 |--------|---------|--------------|
 | `--host ADDRESS` | `127.0.0.1` | Address the server listens on. `0.0.0.0` makes Studio reachable from other machines on the network (see Remote use below). |
 | `--port N` | `8765` | Preferred port. If it is taken, Studio tries the next 49 ports and uses the first free one, then prints the actual URL. |
-| `--no-browser` | off | Do not open a browser window. Useful for remote use and scripting. |
-| `--window` | off | Open Studio in a native desktop window instead of the browser. Needs pywebview (`pip install "chipwhisperer-studio[window]"`); if it is missing Studio falls back to the browser. |
+| `--browser` | off | Open Studio in your web browser instead of its own window. |
+| `--app-window` | off | Open Studio in its own window even in the Web build or with `cw-studio-web`. If the window cannot be opened (for example WebKitGTK missing on Linux), Studio says why and uses the browser. |
+| `--no-browser` | off | Run only the server: no window and no browser. Useful for remote use, scripts and CI. |
 | `--simulate` | off | Preselect the built-in simulator on the Connect tab (the URL gets `?simulate=1`), and make `cw.scope()` in notebooks connect to the simulator. See [Simulator](Simulator). |
 | `--data-dir DIR` | `~/ChipWhispererStudio` | Folder for exports, firmware, compilers, notebooks and notes. |
 | `--log-level LEVEL` | `info` | `debug`, `info`, `warning` or `error` for the console log. |
@@ -28,6 +30,7 @@ Examples:
 
 ```bash
 cw-studio --simulate                       # explore without hardware
+cw-studio --browser                        # use your web browser instead of Studio's window
 cw-studio --no-browser --port 9000         # headless on another port
 cw-studio --host 0.0.0.0 --no-browser      # lab machine, open from other computers
 cw-studio --data-dir D:\studio-data        # keep everything on another drive (Windows)
@@ -52,6 +55,9 @@ On Linux, `cw-studio --install-desktop` (or `./ChipWhispererStudio --install-des
 | `GITHUB_TOKEN` or `GH_TOKEN` | Optional. Sent with GitHub API lookups for firmware sources and tutorials, which lifts GitHub's limit of 60 anonymous requests per hour. A token with no scopes is enough. |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | Optional. If set, Studio verifies HTTPS certificates against this PEM bundle or folder instead of the operating system's trust store. Use it on networks that inspect HTTPS when you cannot install their root certificate in the system store. |
 | `CWSTUDIO_URL` | Default `--url` for `cw-studio mcp`. |
+| `CWSTUDIO_DEFAULT_UI` | `window` or `browser`: how Studio opens when neither `--browser` nor `--app-window` is given (overrides the build's default). |
+| `CWSTUDIO_GTK_PYTHON` | Linux: the Python interpreter that runs Studio's window (it needs PyGObject and WebKitGTK). Default: the system `python3`. |
+| `CWSTUDIO_DEVTOOLS` | Linux window: set to `1` to enable the web inspector (right-click, Inspect Element) and print the page's console messages in the terminal. |
 | `MPLBACKEND` | If it is not set, Studio sets it to its own inline backend so notebook figures render to images (shell commands run from a notebook get `Agg`). |
 | `CWSTUDIO_CC`, `CWSTUDIO_GCC` | Internal. Set by clang firmware builds for the compiler wrapper. |
 | `ZIG_GLOBAL_CACHE_DIR`, `ZIG_LOCAL_CACHE_DIR` | Internal. Clang builds point these at `toolchains/.zig-cache` in the data folder. |

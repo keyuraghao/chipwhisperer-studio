@@ -99,12 +99,13 @@ jobs:
           EOF
 
   bundle:
-    name: Bundle (${{ matrix.os }})
+    name: Bundle (${{ matrix.os }}, ${{ matrix.variant }})
     needs: test
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, windows-latest, macos-14]
+        variant: [app, web]  # app: Studio in its own window; web: Studio in the browser
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -114,19 +115,28 @@ jobs:
       - name: Install build dependencies
         run: pip install -e . "pyinstaller>=6.0" libusb-package
       - name: Build bundle
-        run: python packaging/build.py --no-venv
+        run: python packaging/build.py --no-venv --variant ${{ matrix.variant }}
         shell: bash
       - name: Smoke test bundle (simulator, MCP entry point, compiler wrapper)
         shell: bash
         run: |
           set -e
-          if [ "${{ runner.os }}" = "Windows" ]; then EXE=dist/ChipWhispererStudio/ChipWhispererStudio.exe; else EXE=dist/ChipWhispererStudio/ChipWhispererStudio; fi
+          # Windows app build: the console executable (the windowed one has no console output); macOS: the executable inside the .app
+          if [ "${{ matrix.variant }}" = "web" ]; then DIR=dist/ChipWhispererStudio-Web; APPNAME="ChipWhisperer Studio Web.app"; else DIR=dist/ChipWhispererStudio; APPNAME="ChipWhisperer Studio.app"; fi
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            if [ "${{ matrix.variant }}" = "app" ]; then EXE=$DIR/cw-studio.exe; test -f $DIR/ChipWhispererStudio.exe; else EXE=$DIR/ChipWhispererStudio.exe; test ! -e $DIR/cw-studio.exe; fi
+          elif [ "${{ runner.os }}" = "macOS" ]; then EXE="$DIR/$APPNAME/Contents/MacOS/ChipWhispererStudio"
+          else EXE=$DIR/ChipWhispererStudio; fi
           "$EXE" mcp --help | head -3
           if [ "${{ runner.os }}" = "macOS" ]; then
-            APP="dist/ChipWhispererStudio/ChipWhisperer Studio.app/Contents"
-            plutil -lint "$APP/Info.plist"
-            test -x "$APP/MacOS/ChipWhisperer Studio" && test -s "$APP/Resources/icon.icns"
-            codesign --verify --verbose "dist/ChipWhispererStudio/ChipWhisperer Studio.app"
+            APP="$DIR/$APPNAME"
+            plutil -lint "$APP/Contents/Info.plist"
+            test -s "$APP/Contents/Resources/icon.icns"
+            codesign --verify --deep --verbose "$APP"
+            python -c "import webview, webview.platforms.cocoa; print('pywebview cocoa backend ok')"
+          fi
+          if [ "${{ runner.os }}" = "Windows" ] && [ "${{ matrix.variant }}" = "app" ]; then
+            python -c "import webview, webview.platforms.edgechromium; print('pywebview edgechromium backend ok')"
           fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             XDG_DATA_HOME="$PWD/xdg" "$EXE" --install-desktop
@@ -151,7 +161,7 @@ jobs:
           kill $PID || true
       - uses: actions/upload-artifact@v4
         with:
-          name: ChipWhispererStudio-${{ matrix.os }}
+          name: ChipWhispererStudio-${{ matrix.os }}-${{ matrix.variant }}
           path: dist/*.zip
 
   release:

@@ -95,7 +95,8 @@ export class SettingsTree {
     let input;
     const choices = n.choices && n.choices.length ? n.choices : (n.type === 'bool' ? [true, false] : null);
     if (choices) {
-      input = h('select', {}, ...choices.map((c) => h('option', { value: valueKey(c) }, fmtValue(c))));
+      const off = n.disabled_choices || {};  // values the connected model does not support: listed but not selectable, with the reason
+      input = h('select', {}, ...choices.map((c) => h('option', { value: valueKey(c), disabled: valueKey(c) in off, title: off[valueKey(c)] || null }, fmtValue(c) + (valueKey(c) in off ? ' (not available)' : ''))));
       this.setInputValue(input, n);
       input.addEventListener('change', () => this.commit(row, input, n, parseChoice(input.value, choices)));
     } else {

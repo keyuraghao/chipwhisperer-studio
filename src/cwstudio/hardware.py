@@ -33,6 +33,8 @@ PROGRAMMERS = {
     "AVR": {"label": "AVR (CW308_AVR, CW304 ATmega328P)", "cls": "AVRProgrammer"},
     "SAM4S": {"label": "SAM4S (CW308_SAM4S, Husky)", "cls": "SAM4SProgrammer"},
     "NEORV32": {"label": "NEORV32 (soft-core RISC-V)", "cls": "NEORV32Programmer"},
+    "iCE40": {"label": "iCE40 FPGA bitstream (CW312T-iCE40, SPI slave load)", "cls": None, "fpga": "LatticeICE40", "accept": ".bin"},
+    "XC7A35T": {"label": "XC7A35T FPGA bitstream (CW312T-A35, SPI slave load)", "cls": None, "fpga": "CW312T_XC7A35T", "accept": ".bit,.bin"},
 }
 
 
@@ -49,11 +51,14 @@ def list_devices() -> List[Dict[str, Any]]:
         return [{"name": f"enumeration failed: {e}", "sn": None, "hw_loc": None, "error": True}]
 
 
-def connect_scope(kind: str = "auto", sn: Optional[str] = None, force: bool = False, **kwargs):
-    import chipwhisperer as cw
+def connect_scope(kind: str = "auto", sn: Optional[str] = None, force: bool = False, sim_model: Optional[str] = None, **kwargs):
     if kind == "sim":
+        from cwstudio.capabilities import SIM_MODELS
         from cwstudio.simulator import SimScope
-        return SimScope()
+        if sim_model and sim_model not in SIM_MODELS:
+            raise ValueError(f"sim_model must be one of {', '.join(SIM_MODELS)}")
+        return SimScope(sim_model=sim_model or "husky")
+    import chipwhisperer as cw
     name = SCOPE_KINDS.get(kind, {}).get("name")
     args: Dict[str, Any] = {}
     if name:
@@ -87,10 +92,16 @@ def program_target(scope, programmer: str, fw_path: str, **kwargs):
         raise ValueError(f"unknown programmer {programmer}")
     if not os.path.isfile(fw_path):
         raise FileNotFoundError(fw_path)
+    from cwstudio.capabilities import capabilities, require
+    require(capabilities(scope)["programmers"].get(programmer), f"{programmer} programmer")
     if getattr(scope, "_getCWType", lambda: "")() == "cwsim":
         import time
         time.sleep(0.5)
         return {"ok": True, "simulated": True, "bytes": os.path.getsize(fw_path)}
+    if entry.get("fpga"):
+        from chipwhisperer.hardware.naeusb import programmer_targetfpga
+        getattr(programmer_targetfpga, entry["fpga"])(scope).program(fw_path, sck_speed=float(kwargs.get("sck_speed", 10e6)))
+        return {"ok": True, "bytes": os.path.getsize(fw_path)}
     cls = getattr(cw.programmers, entry["cls"])
     cw.program_target(scope, cls, fw_path, **kwargs)
     return {"ok": True, "bytes": os.path.getsize(fw_path)}
@@ -116,12 +127,14 @@ def scope_info(scope) -> Dict[str, Any]:
         info["name"] = _pretty_type(info.get("type", ""))
     info["is_husky"] = bool(getattr(scope, "_is_husky", False))
     info["simulated"] = info.get("type") == "cwsim"
+    if info["simulated"]:
+        info["sim_model"] = getattr(scope, "sim_model", None)
     return info
 
 
 def _pretty_type(t: str) -> str:
     return {"cwlite": "ChipWhisperer-Lite", "cw1200": "ChipWhisperer-Pro", "cwnano": "ChipWhisperer-Nano",
-            "cwhusky": "ChipWhisperer-Husky", "cwsim": "Simulator"}.get(t, t or "scope")
+            "cwhusky": "ChipWhisperer-Husky", "cwhuskyplus": "ChipWhisperer-Husky Plus", "cwsim": "Simulator"}.get(t, t or "scope")
 
 
 def target_info(target) -> Dict[str, Any]:

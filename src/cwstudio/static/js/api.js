@@ -27,6 +27,13 @@ export const post = (p, b) => api('POST', p, b || {});
 export const put = (p, b) => api('PUT', p, b);
 export const del = (p) => api('DELETE', p);
 
+/** Download a file from Studio. A link with the download attribute works the same in a browser and in Studio's own window (window.open would open a browser tab there). */
+export function downloadUrl(url) {
+  const a = document.createElement('a');
+  a.href = url; a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
 export async function upload(path, file, fields = {}) {
   const fd = new FormData();
   fd.append('file', file, file.name);

@@ -12,8 +12,17 @@ SRC = os.path.join(ROOT, "src")
 sys.path.insert(0, SRC)
 
 APP_NAME = "ChipWhispererStudio"
+# Two builds: "app" opens Studio in its own window (pywebview on Windows and macOS), "web" opens it in the browser like a classic local web app and is smaller.
+VARIANT = os.environ.get("CWSTUDIO_VARIANT", "app")
+if VARIANT not in ("app", "web"):
+    raise SystemExit(f"CWSTUDIO_VARIANT must be app or web, not {VARIANT}")
+FOLDER = APP_NAME if VARIANT == "app" else APP_NAME + "-Web"
+_marker = os.path.join(os.path.abspath(os.path.join(os.path.dirname(SPEC), "..", "build")), f"cwstudio_variant_{VARIANT}", "cwstudio_variant.txt")
+os.makedirs(os.path.dirname(_marker), exist_ok=True)
+with open(_marker, "w") as _f:
+    _f.write("web" if VARIANT == "web" else "app")
 
-datas = []
+datas = [(_marker, ".")]  # tells cwstudio.cli which build this is (the Web build opens the browser by default)
 # Frontend + resources
 datas += collect_data_files("cwstudio", includes=["static/**/*", "resources/*"])
 # ChipWhisperer package data (bitstreams, firmware for programmers, etc.)
@@ -49,6 +58,8 @@ for _dir, _subdirs, _files in os.walk(_cw_dir):
 hiddenimports += collect_submodules("cwstudio")
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("websockets")
+if sys.platform in ("win32", "darwin") and VARIANT == "app":
+    hiddenimports += collect_submodules("webview")  # Studio's own window (pywebview with WebView2 or WebKit)
 hiddenimports += ["truststore", "certifi", "serial", "serial.tools.list_ports", "usb1", "configobj", "ecpy", "anyio._backends._asyncio", "h11"]
 # Notebooks can save figures as SVG and PDF, and user code may import any common standard module even though Studio itself does not.
 hiddenimports += ["matplotlib.backends.backend_svg", "matplotlib.backends.backend_pdf", "matplotlib.backends.backend_ps"]
@@ -71,7 +82,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "IPython", "jupyter", "notebook", "PyQt5", "PySide2", "PySide6", "PyQt6", "gi", "wx",
+    excludes=(["webview"] if VARIANT == "web" else []) + ["tkinter", "IPython", "jupyter", "notebook", "PyQt5", "PySide2", "PySide6", "PyQt6", "gi", "wx",
               "bokeh", "holoviews", "pandas", "scipy.spatial.cKDTree", "sphinx", "pytest", "playwright"] + MPL_EXCLUDES + PIL_EXCLUDES + UNUSED,
     noarchive=False,
 )
@@ -102,30 +113,51 @@ if sys.platform == "win32":
                 "  ]\n"
                 ")\n")
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name=APP_NAME,
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=STRIP,
-    upx=False,
-    console=True,           # keep a console so users can see the URL / errors; use --no-browser etc.
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=ICON,
-    version=VERSION_FILE,
-)
+def make_exe(name, console):
+    return EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name=name,
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=STRIP,
+        upx=False,
+        console=console,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=ICON,
+        version=VERSION_FILE,
+    )
+
+
+# Studio opens its own window, so the main executable is a windowed application. On Windows a second, console executable (cw-studio.exe) serves the command line, the MCP server for AI agents and headless use, which need a console.
+if VARIANT == "web":  # opens the browser; its console shows the address and messages, and closing it quits Studio
+    exes = [make_exe(APP_NAME, console=True)]
+else:
+    exes = [make_exe(APP_NAME, console=sys.platform.startswith("linux"))]
+    if sys.platform == "win32":
+        exes.append(make_exe("cw-studio", console=True))
 coll = COLLECT(
-    exe,
+    *exes,
     a.binaries,
     a.datas,
     strip=STRIP,
     upx=False,
-    name=APP_NAME,
+    name=FOLDER,
 )
+if sys.platform == "darwin":
+    # A real macOS application, so Finder and the Dock show Studio's name and icon.
+    from cwstudio import __version__ as _v
+    app = BUNDLE(
+        coll,
+        name="ChipWhisperer Studio.app" if VARIANT == "app" else "ChipWhisperer Studio Web.app",
+        icon=ICON,
+        bundle_identifier="io.github.keyuraghao.chipwhisperer-studio" + ("" if VARIANT == "app" else "-web"),
+        version=_v,
+        info_plist={"CFBundleDisplayName": "ChipWhisperer Studio" if VARIANT == "app" else "ChipWhisperer Studio Web", "CFBundleShortVersionString": _v, "NSHighResolutionCapable": True, "LSMinimumSystemVersion": "11.0"},
+    )

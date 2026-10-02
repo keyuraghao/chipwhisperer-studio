@@ -12,52 +12,71 @@ ChipWhisperer Studio comes as a self-contained download for Windows, macOS and L
 
 ## Standalone bundle
 
-Every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases/latest) has one zip file per platform:
+Every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases/latest) offers two builds for each platform. They are the same Studio; they differ only in how the interface opens:
 
-| Platform | File | Notes |
-|----------|------|-------|
-| Windows 10 and 11 (64-bit Intel/AMD) | `ChipWhispererStudio-windows-x86_64.zip` | Needs the WinUSB driver for ChipWhisperer devices |
-| macOS on Apple Silicon (M1 and newer) | `ChipWhispererStudio-macos-arm64.zip` | Intel Macs are not supported by the bundle yet; use the [Python package](#python-package) |
-| Linux (64-bit Intel/AMD) | `ChipWhispererStudio-linux-x86_64.zip` | Built on Ubuntu 22.04, so it needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later) |
+| Build | Opens in | Choose it when |
+|-------|----------|----------------|
+| **ChipWhisperer Studio** (`ChipWhispererStudio-<platform>.zip`) | Its own application window, like any desktop program | You want a normal desktop app that does not depend on your browser |
+| **ChipWhisperer Studio Web** (`ChipWhispererStudio-Web-<platform>.zip`) | Your web browser, with a console window showing its address | You prefer the browser, use Studio remotely, or your Linux system has no WebKitGTK |
 
-Each zip contains a single `ChipWhispererStudio` folder with:
+The window uses the web engine that comes with the operating system: Microsoft Edge WebView2 on Windows 10 and 11, WebKit on macOS, and WebKitGTK on Linux (see [Linux](#linux) for the one package it may need). Either build can still do the other: start the window build with `--browser` to use the browser, or the Web build with `--app-window` for the window.
 
-- `ChipWhispererStudio` (or `ChipWhispererStudio.exe` on Windows): the application, with its own Python runtime, the `chipwhisperer` library, `libusb` and all other dependencies inside the `_internal` folder.
-- `ChipWhisperer Studio.app` (macOS): starts Studio with a double-click and shows the Studio icon in Finder and the Dock.
-- `chipwhisperer-studio.sh` (macOS and Linux): a small launcher script.
-- `ChipWhispererStudio-simulator.bat` (Windows): starts Studio with the simulator preselected.
-- `50-newae.rules`: the Linux udev rule for ChipWhisperer devices.
-- `ChipWhispererStudio.png` (Linux): the application icon, for desktop shortcuts and launchers.
+| Platform | Files | Notes |
+|----------|-------|-------|
+| Windows 10 and 11 (64-bit Intel/AMD) | `ChipWhispererStudio-windows-x86_64.zip`, `ChipWhispererStudio-Web-windows-x86_64.zip` | Needs the WinUSB driver for ChipWhisperer devices |
+| macOS on Apple Silicon (M1 and newer) | `ChipWhispererStudio-macos-arm64.zip`, `ChipWhispererStudio-Web-macos-arm64.zip` | Intel Macs are not supported by the bundle yet; use the [Python package](#python-package) |
+| Linux (64-bit Intel/AMD) | `ChipWhispererStudio-linux-x86_64.zip`, `ChipWhispererStudio-Web-linux-x86_64.zip` | Built on Ubuntu 22.04, so it needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later) |
+
+Each zip contains one folder (`ChipWhispererStudio` or `ChipWhispererStudio-Web`) with:
+
+- **Windows:** `ChipWhispererStudio.exe`, the application. The window build also has `cw-studio.exe`, the same program as a console application for the command line, scripts and the [MCP server](MCP-Server). `ChipWhispererStudio-simulator.bat` starts Studio with the simulator preselected.
+- **macOS:** `ChipWhisperer Studio.app` (or `ChipWhisperer Studio Web.app`), a normal macOS application with the Studio icon.
+- **Linux:** `ChipWhispererStudio`, the application, `chipwhisperer-studio.sh`, a small launcher script, and `ChipWhispererStudio.png`, the icon for desktop shortcuts.
+- `50-newae.rules` (Windows and Linux folders): NewAE's Linux udev rule for ChipWhisperer devices.
 - `README.md`, `LICENSE.txt` and `NOTICE.txt`.
 
-When Studio starts, a console window shows its address (normally `http://127.0.0.1:8765/`) and your web browser opens it automatically. Keep the console window open while you use Studio; closing it stops the application.
+Everything Studio needs (its own Python runtime, the `chipwhisperer` library, `libusb` and all other dependencies) is inside the application.
+
+With the window build, closing the window quits Studio. With the Web build, a console window shows Studio's address (normally `http://127.0.0.1:8765/`) and your browser opens it; keep the console open while you use Studio, closing it stops the application.
 
 ### Windows
 
-1. Download `ChipWhispererStudio-windows-x86_64.zip` and extract it (right-click, **Extract All...**) to a folder such as `C:\Tools`. Do not run it from inside the zip.
-2. Double-click `ChipWhispererStudio.exe` in the extracted `ChipWhispererStudio` folder.
+1. Download the zip of the build you want and extract it (right-click, **Extract All...**) to a folder such as `C:\Tools`. Do not run it from inside the zip.
+2. Double-click `ChipWhispererStudio.exe` in the extracted folder.
 3. If Windows SmartScreen shows "Windows protected your PC", click **More info** and then **Run anyway**. The bundle is not code-signed yet.
 4. If Windows Firewall asks whether Studio may communicate on networks, you can decline: Studio only listens on your own computer (`127.0.0.1`) unless you start it with `--host 0.0.0.0`.
-5. Your browser opens Studio. Continue with the [Quick Start](Quick-Start).
+5. Studio opens in its window (or your browser for the Web build). Continue with the [Quick Start](Quick-Start).
+
+The window uses Microsoft Edge WebView2, which is part of Windows 10 and 11. On the rare system without it, Studio opens in the browser instead; installing the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/) from Microsoft brings the window back.
 
 **USB driver.** ChipWhisperer devices need the WinUSB driver on Windows. If your ChipWhisperer is not detected, install the NewAE driver package as described in [NewAE's Windows driver instructions](https://chipwhisperer.readthedocs.io/en/latest/windows-install.html#windows-drivers), or assign WinUSB with Zadig. The Connect tab on Windows links to the same page.
 
 ### macOS
 
-1. Download `ChipWhispererStudio-macos-arm64.zip`. Safari usually extracts it automatically; otherwise double-click the zip.
-2. Move the `ChipWhispererStudio` folder somewhere permanent, for example your Applications or Documents folder.
-3. Double-click `ChipWhisperer Studio.app` in the folder; it opens Studio in a Terminal window that shows its address and messages. The bundle is not notarized by Apple yet, so the first time, right-click (or Control-click) `ChipWhisperer Studio.app` and choose **Open**, then confirm **Open** in the dialog; if macOS then asks about `ChipWhispererStudio` too, allow it the same way. After that it opens normally with a double-click. You can also run `./chipwhisperer-studio.sh` from Terminal.
-4. If macOS says the app "is damaged" or refuses to open it, remove the download quarantine flag in Terminal and try again: `xattr -dr com.apple.quarantine /path/to/ChipWhispererStudio`
-5. Your browser opens Studio.
+1. Download the zip of the build you want. Safari usually extracts it automatically; otherwise double-click the zip.
+2. Move `ChipWhisperer Studio.app` to your Applications folder (or anywhere you like).
+3. The app is not notarized by Apple yet, so the first time, right-click (or Control-click) it and choose **Open**, then confirm **Open** in the dialog. After that it opens normally with a double-click.
+4. If macOS says the app "is damaged" or refuses to open it, remove the download quarantine flag in Terminal and try again: `xattr -dr com.apple.quarantine "/Applications/ChipWhisperer Studio.app"`
+5. Studio opens in its window (or your browser for the Web build).
 
-No USB driver is needed on macOS. If a device is not detected, try another cable or USB port.
+No USB driver is needed on macOS. If a device is not detected, try another cable or USB port. To use command-line options, run the program inside the app, for example `"/Applications/ChipWhisperer Studio.app/Contents/MacOS/ChipWhispererStudio" --simulate`.
 
 ### Linux
 
-1. Download `ChipWhispererStudio-linux-x86_64.zip` and extract it, for example: `unzip ChipWhispererStudio-linux-x86_64.zip -d ~/Applications`
+1. Download the zip of the build you want and extract it, for example: `unzip ChipWhispererStudio-linux-x86_64.zip -d ~/Applications`
 2. Start it with `~/Applications/ChipWhispererStudio/chipwhisperer-studio.sh`
-3. Your browser opens Studio.
+3. Studio opens in its window (or your browser for the Web build).
 4. Optional: run `~/Applications/ChipWhispererStudio/ChipWhispererStudio --install-desktop` once to add ChipWhisperer Studio with its icon to your applications menu (`--remove-desktop` takes it out again).
+
+**The window on Linux** uses WebKitGTK from your distribution, so Studio does not have to ship a browser engine. Most desktops have the library already; the Python bindings for it may need one package:
+
+```bash
+sudo apt install python3-gi gir1.2-webkit2-4.1        # Debian, Ubuntu, Kali, Mint
+sudo dnf install python3-gobject webkit2gtk4.1        # Fedora
+sudo pacman -S python-gobject webkit2gtk-4.1          # Arch
+```
+
+If they are missing, Studio prints this hint and opens in your browser instead, so it always starts.
 
 **udev rule (once per computer).** Linux only lets root open USB devices unless a udev rule grants access. Studio includes NewAE's rule (`50-newae.rules`), and the Connect tab shows the exact command for your installation with a **Copy command** button. It looks like this:
 
@@ -82,22 +101,15 @@ pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download
 cw-studio
 ```
 
-This installs the `chipwhisperer` library from PyPI together with Studio's other dependencies (Starlette, uvicorn, websockets, numpy, matplotlib and a few small ones) and adds the `cw-studio` command. Run `cw-studio --simulate` to try it without hardware.
+This installs the `chipwhisperer` library from PyPI together with Studio's other dependencies (Starlette, uvicorn, websockets, numpy, matplotlib, pywebview on Windows and macOS, and a few small ones) and adds the `cw-studio` and `cw-studio-web` commands. Run `cw-studio --simulate` to try it without hardware.
 
 You can also install straight from the repository: `pip install git+https://github.com/keyuraghao/chipwhisperer-studio`
 
 The USB driver (Windows) and udev rule (Linux) steps above apply to the Python package too.
 
-### Optional native window
+### Window or browser
 
-By default Studio opens in your web browser. To open it in its own desktop window instead, install the `window` extra and start Studio with `--window`:
-
-```bash
-pip install "chipwhisperer-studio[window] @ https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer_studio-0.4.5-py3-none-any.whl"
-cw-studio --window
-```
-
-This uses [pywebview](https://pywebview.flowrl.com/). If pywebview is missing, Studio prints a message and falls back to the browser.
+`cw-studio` opens Studio in its own window; `cw-studio-web` (or `cw-studio --browser`) opens it in your web browser. On Windows and macOS the window comes with the package (it installs [pywebview](https://pywebview.flowrl.com/), which uses Edge WebView2 or WebKit). On Linux it uses your distribution's WebKitGTK through the system Python, so install the packages listed under [Linux](#linux) above if Studio says they are missing.
 
 ## From source
 

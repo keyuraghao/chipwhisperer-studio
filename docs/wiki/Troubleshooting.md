@@ -41,6 +41,16 @@ Another program (a Jupyter notebook, a second Studio) still holds the device. Cl
 
 Studio automatically tries the next 49 ports if 8765 is taken and prints the URL it actually used. To choose a port yourself, pass `--port 9000`. If you want to find the process holding the port: `lsof -i :8765` (macOS, Linux) or `netstat -ano | findstr 8765` (Windows).
 
+### Studio opened in the browser instead of its own window
+
+Studio prints the reason in its console (or in `~/ChipWhispererStudio/studio.log` when there is no console) and uses the browser so you can keep working.
+
+- **Linux:** the window needs WebKitGTK for the system Python. Install `python3-gi` and `gir1.2-webkit2-4.1` (Debian, Ubuntu, Kali, Mint), `python3-gobject webkit2gtk4.1` (Fedora) or `python-gobject webkit2gtk-4.1` (Arch). Over SSH without a display there is no window; use `--no-browser` and open the address from another machine.
+- **Windows:** the window needs Microsoft Edge WebView2, which Windows 10 and 11 include; on a system without it, install the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
+- **Python package on Windows or macOS:** the window needs pywebview, which `pip` installs with Studio; reinstall Studio if it is missing.
+
+You can also choose the browser on purpose with `--browser`, `cw-studio-web` or the ChipWhisperer Studio Web build.
+
 ### The browser did not open
 
 Open the URL printed in the console (by default `http://127.0.0.1:8765/`) manually. On servers without a desktop, use `--no-browser`.

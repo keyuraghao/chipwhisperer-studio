@@ -1,11 +1,33 @@
 import { h, get, post, upload, toast } from './api.js';
 import { SettingsTree } from './settings.js';
+import { createTerminal } from './interfaces.js';
 
 export function initTarget(ctx, el) {
   const meta = ctx.meta;
   // --- programming ---
   const progSel = h('select', { class: 'flex' }, ...Object.entries(meta.programmers).map(([k, v]) => h('option', { value: k }, v.label)));
   const fileIn = h('input', { type: 'file', accept: '.hex,.bin,.elf', class: 'flex' });
+  const progReason = h('div', { class: 'help warn' });
+  // Programmers the connected ChipWhisperer cannot use stay listed but disabled, with the reason (from /api/capabilities via the Interfaces tab).
+  function gateProgrammers(caps) {
+    const p = (caps && caps.programmers) || {};
+    for (const o of progSel.options) {
+      const c = p[o.value];
+      o.disabled = !!(c && !c.available);
+      o.title = o.disabled ? c.reason : '';
+      o.textContent = meta.programmers[o.value].label + (o.disabled ? ' (not available)' : '');
+    }
+    if (progSel.selectedOptions[0] && progSel.selectedOptions[0].disabled) { const first = [...progSel.options].find((o) => !o.disabled); if (first) progSel.value = first.value; }
+    paintProgReason();
+  }
+  function paintProgReason() {
+    const o = progSel.selectedOptions[0];
+    const ent = meta.programmers[progSel.value] || {};
+    fileIn.accept = ent.accept || '.hex,.bin,.elf';
+    progReason.textContent = o && o.disabled ? o.title : (ent.fpga ? 'Loads an FPGA bitstream over the SPI pins (CS on PDID, CRESET/PROG on nRST).' : '');
+  }
+  progSel.addEventListener('change', paintProgReason);
+  ctx.on('caps', gateProgrammers);
   const pathIn = h('input', { class: 'flex mono', placeholder: 'or path on the machine running Studio' });
   const progStatus = h('div', { class: 'help' });
   const btnProg = h('button', { class: 'btn primary', onclick: program }, 'Program target');
@@ -21,22 +43,8 @@ export function initTarget(ctx, el) {
     } catch (e) { progStatus.textContent = e.message; progStatus.className = 'help err'; toast(e.message, 'err', 8000); } finally { btnProg.disabled = false; }
   }
 
-  // --- serial console ---
-  const consoleEl = h('div', { class: 'console' });
-  const lineIn = h('input', { class: 'flex mono', placeholder: 'text to send (Enter)', onkeydown: (e) => { if (e.key === 'Enter') send(); } });
-  const hexChk = h('input', { type: 'checkbox' });
-  const nlChk = h('input', { type: 'checkbox', checked: true });
-  async function send() {
-    if (!lineIn.value) return;
-    try { await post('/api/target/serial/write', { data: lineIn.value, hex: hexChk.checked, newline: nlChk.checked }); lineIn.value = ''; } catch (e) { toast(e.message, 'err'); }
-  }
-  function appendConsole(rec) {
-    const span = h('span', { class: rec.dir }, (rec.dir === 'tx' ? '→ ' : '← ') + (showHex.checked ? rec.hex + ' ' : rec.data.replace(/\n/g, '⏎\n')) + (rec.data.endsWith('\n') || showHex.checked ? '\n' : '\n'));
-    consoleEl.append(span);
-    while (consoleEl.childNodes.length > 500) consoleEl.removeChild(consoleEl.firstChild);
-    consoleEl.scrollTop = consoleEl.scrollHeight;
-  }
-  const showHex = h('input', { type: 'checkbox' });
+  // --- serial console (the same terminal as the Interfaces tab's UART section) ---
+  const terminal = createTerminal(ctx, { id: 'target-term' });
 
   // --- simpleserial ---
   const ssCmd = h('input', { class: 'mono', value: 'p', style: 'width:40px', maxlength: 1 });
@@ -57,7 +65,7 @@ export function initTarget(ctx, el) {
   el.append(
     h('h2', {}, 'Program firmware'),
     h('div', { class: 'card' },
-      h('div', { class: 'row' }, h('label', {}, 'Programmer'), progSel),
+      h('div', { class: 'row' }, h('label', {}, 'Programmer'), progSel), progReason,
       h('div', { class: 'row' }, h('label', {}, 'Hex file'), fileIn),
       h('div', { class: 'row' }, h('label', {}, ''), pathIn),
       h('div', { class: 'row' }, btnProg), progStatus,
@@ -68,17 +76,12 @@ export function initTarget(ctx, el) {
       h('div', { class: 'row' }, h('label', {}, 'Command'), ssCmd, ssData, ssLen, h('button', { class: 'btn sm', onclick: ssSend }, 'Send')),
       ssResp),
     h('h2', {}, 'Serial console'),
-    h('div', { class: 'card' },
-      consoleEl,
-      h('div', { class: 'row', style: 'margin-top:6px' }, lineIn, h('button', { class: 'btn sm', onclick: send }, 'Send')),
-      h('div', { class: 'row' }, h('label', {}, hexChk, ' send hex'), h('label', {}, nlChk, ' newline'), h('label', {}, showHex, ' show hex'),
-        h('button', { class: 'link', onclick: () => { consoleEl.innerHTML = ''; } }, 'clear'))),
+    h('div', { class: 'card' }, terminal.el,
+      h('div', { class: 'help' }, 'Baud, parity, stop bits and the TX/RX pins are set in the ', h('button', { class: 'link', onclick: () => ctx.showTab('interfaces') }, 'Interfaces'), ' tab.')),
     h('h2', {}, 'Target settings'),
     h('div', { class: 'card' }, h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: () => tree.refresh() }, '↻ Refresh')), treeEl),
   );
 
-  ctx.on('serial', appendConsole);
-  get('/api/target/serial').then((recs) => recs.slice(-200).forEach(appendConsole)).catch(() => {});  // traffic from before this page was opened
   ctx.on('target-connected', () => tree.refresh());
   ctx.on('target-disconnected', () => tree.refresh());
   return { tree };

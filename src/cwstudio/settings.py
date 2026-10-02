@@ -33,13 +33,13 @@ KNOWN_CHOICES: Dict[str, List[Any]] = {
     "clock.clkgen_src": ["system", "extclk"],
     "clock.freq_ctr_src": ["clkgen", "extclk"],
     "clock.adc_mul": [1, 2, 3, 4],
-    "trigger.module": ["basic", "SAD", "DECODEIO", "UART", "edge_counter", "ADC", "trace"],
+    "trigger.module": ["basic", "SAD", "DECODEIO", "UART", "edge_counter", "ADC", "trace", "bitbanger"],  # the union of all models; capabilities.gate_settings narrows it to the connected one (Pro: basic, SAD, DECODEIO; Husky: the rest)
     "trigger.triggers": ["tio1", "tio2", "tio3", "tio4", "nrst", "sma", "userio_d0", "userio_d1",
                          "userio_d2", "userio_d3", "userio_d4", "userio_d5", "userio_d6", "userio_d7"],
     "io.tio1": ["serial_rx", "serial_tx", "high_z", "gpio_low", "gpio_high", "gpio_disabled", None],
     "io.tio2": ["serial_rx", "serial_tx", "high_z", "gpio_low", "gpio_high", "gpio_disabled", None],
     "io.tio3": ["serial_rx", "serial_tx", "high_z", "gpio_low", "gpio_high", "gpio_disabled", None],
-    "io.tio4": ["serial_rx", "serial_tx", "high_z", "gpio_low", "gpio_high", "gpio_disabled", None],
+    "io.tio4": ["serial_tx", "high_z", "gpio_low", "gpio_high", "gpio_disabled", None],  # TIO4 cannot receive serial data
     "io.hs2": ["clkgen", "glitch", "disabled", None],
     "io.pdic": ["high_z", "low", "high", "disabled", None, True, False],
     "io.pdid": ["high_z", "low", "high", "disabled", None, True, False],

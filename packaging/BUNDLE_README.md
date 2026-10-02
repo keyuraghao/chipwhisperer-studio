@@ -4,16 +4,16 @@ This folder is a self-contained build of ChipWhisperer Studio, a desktop applica
 
 ## Run
 
-- **Windows:** double-click `ChipWhispererStudio.exe`. Devices need the WinUSB driver; install the NewAE driver package if the scope is not detected (https://chipwhisperer.readthedocs.io/en/latest/windows-install.html).
-- **macOS:** double-click `ChipWhisperer Studio.app` (it opens Studio in Terminal), or run `./chipwhisperer-studio.sh`. Gatekeeper: right-click and choose Open the first time.
-- **Linux:** run `./chipwhisperer-studio.sh`. Install the udev rule once so you can use the device without root; the Connect tab shows the exact command, which uses the bundled `50-newae.rules`. To add Studio with its icon to the applications menu, run `./ChipWhispererStudio --install-desktop` once (`--remove-desktop` takes it out).
+- **Windows:** double-click `ChipWhispererStudio.exe`. Devices need the WinUSB driver; install the NewAE driver package if the scope is not detected (https://chipwhisperer.readthedocs.io/en/latest/windows-install.html). In the window build, use `cw-studio.exe` from a terminal and for AI agents (MCP).
+- **macOS:** double-click `ChipWhisperer Studio.app` (move it to Applications if you like). Gatekeeper: right-click and choose Open the first time.
+- **Linux:** run `./chipwhisperer-studio.sh`. Install the udev rule once so you can use the device without root; the Connect tab shows the exact command, which uses the bundled `50-newae.rules`. To add Studio with its icon to the applications menu, run `./ChipWhispererStudio --install-desktop` once (`--remove-desktop` takes it out). Studio's own window uses WebKitGTK: if it is missing, Studio prints the package to install (for example `sudo apt install python3-gi gir1.2-webkit2-4.1`) and opens in your browser meanwhile.
 
-A console window shows the URL (default http://127.0.0.1:8765/) and your browser opens automatically.
+The ChipWhisperer Studio build opens in its own window; closing the window quits Studio. The ChipWhisperer Studio Web build opens in your web browser and shows its address (default http://127.0.0.1:8765/) in a console window; closing the console quits Studio.
 
 ## Options
 
 ```
-ChipWhispererStudio [--port 8765] [--host 127.0.0.1] [--no-browser] [--simulate] [--data-dir DIR]
+ChipWhispererStudio [--browser | --app-window | --no-browser] [--port 8765] [--host 127.0.0.1] [--simulate] [--data-dir DIR]
 ChipWhispererStudio mcp [--simulate] [--url http://127.0.0.1:8765]
 ```
 

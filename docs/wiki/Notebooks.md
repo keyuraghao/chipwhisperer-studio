@@ -10,7 +10,7 @@ The **Notebook** tab is a Jupyter-style editor built into ChipWhisperer Studio. 
 
 ## Creating and opening notebooks
 
-The **Notebooks** card on the left lists every notebook in Studio's notebooks folder, grouped by sub-folder (click a folder name to expand it). Click a notebook to open it; the last one you opened reopens when you return.
+The **Notebooks** card on the left lists every notebook in Studio's notebooks folder, grouped by sub-folder (click a folder name to expand it). Click a notebook to open it in a new tab (or switch to its tab if it is already open). The notebooks you had open, and how they were arranged, reopen when you return.
 
 | Action | How |
 |--------|-----|
@@ -18,9 +18,25 @@ The **Notebooks** card on the left lists every notebook in Studio's notebooks fo
 | Import an `.ipynb` | **Import** and pick the file. It is copied into the `imported/` folder. |
 | Save | Automatic 2.5 seconds after every change, when a cell finishes, and when you close the page. **Save** or Ctrl+S (Cmd+S on macOS) saves immediately. The toolbar shows *unsaved* or *saved*. |
 | Export | The download button at the right of the toolbar saves the `.ipynb` through your browser, ready to open in Jupyter. |
-| Delete | Hover a notebook in the list and press its bin icon. |
+| Rename | Double-click the notebook's tab and type a new name (a name with `/` moves it into a sub-folder). Its variables are kept. |
+| Delete | Hover a notebook in the list and press its bin icon. An open notebook's tab closes. |
 
 Notebooks are standard Jupyter `.ipynb` files (nbformat 4), so they move freely between Studio and Jupyter.
+
+## Tabs and side by side
+
+Every open notebook gets a tab above the notebook area. A tab shows the notebook's name and a dot: grey while it has unsaved changes, blue while its cells wait in the queue, amber (blinking) while one of its cells runs. Click a tab to show it, drag it along the tab bar to reorder, double-click it to rename, and press its **x** (or middle-click it) to close it.
+
+To see two notebooks at once, split the notebook area into a left and a right pane, each with its own tabs:
+
+| Action | How |
+|--------|-----|
+| Split | Press the split button at the right end of the tab bar (it moves the current notebook into a new pane on the right), or drag a tab onto the right half of the notebook area. You can also drag a notebook from the **Notebooks** list onto a pane. |
+| Move a notebook to the other pane | Drag its tab onto the other pane (onto its tab bar to choose the position), or press the arrows button at the right end of the tab bar. |
+| Resize | Drag the bar between the panes; double-click it to make both panes equal. |
+| Unsplit | Close or move away the last tab of a pane; the other pane takes the whole area. |
+
+The pane you last clicked or typed in is the *focused* pane; its current tab is underlined in green. Notebooks you open from the list open there, the **Variables** card shows that notebook's variables, and Ctrl+S saves it. Keyboard shortcuts in a cell always act on the notebook the cell belongs to. In a narrow window (below about 900 pixels) the panes are stacked, one above the other, and narrow panes show their toolbar buttons as icons only (hover a button for its name).
 
 ## Cells
 
@@ -41,7 +57,7 @@ Hover a cell (or select it) to see its tools on the right: run, move up, move do
 | Enter | New line, keeping the indentation; one more level after a line ending in `:`. |
 | Tab | Insert four spaces. |
 | Esc | Leave the editor (and format a text cell). |
-| Ctrl+S (Cmd+S) | Save the notebook. |
+| Ctrl+S (Cmd+S) | Save the notebook in the focused pane. |
 
 ## Running code
 
@@ -49,14 +65,21 @@ Hover a cell (or select it) to see its tools on the right: run, move up, move do
 |----------------|--------------|
 | **Run** | Runs the selected cell and moves on (like Shift+Enter). |
 | **Run all** | Runs every code cell from the top, in order. If a cell fails, the remaining queued cells are cancelled, as in Jupyter. |
-| **Stop** | Interrupts the running cell (it ends with `KeyboardInterrupt`) and clears the queue. |
-| **Restart** | After confirmation, clears all notebook variables. Studio stays connected to the hardware. |
+| **Stop** | Interrupts this notebook's running cell (it ends with `KeyboardInterrupt`) and clears its queued cells. Other notebooks keep running. |
+| **Restart** | After confirmation, clears this notebook's variables. Other notebooks are not affected and Studio stays connected to the hardware. |
+| Power button | **Shut down kernel**: after confirmation, frees this notebook's variables and memory. A new, empty kernel starts when you run a cell. |
 | **Clear outputs** | Removes all outputs and execution counts from the notebook. |
 | **View N traces** | Appears when cells captured traces; jumps to the Capture tab. |
 
-The badge on the right shows **Kernel idle**, or **Running** with the number of queued cells.
+The badge on the right shows **Kernel idle**, **Running** (with the number of this notebook's queued cells), **Queued** when its cells wait for another notebook's cell, or **No kernel** before the notebook has run anything.
 
-All notebooks share one Python session (the *kernel*): a variable defined in one notebook is visible in another, and cells run one at a time. Each cell runs with the notebook's own folder as the working directory, so relative paths work as they do in Jupyter.
+### One kernel per notebook
+
+As in Jupyter, every notebook has its own Python session (its *kernel*): a variable defined in one notebook is not visible in another, each notebook counts its own executions (`[1]`, `[2]`, ...), and **Stop**, **Restart** and the **Variables** card apply to one notebook only. A notebook's kernel starts when it first runs a cell and moves with the notebook when you rename it.
+
+All kernels share Studio's hardware connection, trace store and `studio` helper, so two notebooks talk to the same scope and target. Their cells go through one queue and run one at a time, in the order you ran them, on Studio's hardware thread: while a cell of one notebook runs, cells of the others wait (their badge says **Queued**). Each cell runs with its notebook's folder as the working directory, so relative paths work as they do in Jupyter.
+
+When you close a notebook in every Studio window, its kernel is shut down about 20 seconds later (long enough to survive reloading the page) and its memory is freed. Kernels started from the [HTTP API](HTTP-API) or [MCP](MCP-Server) for notebooks that are not open stay until they are shut down.
 
 ### Outputs
 
@@ -71,13 +94,13 @@ All notebooks share one Python session (the *kernel*): a variable defined in one
 
 ### Variables
 
-The **Variables** card lists the variables currently defined: name, type (with the shape of arrays) and a short value. It refreshes after every cell; press **Refresh** to update it by hand.
+The **Variables** card lists the variables defined in the focused notebook (its name is shown next to the title): name, type (with the shape of arrays) and a short value. It refreshes after every cell of that notebook and when you focus another notebook; press **Refresh** to update it by hand.
 
 ## Using the hardware from a notebook
 
 ![How notebook cells share Studio's hardware](images/notebook-kernel.svg)
 
-*Notebook cells run on Studio's hardware thread and use the same scope and target as the rest of the app.*
+*Notebook cells run on Studio's hardware thread and use the same scope and target as the rest of the app; every notebook has its own namespace.*
 
 Cells run on the same thread that talks to the ChipWhisperer, in turn with the rest of Studio, so the USB device is never used twice at once. Inside a notebook, `import chipwhisperer as cw` gives you the normal library with a few functions adapted to Studio:
 
@@ -189,10 +212,10 @@ What happens: `%run "../../Setup_Scripts/Setup_Generic.ipynb"` connects through 
 
 - **holoviews and bokeh** are not included. Tutorial cells that only use `cw.plot()` work through Studio's stand-in, but cells that import holoviews or bokeh directly fail with an import error; use matplotlib instead.
 - **Editing** is a plain text editor: no syntax colouring and no autocomplete.
-- **One cell at a time:** a running cell holds the hardware thread; other hardware actions in Studio wait until it finishes.
+- **One cell at a time:** a running cell holds the hardware thread; other hardware actions in Studio, and cells of other notebooks, wait until it finishes.
 - **`input()`** is not supported; set values in code instead.
 - **Stop** raises `KeyboardInterrupt` in the running code. If the code is waiting inside a USB call, the interrupt takes effect when that call returns.
-- **One shared kernel** for all notebooks; Restart clears everything.
+- **Two panes at most** side by side; use tabs for more notebooks.
 - `scope.dis()` in a notebook disconnects Studio's scope too (it is the same device); reconnect on the Connect tab.
 
 ## Where notebooks are stored
@@ -212,10 +235,12 @@ The data folder is `~/ChipWhispererStudio` unless you start Studio with `--data-
 |--------|----------|----------|
 | List notebooks and tutorial status | `GET /api/notebooks` | `notebook_list` |
 | Read / write a notebook | `GET` / `PUT /api/notebooks/file` | `notebook_read` / `notebook_write` |
-| Run code and wait for the output | `POST /api/kernel/run` with `{"code": "...", "path": "..."}` | `notebook_run_code` |
-| Run a whole notebook and save its outputs | `POST /api/notebooks/run` with `{"path": "..."}` | `notebook_run` |
-| Queue cells (as the UI does) | `POST /api/kernel/execute` | |
-| Variables, interrupt, restart | `GET /api/kernel/variables`, `POST /api/kernel/interrupt`, `POST /api/kernel/restart` | `kernel_variables`, `kernel_interrupt`, `kernel_restart` |
+| Run code and wait for the output | `POST /api/kernel/run` with `{"code": "...", "kernel": "lab/a.ipynb"}` | `notebook_run_code` with `notebook_path` |
+| Run a whole notebook (in its own kernel) and save its outputs | `POST /api/notebooks/run` with `{"path": "..."}` | `notebook_run` |
+| Queue cells (as the UI does) | `POST /api/kernel/execute` with `kernel` | |
+| Variables, interrupt, restart | `GET /api/kernel/variables`, `POST /api/kernel/interrupt`, `POST /api/kernel/restart`, each with an optional `kernel` | `kernel_variables`, `kernel_interrupt`, `kernel_restart`, each with an optional `notebook_path` |
+| List and shut down kernels | `GET /api/kernels`, `POST /api/kernels/shutdown` | `kernel_list`, `kernel_shutdown` |
+| Rename a notebook (its kernel follows) | `POST /api/notebooks/rename` | |
 | Download the tutorials | `POST /api/notebooks/tutorials/fetch` | `tutorials_fetch` |
 
-See [HTTP API](HTTP-API) and [MCP Server](MCP-Server).
+A notebook's kernel id is its path relative to the notebooks folder. Without a kernel id, the API and MCP tools use a shared **default** kernel that no notebook tab uses, as before. See [HTTP API](HTTP-API) and [MCP Server](MCP-Server).

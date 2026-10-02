@@ -15,7 +15,7 @@ from cwstudio.analysis import CPAAttack, MODELS
 from cwstudio.capture import CaptureJob
 from cwstudio.events import EventBus, trace_event
 from cwstudio.firmware import FirmwareManager
-from cwstudio.notebook import Kernel, NotebookStore, Tutorials
+from cwstudio.notebook import KernelManager, NotebookStore, Tutorials
 from cwstudio.tools import NotesStore
 from cwstudio.glitch import GlitchJob
 from cwstudio.toolchains import ToolchainManager
@@ -82,13 +82,18 @@ class Session:
         self.notes = NotesStore(os.path.join(self.data_dir, "notes"))
         self.calc_vars: Dict[str, Any] = {}
         self.worker.start()
-        self.kernel = Kernel(self, self.notebooks.root)
+        self.kernels = KernelManager(self, self.notebooks.root)  # one kernel per notebook, all cells on the hardware thread in one queue
+        self.kernel = self.kernels.default  # the shared default kernel (API and MCP calls without a notebook)
         self.worker.add_periodic("serial-poll", self._poll_serial, 0.1, only_idle=True)
         self.worker.add_periodic("status", self._push_status, 2.0, only_idle=False)
 
     # --- lifecycle --------------------------------------------------------
     def close(self):
         try:
+            ifc = getattr(self, "interfaces", None)
+            if ifc is not None:
+                ifc.openocd.close()  # never leave an OpenOCD server running after Studio exits
+            self.kernels.close()
             self.worker.stop_long_job()
             if self.cpa:
                 self.cpa.stop()
@@ -146,11 +151,11 @@ class Session:
 
     # --- scope ---------------------------------------------------------------
     def connect_scope(self, kind: str = "auto", sn: Optional[str] = None, force: bool = False,
-                      default_setup: bool = True) -> Dict[str, Any]:
+                      default_setup: bool = True, sim_model: Optional[str] = None) -> Dict[str, Any]:
         def _do():
             if self.scope is not None:
                 self._disconnect_all()
-            self.scope = hardware.connect_scope(kind, sn=sn, force=force)
+            self.scope = hardware.connect_scope(kind, sn=sn, force=force, sim_model=sim_model)
             self.scope_kind = kind
             if default_setup:
                 try:
@@ -172,11 +177,14 @@ class Session:
     def scope_settings(self) -> List[Dict[str, Any]]:
         if self.scope is None:
             return []
-        return self.worker.call(cwsettings.describe, self.scope)
+        from cwstudio.capabilities import gate_settings
+        return self.worker.call(lambda: gate_settings(cwsettings.describe(self.scope), self.scope))  # per-model choices: unsupported values are listed but disabled with the reason
 
     def set_scope_setting(self, path: str, value: Any) -> Any:
         if self.scope is None:
             raise RuntimeError("scope not connected")
+        from cwstudio.capabilities import check_setting
+        self.worker.call(check_setting, self.scope, path, value)
         v = self.worker.call(cwsettings.set_value, self.scope, path, value)
         self.bus.publish("setting", {"target": "scope", "path": path, "value": v})
         return v
@@ -266,15 +274,16 @@ class Session:
         res.update({"path": path, "programmer": programmer})
         return res
 
-    def run_notebook(self, path: str, timeout: float = 1800, stop_on_error: bool = True) -> Dict[str, Any]:
-        """Run every code cell of a stored notebook in order, save the outputs into it, and summarise."""
+    def run_notebook(self, path: str, timeout: float = 1800, stop_on_error: bool = True, kernel: Optional[str] = None) -> Dict[str, Any]:
+        """Run every code cell of a stored notebook in order, save the outputs into it, and summarise. Runs in the notebook's own kernel (the one its tab in the Notebook tab uses) unless ``kernel`` names another one."""
         nb = self.notebooks.load(path)
+        kern = self.kernels.get(kernel or path)
         ran, failed = 0, None
         end = time.time() + timeout
         for c in nb["cells"]:
             if c["cell_type"] != "code" or not c["source"].strip():
                 continue
-            r = self.kernel.execute_wait(c["source"], path, timeout=max(5.0, end - time.time()))
+            r = kern.execute_wait(c["source"], path, timeout=max(5.0, end - time.time()))
             c["outputs"], c["execution_count"] = r["outputs"], r["execution_count"]
             ran += 1
             if not r["ok"]:
@@ -282,7 +291,7 @@ class Session:
                 if stop_on_error:
                     break
         self.notebooks.save(path, nb)
-        return {"path": path, "cells_run": ran, "failed_cell": failed, "ok": failed is None, "notebook": nb}
+        return {"path": path, "kernel": kern.id, "cells_run": ran, "failed_cell": failed, "ok": failed is None, "notebook": nb}
 
     def save_upload(self, filename: str, content: bytes) -> str:
         d = os.path.join(self.data_dir, "firmware", "uploads")
@@ -294,11 +303,17 @@ class Session:
         return path
 
     # --- serial console -----------------------------------------------------
-    def serial_write(self, data: str, hex_mode: bool = False, newline: bool = True) -> int:
+    def serial_write(self, data: str, hex_mode: bool = False, newline: bool = True, eol: Optional[str] = None) -> int:
+        """Write to the target UART. ``eol`` (none, lf, cr, crlf) picks the line ending appended to text; without it ``newline`` adds a line feed."""
         if self.target is None:
             raise RuntimeError("target not connected")
         payload = bytes.fromhex(data.replace(" ", "")) if hex_mode else data.encode()
-        if newline and not hex_mode and not payload.endswith(b"\n"):
+        if eol is not None and not hex_mode:
+            ends = {"none": b"", "lf": b"\n", "cr": b"\r", "crlf": b"\r\n"}
+            if eol not in ends:
+                raise ValueError("eol must be none, lf, cr or crlf")
+            payload += ends[eol]
+        elif newline and not hex_mode and not payload.endswith(b"\n"):
             payload += b"\n"
 
         def _do():

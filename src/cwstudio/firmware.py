@@ -42,7 +42,7 @@ CLANG_TRIPLE = {"arm": "arm-none-eabi", "avr": "avr", "riscv": "riscv32-unknown-
 COMPAT_CFLAGS = ["-Wno-error=implicit-function-declaration", "-Wno-error=incompatible-pointer-types",
                  "-Wno-error=int-conversion", "-fcommon"]
 CRYPTO_TARGETS = ["TINYAES128C", "AVRCRYPTOLIB", "MBEDTLS", "AESSIMPLE", "MASKEDAES", "HWAES", "MICROECC", "NONE"]
-SS_VERSIONS = ["SS_VER_2_1", "SS_VER_1_1", "SS_VER_1_0", "SS_VER_2_0"]
+SS_VERSIONS = ["SS_VER_2_1", "SS_VER_1_1", "SS_VER_1_0"]  # SS_VER_2_0 is deprecated and stops the build with an #error in simpleserial.c
 SOURCE_MARKER = ".cwstudio-source.json"
 TARGET_RE = re.compile(r"^\s*TARGET\s*[:?]?=\s*(\S+)", re.M)
 
@@ -438,6 +438,8 @@ class FirmwareManager:
         if params.get("crypto_target"):
             make_vars["CRYPTO_TARGET"] = params["crypto_target"]
         if params.get("ss_ver"):
+            if params["ss_ver"] not in SS_VERSIONS:
+                raise ValueError(f"SimpleSerial version {params['ss_ver']} cannot be built; use one of {', '.join(SS_VERSIONS)} (SS_VER_2_0 is deprecated, use SS_VER_2_1)")
             make_vars["SS_VER"] = params["ss_ver"]
         for var, t in (("OBJCOPY", "objcopy"), ("OBJDUMP", "objdump"), ("SIZE", "size"), ("NM", "nm")):
             make_vars[var] = tool(t)

@@ -13,8 +13,10 @@ from cwstudio.web import App, FileResponse, HTTPException, Request, Response, Up
 
 from cwstudio import __version__, hardware
 from cwstudio.analysis import MODELS
+from cwstudio.capabilities import LABELS, SIM_MODELS
 from cwstudio import tools
 from cwstudio.firmware import CRYPTO_TARGETS, SS_VERSIONS
+from cwstudio.interfaces import register_routes as register_interface_routes
 from cwstudio.session import Session
 
 log = logging.getLogger("cwstudio.app")
@@ -32,6 +34,7 @@ def create_app(session: Session) -> App:
 
     app = App(title="ChipWhisperer Studio", version=__version__, docs_url="/api/docs", lifespan=lifespan)
     app.state.session = session
+    register_interface_routes(app, session)  # /api/interfaces/*: UART, SimpleSerial, SPI, GPIO, triggers, bit-banger, 1-Wire, OpenOCD
 
     async def run(fn, *args, **kwargs):
         """Run a blocking session method off the event loop."""
@@ -68,7 +71,14 @@ def create_app(session: Session) -> App:
             "host": session.toolchains.host,
             "crypto_targets": CRYPTO_TARGETS,
             "ss_versions": SS_VERSIONS,
+            "sim_models": {k: LABELS[k] for k in SIM_MODELS},
         }
+
+    @app.get("/api/capabilities")
+    async def capabilities():
+        """What the connected scope supports: protocols, triggers, programmers, debug and logic-analyser sources, each with the reason when unavailable."""
+        from cwstudio.capabilities import capabilities as caps
+        return caps(session.scope, session.target)
 
     @app.get("/api/devices")
     async def devices():
@@ -94,7 +104,7 @@ def create_app(session: Session) -> App:
         p = await body(req)
         try:
             return await run(session.connect_scope, p.get("kind", "auto"), p.get("sn") or None,
-                             bool(p.get("force", False)), bool(p.get("default_setup", True)))
+                             bool(p.get("force", False)), bool(p.get("default_setup", True)), p.get("sim_model") or None)
         except Exception as e:  # noqa: BLE001
             err(e)
 
@@ -181,7 +191,7 @@ def create_app(session: Session) -> App:
         p = await body(req)
         try:
             n = await run(session.serial_write, p.get("data", ""), bool(p.get("hex", False)),
-                          bool(p.get("newline", True)))
+                          bool(p.get("newline", True)), p.get("eol"))
             return {"written": n}
         except Exception as e:  # noqa: BLE001
             err(e)
@@ -522,9 +532,24 @@ def create_app(session: Session) -> App:
     async def notebook_delete(path: str):
         try:
             await run(session.notebooks.delete, path)
+            await run(session.kernels.shutdown, path)
             return {"ok": True}
         except Exception as e:  # noqa: BLE001
             err(e)
+
+    @app.post("/api/notebooks/rename")
+    async def notebook_rename(req: Request):
+        """Body: path, to. Move a notebook; its kernel (variables, execution count) moves with it."""
+        p = await body(req)
+        try:
+            r = await run(session.notebooks.rename, p["path"], p["to"])
+            if r["path"] != r["old"]:
+                if session.kernels.find(r["path"]) is not None:
+                    await run(session.kernels.shutdown, r["path"])  # a stale kernel of a notebook that no longer exists
+                session.kernels.rename(r["old"], r["path"])  # also tells every window (nb event "renamed")
+            return r
+        except Exception as e:  # noqa: BLE001
+            err(e, 409 if isinstance(e, FileExistsError) else 404 if isinstance(e, FileNotFoundError) else 400)
 
     @app.post("/api/notebooks/new")
     async def notebook_new(req: Request):
@@ -566,13 +591,17 @@ def create_app(session: Session) -> App:
     async def tutorials_fetch():
         return await run(session.tutorials.fetch)
 
+    # Kernel routes take an optional kernel id (query or body field "kernel"): a notebook's path for that notebook's own kernel, a temporary id, or nothing for the shared default kernel.
+    def kernel_id(req: Request, p: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        return (p or {}).get("kernel") or req.query_params.get("kernel") or None
+
     @app.get("/api/kernel")
-    async def kernel_status():
-        return session.kernel.status()
+    async def kernel_status(req: Request):
+        return session.kernels.status(kernel_id(req))
 
     @app.get("/api/kernel/variables")
-    async def kernel_variables():
-        return session.kernel.variables()
+    async def kernel_variables(req: Request):
+        return session.kernels.variables(kernel_id(req))
 
     @app.post("/api/kernel/execute")
     async def kernel_execute(req: Request):
@@ -580,14 +609,14 @@ def create_app(session: Session) -> App:
         cells = p.get("cells") or ([{"id": p.get("id"), "code": p.get("code", "")}] if "code" in p else [])
         if not cells:
             err(ValueError("nothing to run"))
-        return session.kernel.execute(cells, p.get("path"))
+        return session.kernels.get(kernel_id(req, p)).execute(cells, p.get("path"))
 
     @app.post("/api/kernel/run")
     async def kernel_run(req: Request):
         """Run one cell and wait for its outputs (for scripts and the MCP server)."""
         p = await body(req)
         try:
-            return await run(session.kernel.execute_wait, p.get("code", ""), p.get("path"), float(p.get("timeout") or 600))
+            return await run(session.kernels.get(kernel_id(req, p)).execute_wait, p.get("code", ""), p.get("path"), float(p.get("timeout") or 600))
         except Exception as e:  # noqa: BLE001
             err(e)
 
@@ -595,17 +624,42 @@ def create_app(session: Session) -> App:
     async def notebook_run(req: Request):
         p = await body(req)
         try:
-            return await run(session.run_notebook, p["path"], float(p.get("timeout") or 1800), bool(p.get("stop_on_error", True)))
+            return await run(session.run_notebook, p["path"], float(p.get("timeout") or 1800), bool(p.get("stop_on_error", True)), kernel_id(req, p))
         except Exception as e:  # noqa: BLE001
             err(e)
 
     @app.post("/api/kernel/interrupt")
-    async def kernel_interrupt():
-        return session.kernel.interrupt()
+    async def kernel_interrupt(req: Request):
+        return session.kernels.interrupt(kernel_id(req, await body(req)))
 
     @app.post("/api/kernel/restart")
-    async def kernel_restart():
-        return await run(session.kernel.restart)
+    async def kernel_restart(req: Request):
+        return await run(session.kernels.restart, kernel_id(req, await body(req)))
+
+    @app.get("/api/kernels")
+    async def kernels_list():
+        return await run(session.kernels.list)
+
+    @app.post("/api/kernels/shutdown")
+    async def kernel_shutdown(req: Request):
+        return await run(session.kernels.shutdown, kernel_id(req, await body(req)))
+
+    @app.post("/api/kernels/rename")
+    async def kernel_rename(req: Request):
+        p = await body(req)
+        try:
+            return session.kernels.rename(kernel_id(req, p), p.get("to"))
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/kernels/attach")
+    async def kernels_attach(req: Request):
+        """A window reports the notebooks it has open (its whole list each time, [] when it closes); kernels no window holds are shut down after a short grace period."""
+        p = await body(req)
+        try:
+            return session.kernels.attach(str(p.get("client") or ""), list(p.get("kernels") or []))
+        except Exception as e:  # noqa: BLE001
+            err(e)
 
     # ----- notes and calculator -----------------------------------------------------------
     @app.get("/api/notes")

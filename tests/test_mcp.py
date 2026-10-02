@@ -70,6 +70,16 @@ async def _session(tmp_path):
             _result(await call("notebook_write", path="agent/demo.ipynb", cells=[{"type": "markdown", "source": "# Demo"}, {"type": "code", "source": "print('hi from agent')"}]))
             ran = _result(await call("notebook_run", path="agent/demo.ipynb"))
             assert ran["ok"] and ran["cells"][0]["text"] == "hi from agent\n", ran
+            # each notebook has its own kernel; without notebook_path the tools use the shared default kernel
+            assert _result(await call("notebook_run_code", code="only_here = 7", notebook_path="agent/demo.ipynb"))["kernel"] == "agent/demo.ipynb"
+            assert [v["name"] for v in _result(await call("kernel_variables", notebook_path="agent/demo.ipynb"))] == ["only_here"]
+            assert "only_here" not in {v["name"] for v in _result(await call("kernel_variables"))}
+            assert "agent/demo.ipynb" in {k["kernel"] for k in _result(await call("kernel_list"))}
+            assert _result(await call("kernel_interrupt", notebook_path="agent/demo.ipynb"))["kernel"] == "agent/demo.ipynb"
+            assert _result(await call("kernel_restart", notebook_path="agent/demo.ipynb"))["execution_count"] == 0
+            assert _result(await call("kernel_variables", notebook_path="agent/demo.ipynb")) == []
+            assert _result(await call("kernel_shutdown", notebook_path="agent/demo.ipynb"))["shutdown"]
+            assert _result(await call("kernel_variables")), "the default kernel keeps s2 from the first notebook_run_code"
             prompts = {p.name for p in (await s.list_prompts()).prompts}
             assert {"cpa_attack", "glitch_search"} <= prompts
             status = await s.read_resource("studio://status")
@@ -198,6 +208,11 @@ def test_mcp_stdio_raw(tmp_path):
         assert not r["isError"], r
         r = ask(4, "tools/call", {"name": "notebook_run_code", "arguments": {"code": "print('noise on stdout')\n1 + 1"}})["result"]
         assert not r["isError"] and "noise on stdout" in r["structuredContent"]["result"]["text"]
+        r = ask(11, "tools/call", {"name": "notebook_run_code", "arguments": {"code": "mine = 1", "notebook_path": "lab/a.ipynb"}})["result"]
+        assert not r["isError"] and r["structuredContent"]["result"]["kernel"] == "lab/a.ipynb", r
+        names = lambda res: [v["name"] for v in res["structuredContent"]["result"]]  # noqa: E731
+        assert names(ask(12, "tools/call", {"name": "kernel_variables", "arguments": {"notebook_path": "lab/a.ipynb"}})["result"]) == ["mine"]
+        assert "mine" not in names(ask(13, "tools/call", {"name": "kernel_variables", "arguments": {}})["result"])
         # a long call must not delay others: during a continuous capture, twelve 3 s job waits, then a validation error and ping answer at once
         assert not ask(8, "tools/call", {"name": "target_connect", "arguments": {"kind": "sim"}})["result"]["isError"]
         assert not ask(9, "tools/call", {"name": "capture_start", "arguments": {"count": 0, "wait": False}})["result"]["isError"]

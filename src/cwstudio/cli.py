@@ -57,8 +57,9 @@ def desktop_entry(install: bool = True) -> int:
         launcher = os.path.join(folder, "chipwhisperer-studio.sh")
         cmd = [launcher if os.path.exists(launcher) else sys.executable]
     else:
-        exe = shutil.which("cw-studio")
-        cmd = [exe] if exe else [sys.executable, "-m", "cwstudio"]
+        web = default_mode() == "browser"
+        exe = shutil.which("cw-studio-web" if web else "cw-studio")
+        cmd = [exe] if exe else [sys.executable, "-m", "cwstudio"] + (["--browser"] if web else [])
     os.makedirs(os.path.dirname(desktop), exist_ok=True)
     os.makedirs(os.path.dirname(icon), exist_ok=True)
     shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icon.png"), icon)
@@ -68,7 +69,7 @@ def desktop_entry(install: bool = True) -> int:
     with open(desktop, "w", encoding="utf-8") as f:
         f.write("[Desktop Entry]\nType=Application\nName=ChipWhisperer Studio\nGenericName=Side-channel analysis\n"
                 "Comment=Capture, analyse and glitch with ChipWhisperer hardware\n"
-                f"Exec={' '.join(quote(a) for a in cmd)}\nIcon={DESKTOP_ID}\nTerminal=true\n"
+                f"Exec={' '.join(quote(a) for a in cmd)}\nIcon={DESKTOP_ID}\nTerminal={'true' if default_mode() == 'browser' else 'false'}\n"
                 "Categories=Development;Electronics;\nKeywords=ChipWhisperer;side-channel;CPA;glitch;power analysis;\n")
     os.chmod(desktop, 0o755)
     if shutil.which("update-desktop-database"):
@@ -87,16 +88,21 @@ def main(argv=None):
     if argv[:1] == ["--ccwrap"]:
         from cwstudio.ccwrap import main as ccwrap_main
         return ccwrap_main(argv[1:])
-    ap = argparse.ArgumentParser(prog="cw-studio", description="ChipWhisperer Studio", epilog="Run 'cw-studio mcp --help' for the Model Context Protocol server. On Linux, 'cw-studio --install-desktop' adds Studio with its icon to the applications menu ('--remove-desktop' takes it out again).")
+    ap = argparse.ArgumentParser(prog="cw-studio", description="ChipWhisperer Studio: opens in its own window. Use --browser to use your web browser instead, or --no-browser to run only the server (remote use, scripts).", epilog="Run 'cw-studio mcp --help' for the Model Context Protocol server. On Linux, 'cw-studio --install-desktop' adds Studio with its icon to the applications menu ('--remove-desktop' takes it out again).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address (use 0.0.0.0 for remote access)")
     ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument("--no-browser", action="store_true", help="do not open a browser window")
-    ap.add_argument("--window", action="store_true", help="open in a native window (needs pywebview)")
+    ap.add_argument("--browser", action="store_true", help="open the UI in your web browser instead of Studio's own window")
+    ap.add_argument("--no-browser", action="store_true", help="run only the server: open no window and no browser")
+    ap.add_argument("--window", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so older shortcuts still work
     ap.add_argument("--simulate", action="store_true", help="pre-select the simulator on the Connect page")
     ap.add_argument("--data-dir", default=None, help="folder for exports/firmware uploads")
     ap.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    ap.add_argument("--app-window", dest="window_mode", action="store_true", help="open Studio's own window (the default unless this is the Web build)")
     args = ap.parse_args(argv)
+    default = default_mode()
+    mode = "headless" if args.no_browser else "browser" if args.browser else "window" if (args.window or args.window_mode) else default
 
+    _ensure_streams()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     for noisy in ("uvicorn.access",):
@@ -114,31 +120,85 @@ def main(argv=None):
     if args.simulate:
         url += "?simulate=1"
 
-    def opener():
-        if _wait_ready(url_host, port):
-            print(f"ChipWhisperer Studio running at {url}", flush=True)
-            if args.window:
-                try:
-                    import webview  # type: ignore
-                    webview.create_window("ChipWhisperer Studio", url, width=1500, height=950)
-                    webview.start()
-                    server.should_exit = True
-                    return
-                except ImportError:
-                    print("pywebview not installed; falling back to the browser", flush=True)
-            if not args.no_browser:
-                webbrowser.open(url)
-
     config = uvicorn.Config(app, host=args.host, port=port, log_level=args.log_level, ws_max_size=64 * 1024 * 1024,
                             timeout_graceful_shutdown=3)
     server = uvicorn.Server(config)
     app.state.server = server
-    threading.Thread(target=opener, daemon=True).start()
+
+    if mode != "window":
+        def opener():
+            if _wait_ready(url_host, port):
+                print(f"ChipWhisperer Studio running at {url}", flush=True)
+                if mode == "browser":
+                    webbrowser.open(url)
+        threading.Thread(target=opener, daemon=True).start()
+        try:
+            server.run()
+        except KeyboardInterrupt:
+            pass
+        return 0
+
+    # Own window: the server runs in the background and the window owns the main thread (macOS requires that); closing the window quits Studio.
+    thread = threading.Thread(target=server.run, name="studio-server", daemon=True)
+    thread.start()
+    if not _wait_ready(url_host, port):
+        print("ChipWhisperer Studio did not start", file=sys.stderr, flush=True)
+        return 1
+    print(f"ChipWhisperer Studio running at {url}", flush=True)
+    from cwstudio import window
     try:
-        server.run()
+        window.open_window(url)
+    except window.WindowUnavailable as e:
+        print(f"Studio cannot open its own window: {e}", flush=True)
+        print("Opening it in your web browser instead. Close this console window or press Ctrl+C to quit.", flush=True)
+        webbrowser.open(url)
+        try:
+            while thread.is_alive():
+                thread.join(0.5)
+        except KeyboardInterrupt:
+            pass
     except KeyboardInterrupt:
         pass
+    server.should_exit = True
+    thread.join(10)
     return 0
+
+
+def default_mode() -> str:
+    """'window' or 'browser': the Web build (bundle variant file, or the cw-studio-web command) opens the browser by default."""
+    if os.environ.get("CWSTUDIO_DEFAULT_UI") in ("window", "browser"):
+        return os.environ["CWSTUDIO_DEFAULT_UI"]
+    if getattr(sys, "frozen", False):
+        marker = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)), "cwstudio_variant.txt")
+        try:
+            with open(marker, encoding="utf-8") as f:
+                if f.read().strip() == "web":
+                    return "browser"
+        except OSError:
+            pass
+    return "window"
+
+
+def main_web(argv=None):
+    """Entry point of cw-studio-web: the same Studio, opening in the web browser by default."""
+    os.environ.setdefault("CWSTUDIO_DEFAULT_UI", "browser")
+    return main(argv)
+
+
+def _ensure_streams() -> None:
+    """Without a console (the windowed Windows executable, pythonw) sys.stdout and sys.stderr are None; send output to a log file so logging and uvicorn work and errors are kept."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    folder = os.path.join(os.path.expanduser("~"), "ChipWhispererStudio")
+    try:
+        os.makedirs(folder, exist_ok=True)
+        f = open(os.path.join(folder, "studio.log"), "a", encoding="utf-8", buffering=1)
+    except OSError:
+        f = open(os.devnull, "w")
+    if sys.stdout is None:
+        sys.stdout = f
+    if sys.stderr is None:
+        sys.stderr = f
 
 
 if __name__ == "__main__":

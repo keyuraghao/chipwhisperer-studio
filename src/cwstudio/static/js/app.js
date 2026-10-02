@@ -10,6 +10,7 @@ import { initHelp } from './help.js';
 import { initFirmware } from './firmware.js';
 import { initNotebook } from './notebook.js';
 import { initNotes, initCalc, initSelectionStats } from './tools.js';
+import { initInterfaces } from './interfaces.js';
 
 const ctx = new Emitter();
 ctx.status = null;
@@ -20,6 +21,7 @@ const PANELS = {
   connect: ['Connect', 'Pick a ChipWhisperer (or the simulator) and the target protocol.'],
   scope: ['Scope', 'Every setting of the connected scope, read back from the hardware.'],
   target: ['Target', 'Program firmware and talk to the target over serial or SimpleSerial.'],
+  interfaces: ['Interfaces', 'Protocols the connected hardware supports; the rest are shown disabled with the reason.'],
   firmware: ['Firmware', 'Build ChipWhisperer firmware with GCC or clang, no toolchain setup needed.'],
   capture: ['Capture', 'Record power traces while the waveform updates live.'],
   analysis: ['Analysis', 'Recover the AES key with correlation power analysis.'],
@@ -171,6 +173,7 @@ async function boot() {
   initConnect(ctx, document.getElementById('panel-connect'));
   ctx.scopeTree = initScope(document.getElementById('panel-scope'));
   ctx.target = initTarget(ctx, document.getElementById('panel-target'));
+  ctx.interfaces = initInterfaces(ctx, document.getElementById('panel-interfaces'));
   ctx.firmware = initFirmware(ctx, document.getElementById('panel-firmware'));
   ctx.capture = initCapture(ctx, document.getElementById('panel-capture'));
   initAnalysis(ctx, document.getElementById('panel-analysis'));
@@ -214,7 +217,7 @@ async function boot() {
   sock.on('cpa', (ev) => ctx.emit('cpa', ev));
   sock.on('glitch', (ev) => { ctx.emit('glitch', ev); if (ev.state === 'running') ensureRunning(); else ctx.refreshStatus(); });
   sock.on('glitch_result', (ev) => ctx.emit('glitch_result', ev));
-  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials']) sock.on(k, (ev) => ctx.emit(k, ev));
+  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials', 'openocd', 'spi']) sock.on(k, (ev) => ctx.emit(k, ev));
 
   // Restore last tab; fall back to Connect.
   let tab = 'connect';
