@@ -76,6 +76,10 @@ export function initAnalysis(ctx, el) {
       if (overlayChk.checked) ctx.wave.setCorr(samples, header.offset);
     } catch (e) { /* ignore */ }
   }
+  // The plots may be drawn while the tab is hidden (results arriving over the WebSocket) or before the window is resized: follow the width of their box so they never stick out of the sidebar.
+  const fit = (plot, box, hgt) => { if (plot && box.clientWidth > 0 && plot.width !== box.clientWidth) plot.setSize({ width: box.clientWidth, height: box.clientHeight || hgt }); };
+  const ro = new ResizeObserver(() => { fit(convPlot, conv, 160); fit(corrPlot, corrPlotEl, 140); });
+  ro.observe(conv); ro.observe(corrPlotEl);
   overlayChk.addEventListener('change', () => { if (!overlayChk.checked) ctx.wave.setCorr(null); else loadCorr(); });
 
   el.append(

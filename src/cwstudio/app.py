@@ -520,17 +520,21 @@ def create_app(session: Session) -> App:
     @app.get("/api/notebooks/file")
     async def notebook_get(path: str):
         try:
-            return await run(session.notebooks.load, path)
+            nb = await run(session.notebooks.load, path)
+            nb["mtime"] = session.notebooks.mtime(path)  # sent back as base_mtime when the tab saves
+            return nb
         except Exception as e:  # noqa: BLE001
             err(e, 404 if isinstance(e, FileNotFoundError) else 400)
 
     @app.put("/api/notebooks/file")
     async def notebook_put(req: Request):
+        """Body: path, notebook, and from editors base_mtime (the mtime they loaded; refused with 409 when the file changed since, 410 when it was deleted) and client (their window id, echoed in the nb "file" event)."""
+        from cwstudio.notebook import NotebookConflict, NotebookDeleted
         p = await body(req)
         try:
-            return await run(session.notebooks.save, p["path"], p["notebook"])
+            return await run(session.notebooks.save, p["path"], p["notebook"], p.get("base_mtime"), p.get("client"))
         except Exception as e:  # noqa: BLE001
-            err(e)
+            err(e, 409 if isinstance(e, NotebookConflict) else 410 if isinstance(e, NotebookDeleted) else 400)
 
     @app.delete("/api/notebooks/file")
     async def notebook_delete(path: str):
@@ -605,7 +609,7 @@ def create_app(session: Session) -> App:
 
     @app.get("/api/kernel/variables")
     async def kernel_variables(req: Request):
-        return session.kernels.variables(kernel_id(req))
+        return await run(session.kernels.variables, kernel_id(req))  # off the event loop: reprs of big variables take time
 
     @app.post("/api/kernel/execute")
     async def kernel_execute(req: Request):
@@ -661,7 +665,7 @@ def create_app(session: Session) -> App:
         """A window reports the notebooks it has open (its whole list each time, [] when it closes); kernels no window holds are shut down after a short grace period."""
         p = await body(req)
         try:
-            return session.kernels.attach(str(p.get("client") or ""), list(p.get("kernels") or []))
+            return await run(session.kernels.attach, str(p.get("client") or ""), list(p.get("kernels") or []))  # may shut kernels down, which waits for the hardware thread
         except Exception as e:  # noqa: BLE001
             err(e)
 

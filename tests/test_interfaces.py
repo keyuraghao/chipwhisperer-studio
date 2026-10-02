@@ -2,6 +2,7 @@
 import json
 import os
 import tempfile
+import time
 
 import pytest
 from starlette.testclient import TestClient
@@ -295,6 +296,52 @@ def test_setting_gates_unit():
     assert setting_gates(None) == {}
 
 
+
+def test_setting_gates_cached_per_scope(monkeypatch):
+    """The settings tree and every setting write consult the gates; they are computed once per connected scope, again for another scope, and after invalidate_gates()."""
+    from cwstudio import capabilities as capmod
+    calls = []
+    real = capmod.capabilities
+    monkeypatch.setattr(capmod, "capabilities", lambda *a, **k: calls.append(1) or real(*a, **k))
+    capmod.invalidate_gates()
+    lite = SimScope(sim_model="lite")
+    first = setting_gates(lite)
+    for _ in range(5):
+        assert setting_gates(lite) is first
+        check_setting(lite, "gain.db", 20)
+    assert len(calls) == 1
+    husky = SimScope(sim_model="husky")
+    assert "clock.adc_mul" not in setting_gates(husky) and len(calls) == 2
+    capmod.invalidate_gates()
+    setting_gates(husky)
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("model", SIM_MODELS)
+def test_adc_mul_husky_only(client, model):
+    """clock.adc_mul exists on the Husky only: the other simulated models neither list it in the settings tree nor accept it, and the capabilities say why."""
+    use(client, model)
+    husky = model in ("husky", "huskyplus")
+    paths = set()
+
+    def walk(ns):
+        for n in ns:
+            if n.get("kind") == "group":
+                walk(n.get("children") or [])
+            else:
+                paths.add(n["path"])
+    walk(client.get("/api/scope/settings").json())
+    assert ("clock.adc_mul" in paths) == husky and "clock.clkgen_freq" in paths
+    assert client.get("/api/capabilities").json()["clock"]["adc_mul"]["available"] == husky
+    sc = SimScope(sim_model=model)
+    assert hasattr(sc.clock, "adc_mul") == husky
+    r = client.put("/api/scope/settings", json={"path": "clock.adc_mul", "value": 2})
+    if husky:
+        assert r.status_code == 200, r.text
+        client.put("/api/scope/settings", json={"path": "clock.adc_mul", "value": 4})
+    else:
+        refused(r, "Husky only")
+
 # ----- OpenOCD -------------------------------------------------------------------------------------------------------------
 def test_openocd_refused_on_simulator(client):
     use(client, "husky")
@@ -315,9 +362,14 @@ def test_openocd_command_line_and_tcl_helpers():
     joined = " ".join(cmd)
     assert "-f cw_openocd.cfg" in joined and "ftdi vid_pid 0x2b3e 0xace5" in joined and "adapter serial ABC123" in joined
     assert joined.index("transport select swd") < joined.index("-f target/stm32f3x.cfg") and "tcl_port 6666" in joined
-    assert openocd.parse_wrapped("0 {hello world}") == {"ok": True, "output": "hello world"}
-    assert openocd.parse_wrapped('1 {invalid command name "foo"}')["ok"] is False
-    assert "capture {targets}" in openocd.wrap_command("targets")
+    assert openocd.parse_wrapped("0 hello world\n") == {"ok": True, "output": "hello world"}
+    assert openocd.parse_wrapped("0 {a} b") == {"ok": True, "output": "{a} b"}  # verbatim: the wrapper joins with format, not list
+    assert openocd.parse_wrapped('1 invalid command name "foo"')["ok"] is False
+    assert "capture {targets}" in openocd.wrap_command("targets") and "format" in openocd.wrap_command("targets")
+    assert openocd.braces_balanced("echo \\{") and openocd.braces_balanced("program {a b}") and not openocd.braces_balanced("echo }{") and not openocd.braces_balanced("x {")
+    assert openocd.tcl_word("/a b/$c [d].hex") == "{/a b/$c [d].hex}"
+    with pytest.raises(ValueError):
+        openocd.tcl_word("/a/b{.hex")
     cfg = open(os.path.join(openocd.RESOURCES, openocd.CW_CFG)).read()
     assert "adapter driver ftdi" in cfg and "ftdi channel 1" in cfg and "layout_signal SWDIO_OE" in cfg
 
@@ -389,3 +441,276 @@ def test_mcp_interface_tools_refuse_politely():
     assert not ok["isError"] and "no SPI pins" in ok["content"][0]["text"] and '"supported": false' in ok["content"][0]["text"]
     bad = m._tools_call({"name": "openocd_stop", "arguments": {}})
     assert bad["isError"]
+
+
+# ----- the research capability matrix, exactly ----------------------------------------------------------------
+TIO = ["tio1", "tio2", "tio3", "tio4"]
+USERIO_TRIG = [f"userio_d{i}" for i in range(8)]
+MATRIX = {
+    #            rx pins           tx pins  readable pins                                                         basic trigger pins
+    "nano": dict(rx=["tio1"], tx=["tio2"], readable=[], drive=["tio3", "pdic", "pdid", "nrst"], trig=["tio4"], edges=["rising_edge"], mods=["basic"]),
+    "lite": dict(rx=TIO[:3], tx=TIO, readable=TIO, drive=TIO + ["pdic", "pdid", "nrst"], trig=TIO + ["nrst"], edges=["rising_edge", "falling_edge", "high", "low"], mods=["basic"]),
+    "pro": dict(rx=TIO[:3], tx=TIO, readable=TIO, drive=TIO + ["pdic", "pdid", "nrst"], trig=TIO + ["nrst", "sma"], edges=["rising_edge", "falling_edge", "high", "low"], mods=["basic", "SAD", "DECODEIO"]),
+    "husky": dict(rx=TIO[:3], tx=TIO, readable=TIO + ["nrst", "pdic", "pdid", "miso", "mosi", "sck"], drive=TIO + ["pdic", "pdid", "nrst"], trig=TIO + ["nrst", "sma"] + USERIO_TRIG, edges=["rising_edge", "falling_edge", "high", "low"], mods=["basic", "SAD", "UART", "trace", "ADC", "edge_counter", "bitbanger"]),
+}
+MATRIX["huskyplus"] = MATRIX["husky"]
+
+
+@pytest.mark.parametrize("model", SIM_MODELS)
+def test_capability_matrix_exact(model):
+    """Every entry of build/research/protocols.md section 1 for each simulated model (the simulator stands in for the develop library, so the bit-banger is present on both Huskies)."""
+    c = capabilities(SimScope(sim_model=model))
+    x = MATRIX[model]
+    nano, husky, hp, pro = model == "nano", model in ("husky", "huskyplus"), model == "huskyplus", model == "pro"
+    u = c["uart"]
+    assert (u["rx_pins"], u["tx_pins"], u["remap"]) == (x["rx"], x["tx"], not nano)
+    assert u["parity"] == ["none", "odd", "even", "mark", "space"] and u["stop_bits"] == [1, 1.5, 2] and u["data_bits"] == [8]
+    assert "serial_rx" not in u["pins"]["tio4"] if not nano else u["pins"] == {"tio1": ["serial_rx"], "tio2": ["serial_tx"]}
+    assert c["simpleserial"]["versions"] == ["1.0", "1.1", "2.1"] and c["simpleserial"]["cdc"]["available"]
+    assert c["spi"]["available"] == (not nano)
+    for k in ("jtag", "swd"):
+        assert c[k]["model_supports"] == (not nano) and not c[k]["available"]
+        assert ("USERIO 20-pin" in c[k]["headers"]) == husky
+    assert c["trace"]["available"] == husky
+    g = c["gpio"]
+    assert g["readable"] == x["readable"] and list(g["drive"]) == x["drive"] and g["read"]["available"] == (not nano) and g["pulse"] == ["nrst", "pdic"]
+    if nano:
+        assert g["drive"]["tio3"] == ["high_z", "gpio_low", "gpio_high"]
+    assert c["userio"]["available"] == husky and (c["userio"]["pins"][-1] == "CK" if husky else True)
+    bb_pins = [f"USERIO_D{i}" for i in range(8)] + ["USERIO_CK"] + (["TIO1", "TIO2", "TIO3", "TIO4", "target_pwr", "nrst"] if hp else [])
+    for k in ("bitbanger", "onewire"):
+        assert c[k]["available"] == husky and c[k]["pins"] == bb_pins
+    t = c["triggers"]
+    assert t["basic"]["available"] and t["basic"]["pins"] == x["trig"] and t["basic"]["edges"] == x["edges"]
+    expect = {"combinations": not nano, "sad": pro or husky, "uart_decode": pro, "uart_pattern": husky, "edge_counter": husky, "adc_level": husky, "sequencer": husky, "trace": husky, "bitbanger": husky, "outputs": pro or husky}
+    assert {k: t[k]["available"] for k in expect} == expect
+    if husky:
+        assert t["uart_pattern"]["rules"] == (8 if hp else 2) and t["uart_pattern"]["data_bits"] == [5, 6, 7, 8, 9] and t["outputs"]["pins"] == ["trig_mcx", "aux_mcx"]
+    if pro:
+        assert t["uart_decode"]["max_bytes"] == 8 and t["outputs"]["pins"] == ["aux"]
+    p = c["programmers"]
+    assert {k: v["available"] for k, v in p.items()} == {"STM32F": True, "XMEGA": not nano, "AVR": not nano, "SAM4S": not nano, "NEORV32": not nano, "iCE40": not nano, "XC7A35T": not nano, "OpenOCD": False}
+    la = c["logic_analyzer"]
+    assert la["native"]["available"] == husky and la["adc"]["available"] and la["sim"]["available"]
+    if husky:
+        assert la["native"]["depth"] == (65535 if hp else 16376) and set(la["native"]["groups"]) == {"CW 20-pin", "USERIO 20-pin", "glitch"}
+    gates = setting_gates(SimScope(sim_model=model))
+    mods = gates["trigger.module"]
+    assert [m for m in mods["choices"] if m not in mods["disabled"]] == x["mods"]
+    trig = gates["trigger.triggers"]
+    assert [p for p in trig["choices"] if p not in trig["disabled"]] == [p for p in x["trig"]]
+    assert "serial_rx" in gates["io.tio4"]["disabled"]
+    if nano:
+        assert [k for k in gates["io.tio1"]["choices"] if capmod_key(k) not in gates["io.tio1"]["disabled"]] == ["serial_rx"]
+        assert set(gates["adc.basic_mode"]["disabled"]) == {"falling_edge", "low", "high"}
+    else:
+        assert "adc.basic_mode" not in gates and "serial_tx" not in gates["io.tio4"]["disabled"]
+
+
+def capmod_key(v):
+    from cwstudio.capabilities import _key
+    return _key(v)
+
+
+def test_interface_state_follows_the_scope(client):
+    """Switching the simulated model (or reconnecting) drops the SPI master, the applied trigger and the SimpleSerial version of the previous connection."""
+    use(client, "husky")
+    assert client.post("/api/interfaces/spi/enable", json={"speed": 1e6}).json()["enabled"]
+    client.put("/api/interfaces/trigger", json={"kind": "uart_pattern", "pattern": "'r'"})
+    client.post("/api/interfaces/simpleserial/connect", json={"version": "1.0"})
+    st = client.get("/api/interfaces").json()
+    assert st["spi"]["enabled"] and st["trigger"]["kind"] == "uart_pattern" and st["simpleserial"]["version"] == "1.0"
+    use(client, "lite")
+    st = client.get("/api/interfaces").json()
+    assert not st["spi"]["enabled"] and st["trigger"] == {} and st["simpleserial"]["version"] is None
+    assert client.post("/api/interfaces/spi/transfer", json={"data": "9f 00 00 00"}).status_code == 400  # enable it again first
+    assert client.get("/api/interfaces/trigger").json()["current"]["trigger.module"] == "basic"
+
+
+def test_http_errors_are_400_with_reason(client):
+    use(client, "husky")
+    bad = [
+        ("post", "/api/interfaces/spi/toggle_sck", {"cycles": "many"}),
+        ("post", "/api/interfaces/gpio/pulse", {"ms": "long"}),
+        ("post", "/api/interfaces/openocd/command", {"command": "targets", "timeout": "x"}),
+        ("post", "/api/interfaces/openocd/mpsse", {"enable": "perhaps"}),
+        ("post", "/api/interfaces/spi/transfer", {"data": "9f", "start": "maybe"}),
+        ("put", "/api/interfaces/trigger", ["basic"]),
+        ("put", "/api/interfaces/uart", {"baud": "fast"}),
+        ("put", "/api/interfaces/gpio", {"pin": "tio9", "state": "high"}),
+        ("put", "/api/interfaces/trigger", {"kind": "basic", "pins": ["tio1"], "op": "XOR"}),
+        ("put", "/api/interfaces/trigger", {"kind": "uart_pattern", "pattern": "zz"}),
+        ("post", "/api/interfaces/bitbang", {"bits": ""}),
+        ("post", "/api/interfaces/onewire", {"action": "search"}),
+        ("post", "/api/interfaces/openocd/program", {"path": "/nonexistent/fw.hex"}),
+        ("post", "/api/interfaces/openocd/start", {"ports": "3333"}),
+    ]
+    for method, path, body in bad:
+        r = getattr(client, method)(path, json=body)
+        assert r.status_code == 400, (path, body, r.status_code, r.text)
+        assert ": " in r.json()["detail"], r.text
+    r = client.post("/api/interfaces/spi/toggle_sck", content=b"not json", headers={"Content-Type": "application/json"})
+    assert r.status_code == 400  # an unreadable body counts as {} (SPI not enabled), never a 500
+
+
+def test_simpleserial_and_terminal_details(client):
+    use(client, "pro")
+    assert client.post("/api/interfaces/simpleserial/connect", json={"version": "1.1"}).json()["kind"] == "sim"
+    assert client.get("/api/target/settings").json()  # the simulated target reports its protocol version
+    r = client.post("/api/interfaces/simpleserial/send", json={"cmd": "p", "data": "00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff", "read_len": 16}).json()
+    assert r["ack"] and len(bytes.fromhex(r["response"])) == 16
+    assert client.post("/api/interfaces/simpleserial/send", json={"cmd": "pp"}).status_code == 400
+    assert client.post("/api/interfaces/simpleserial/send", json={"cmd": "p", "data": "0"}).status_code == 400
+    assert client.post("/api/interfaces/simpleserial/connect", json={"version": "cdc"}).json()["version"] == "cdc"
+    # hex mode writes the bytes as they are, with no line ending; text gets the chosen one
+    t0 = time.time()
+    assert client.post("/api/target/serial/write", json={"data": "76 0d", "hex": True, "eol": "lf"}).json()["written"] == 2
+    assert client.post("/api/target/serial/write", json={"data": "v", "eol": "cr"}).json()["written"] == 2
+    recs = client.get(f"/api/target/serial?since={t0 - 1}").json()
+    tx = [r for r in recs if r["dir"] == "tx"]
+    assert [r["hex"] for r in tx[-2:]] == ["760d", "760d"]
+    deadline = time.time() + 3
+    while time.time() < deadline and not any(r["dir"] == "rx" for r in client.get(f"/api/target/serial?since={t0 - 1}").json()):
+        time.sleep(0.05)
+    assert any(r["dir"] == "rx" for r in client.get(f"/api/target/serial?since={t0 - 1}").json())  # the simulated target answers 'v'
+
+
+def test_spi_flash_more_commands(client):
+    use(client, "huskyplus")
+    client.post("/api/interfaces/spi/enable", json={"speed": 20e6, "cs": "tio4"})
+    x = lambda d, **k: client.post("/api/interfaces/spi/transfer", json={"data": d, **k}).json()["miso"]
+    assert x("90 00 00 00 00 00").endswith("ef 17") and x("ab 00 00 00 00").endswith("17")
+    assert x("4b 00 00 00 00" + " 00" * 8).endswith("d2 6a 3c 2b 1f 0e 4c 57")
+    assert bytes.fromhex(x("0b 00 00 00 00" + " 00" * 4).replace(" ", ""))[5:] == b"Chip"  # fast read has a dummy byte
+    x("02 00 20 00 aa")  # page program without write enable is ignored
+    assert x("03 00 20 00 00").endswith("ff")
+    x("06"); x("c7")  # chip erase
+    assert x("05 00").endswith("01")  # busy right after the erase
+    time.sleep(0.06)
+    assert x("05 00").endswith("00") and x("03 00 00 00 00 00").endswith("ff ff")
+    x("06"); x("02 00 30 fe 11 22 33 44")  # a page program wraps inside its 256-byte page
+    assert x("03 00 30 fe 00 00").endswith("11 22") and x("03 00 30 00 00 00").endswith("33 44")
+    assert client.post("/api/interfaces/spi/enable", json={"speed": 30e6}).status_code == 400
+    client.post("/api/interfaces/spi/disable")
+
+
+def test_bitbanger_huskyplus_pins_and_gpio_userio_readback(client):
+    use(client, "huskyplus")
+    r = client.post("/api/interfaces/bitbang", json={"bits": "1111 0000", "record": "0000 1111", "data_pin": "nrst", "clock_pin": "disabled"}).json()
+    assert r["recorded"] == "0101" and r["data_pin"] == "nrst"
+    assert client.post("/api/interfaces/bitbang", json={"bits": "1", "data_pin": "TIO1", "clock_pin": "nrst"}).status_code == 400  # nRST cannot clock
+    u = client.put("/api/interfaces/userio", json={"direction": 0x1FF, "drive": 0x155, "mode": "normal"}).json()
+    assert u["status"] == 0x155  # driven pins read back what is driven
+    client.put("/api/interfaces/userio", json={"direction": 0, "drive": 0})
+
+
+@pytest.mark.parametrize("model", ["husky", "pro", "nano"])
+def test_trigger_applied_to_scope_and_captures(client, model):
+    """The trigger the Interfaces tab applies is what the Scope settings tree and capture see; a capture runs with it."""
+    use(client, model)
+    body = {"kind": "basic", "pins": ["tio4"], "edge": "rising_edge"} if model == "nano" else {"kind": "basic", "pins": ["tio3", "tio4"], "op": "OR", "edge": "falling_edge"}
+    r = client.put("/api/interfaces/trigger", json=body).json()
+    flat = {}
+
+    def walk(ns):
+        for n in ns:
+            if n.get("kind") == "group":
+                walk(n.get("children") or [])
+            else:
+                flat[n["path"]] = n.get("value")
+    walk(client.get("/api/scope/settings").json())
+    assert flat["trigger.triggers"] == r["current"]["trigger.triggers"] and flat["adc.basic_mode"] == r["current"]["adc.basic_mode"]
+    if model != "nano":
+        assert flat["trigger.triggers"] == "tio3 OR tio4" and flat["adc.basic_mode"] == "falling_edge"
+    client.post("/api/capture/start", json={"count": 2, "clear": True})
+    deadline = time.time() + 20
+    while time.time() < deadline and client.get("/api/status").json()["job"]["running"]:
+        time.sleep(0.05)
+    job = client.get("/api/status").json()["job"]
+    assert job["done"] == 2 and not job["error"]
+
+
+def test_simulate_as_switch_mid_session(client):
+    """Changing "Simulate as" while a target is connected and a capture runs ends that capture cleanly and leaves a working session on the new model."""
+    use(client, "husky")
+    assert client.post("/api/interfaces/spi/enable", json={}).status_code == 200
+    assert client.post("/api/capture/start", json={"count": 0, "clear": True}).json()["started"]  # count 0: until stopped
+    deadline = time.time() + 10
+    while time.time() < deadline and client.get("/api/status").json()["traces"]["count"] < 3:
+        time.sleep(0.05)
+    r = client.post("/api/scope/connect", json={"kind": "sim", "sim_model": "nano"})
+    assert r.status_code == 200 and r.json()["sim_model"] == "nano"
+    deadline = time.time() + 10
+    while time.time() < deadline and client.get("/api/status").json()["job"]["running"]:
+        time.sleep(0.05)
+    st = client.get("/api/status").json()
+    assert not st["job"]["running"] and st["scope"]["sim_model"] == "nano" and not st["target"]["connected"]
+    caps = client.get("/api/capabilities").json()
+    assert caps["model"] == "nano" and not caps["spi"]["available"]
+    assert not client.get("/api/interfaces").json()["spi"]["enabled"]
+    refused(client.post("/api/interfaces/spi/transfer", json={"data": "9f"}), "no SPI pins")
+    assert client.post("/api/target/connect", json={"kind": "sim"}).status_code == 200
+    client.post("/api/capture/start", json={"count": 2, "clear": True})
+    deadline = time.time() + 20
+    while time.time() < deadline and client.get("/api/status").json()["job"]["running"]:
+        time.sleep(0.05)
+    job = client.get("/api/status").json()["job"]
+    assert job["done"] == 2 and not job["error"] and client.get("/api/status").json()["traces"]["count"] == 2
+
+
+def test_mcp_interface_tools_against_the_simulator(client):
+    """The MCP interface tools end to end against a running Studio (simulated Husky, then a Nano refusing politely)."""
+    from cwstudio.mcp_server import StudioError, build_server
+
+    class Bridge:
+        base = "http://testclient"
+
+        def _do(self, method, path, body=None, params=None):
+            r = client.request(method, path, json=body, params=params)
+            if r.status_code >= 400:
+                detail = r.json().get("detail", r.text) if r.headers.get("content-type", "").startswith("application/json") else r.text
+                raise StudioError(f"{method} {path} failed ({r.status_code}): {detail}")
+            return r.json() if r.content else None
+
+        def get(self, _path, **params):
+            return self._do("GET", _path, params=params or None)
+
+        def post(self, path, body=None, timeout=None):
+            return self._do("POST", path, body if body is not None else {})
+
+        def put(self, path, body):
+            return self._do("PUT", path, body)
+
+    m = build_server(Bridge())
+
+    def call(name, **args):
+        res = m._tools_call({"name": name, "arguments": args})
+        assert not res["isError"], res
+        return json.loads(res["content"][0]["text"])
+    use(client, "husky")
+    assert call("hardware_capabilities")["model"] == "husky"
+    assert call("uart_configure", baud=57600, parity="odd", stop_bits=2, rx="tio1", tx="tio2")["parity"] == "odd"
+    call("uart_configure", baud=38400, parity="none", stop_bits=1)
+    call("spi_enable", speed=2e6, cs="pdid")
+    assert call("spi_transfer", data="9f 00 00 00")["miso"] == "ff ef 40 18"
+    call("spi_disable")
+    assert call("gpio_set", pin="tio3", state="low")["pins"]["tio3"]["level"] == 0
+    call("gpio_set", pin="tio3", state="high_z")
+    assert call("gpio_pulse", pin="nrst", ms=2)["ms"] == 2
+    assert call("userio_set", direction=1, drive=1)["direction"] == 1
+    call("userio_set", direction=0, drive=0)
+    assert call("trigger_configure", kind="uart_pattern", pin="tio1", pattern="'r'", rule=1)["applied"]["rule"] == 1
+    assert call("trigger_configure", kind="basic", pins=["tio4"])["current"]["trigger.module"] == "basic"
+    assert call("bitbang", bits="1010", record="0011")["recorded"] == "10"
+    assert call("onewire", action="read_rom")["crc_ok"]
+    assert call("simpleserial_connect", version="2.1")["version"] == "2.1"
+    st = call("openocd_status", list_targets=False)
+    assert st["running"] is False and "interface_cfg" in st
+    assert call("openocd_mpsse", enable=True)["supported"] is False  # the simulator cannot drive OpenOCD
+    assert call("interfaces_status")["capabilities"]["model"] == "husky"
+    use(client, "nano")
+    no = call("spi_enable")
+    assert no == {"ok": False, "supported": False, "reason": no["reason"]} and "SPI pins" in no["reason"]
+    assert call("trigger_configure", kind="basic", pins=["tio1"])["supported"] is False
+    assert call("bitbang", bits="1")["supported"] is False and call("onewire")["supported"] is False
+    assert call("userio_set", direction=1)["supported"] is False

@@ -7,6 +7,7 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -43,17 +44,41 @@ def tcl_query(port: int, command: str, timeout: float = 10.0, host: str = "127.0
 
 
 def wrap_command(command: str) -> str:
-    """Wrap a user command so the reply says whether it failed and carries what it printed: ``<rc> <output>``."""
-    return "set _cws_rc [catch {capture {" + command + "}} _cws_out]; list $_cws_rc $_cws_out"
+    """Wrap a user command so the reply says whether it failed and carries what it printed: ``<rc> <output>``. ``format`` (not ``list``) joins them, so the output comes back verbatim instead of Tcl-list quoted (``list`` would brace it, or backslash-escape it when it has an unbalanced brace)."""
+    return "set _cws_rc [catch {capture {" + command + "}} _cws_out]; format {%s %s} $_cws_rc $_cws_out"
 
 
 def parse_wrapped(reply: str) -> Dict[str, Any]:
-    reply = reply.strip()
-    rc, _, rest = reply.partition(" ")
-    rest = rest.strip()
-    if rest.startswith("{") and rest.endswith("}"):
-        rest = rest[1:-1]
-    return {"ok": rc == "0", "output": rest}
+    rc, _, rest = reply.lstrip().partition(" ")
+    return {"ok": rc == "0", "output": rest.rstrip()}
+
+
+def braces_balanced(text: str) -> bool:
+    """True when every unescaped { has its } (the command is wrapped in braces, so an unbalanced one would break out of the wrapper)."""
+    depth, i = 0, 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth < 0:
+                return False
+        i += 1
+    return depth == 0
+
+
+def tcl_word(text: str, always: bool = True) -> str:
+    """Quote one word for an OpenOCD (Jim Tcl) command line: braces keep spaces, $ and [ literal. With ``always=False`` a plain word (letters, digits, ``_.:/-``) stays unquoted."""
+    text = str(text)
+    if not always and re.fullmatch(r"[A-Za-z0-9_.:/-]+", text):
+        return text
+    if text.count("{") != text.count("}") or "\\" in text:
+        raise ValueError(f"cannot quote {text!r} for OpenOCD (unbalanced braces or backslashes)")
+    return "{" + text + "}"
 
 
 class OpenOCD:
@@ -82,7 +107,7 @@ class OpenOCD:
                 return os.path.join(st["bin"], exe)
             if st.get("system"):
                 return os.path.join(st["system"], exe)
-        except KeyError:
+        except (KeyError, AttributeError):  # no toolchain registry (tests, embedded use) or no openocd entry
             pass
         return shutil.which("openocd")
 
@@ -221,7 +246,7 @@ class OpenOCD:
         cmd += ["-c", f"gdb_port {int(ports['gdb'])}", "-c", f"telnet_port {int(ports['telnet'])}", "-c", f"tcl_port {int(ports['tcl'])}",
                 "-f", CW_CFG, "-c", f"ftdi vid_pid 0x{VID:04x} 0x{pid:04x}"]
         if info.get("sn"):
-            cmd += ["-c", f"adapter serial {info['sn']}"]
+            cmd += ["-c", f"adapter serial {tcl_word(info['sn'], always=False)}"]
         cmd += ["-c", f"transport select {transport}"]
         if target_cfg:
             cmd += ["-f", target_cfg]
@@ -243,7 +268,22 @@ class OpenOCD:
         if target_cfg and not target_cfg.endswith(".cfg"):
             raise ValueError("target config must be a .cfg file")
         transport = transport or self.mpsse.get("transport", "jtag")
-        self.ports = {**DEFAULT_PORTS, **{k: int(v) for k, v in (ports or {}).items() if v}}
+        if transport not in ("jtag", "swd"):
+            raise ValueError("transport must be 'jtag' or 'swd'")
+        if ports is not None and not isinstance(ports, dict):
+            raise ValueError("ports must be an object such as {\"gdb\": 3333, \"telnet\": 4444, \"tcl\": 6666}")
+        unknown = set(ports or {}) - set(DEFAULT_PORTS)
+        if unknown:
+            raise ValueError(f"unknown port names {sorted(unknown)}; use gdb, telnet and tcl")
+        new_ports = {**DEFAULT_PORTS, **{k: int(v) for k, v in (ports or {}).items() if v}}
+        for k, v in new_ports.items():
+            if not 1 <= v <= 65535:
+                raise ValueError(f"the {k} port must be 1 to 65535")
+        if len(set(new_ports.values())) != len(new_ports):
+            raise ValueError("the GDB, telnet and TCL ports must differ")
+        if extra is not None and (not isinstance(extra, (list, tuple)) or not all(isinstance(e, str) for e in extra)):
+            raise ValueError("extra must be a list of OpenOCD commands")
+        self.ports = new_ports
         cmd = self.command_line(target_cfg, transport, self.ports, extra, binary)
         self._add_log("$ " + " ".join(cmd), "cmd")
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=RESOURCES,
@@ -284,8 +324,8 @@ class OpenOCD:
         command = (command or "").strip()
         if not command:
             raise ValueError("empty command")
-        if command.count("{") != command.count("}"):
-            raise ValueError("unbalanced braces in the command")
+        if not braces_balanced(command):
+            raise ValueError("unbalanced braces in the command (escape a literal brace as \\{)")
         self._add_log("> " + command, "cmd")
         res = parse_wrapped(tcl_query(self.ports["tcl"], wrap_command(command), timeout=timeout))
         if res["output"]:
@@ -298,8 +338,14 @@ class OpenOCD:
             raise FileNotFoundError(path)
         if path.lower().endswith(".bin") and not address:
             raise ValueError("a .bin file needs a flash address (for example 0x08000000)")
+        if address not in (None, ""):
+            address = str(address).strip()
+            try:
+                int(address, 0)
+            except ValueError:
+                raise ValueError(f"the flash address must be a number such as 0x08000000, not {address!r}") from None
         p = os.path.abspath(path).replace("\\", "/")
-        cmd = "program {" + p + "}" + (" verify" if verify else "") + (" reset" if reset else "") + (f" {address}" if address else "")
+        cmd = "program " + tcl_word(p) + (" verify" if verify else "") + (" reset" if reset else "") + (f" {address}" if address else "")
         res = self.command(cmd, timeout=timeout)
         res["path"] = path
         return res

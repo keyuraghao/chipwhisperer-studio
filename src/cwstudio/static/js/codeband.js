@@ -1,5 +1,5 @@
 // The Code band under the waveform: which firmware function (flame chart rows) and source line runs at each sample, aligned with the plot's x axis.
-import { h } from './api.js';
+import { h, fmtNum } from './api.js';
 
 const ROWS = 5;        // function rows (call depths) shown at once
 const ROW_H = 14;
@@ -29,6 +29,7 @@ export function funcColor(name, alpha = 1) {
 export class CodeBand {
   constructor(el, wave, ctx) {
     this.el = el; this.wave = wave; this.ctx = ctx;
+    el.codeBand = this; // for the browser tests: the band's sample to x mapping is checked against uPlot's
     this.canvas = h('canvas');
     this.tip = h('div', { class: 'cb-tip' });
     this.msg = h('div', { class: 'cb-msg' });
@@ -68,7 +69,7 @@ export class CodeBand {
   }
 
   setMapping(m) {
-    if (m) this.map = { a: m.samples_per_cycle || m.spc * (m.scale || 1), b: -(m.adc_offset || 0) + (m.presamples || 0) + (m.shift || 0) };
+    if (m) this.map = { a: m.samples_per_cycle || m.spc * (m.scale || 1), b: m.intercept != null ? m.intercept : -(m.adc_offset || 0) / Math.max(1, m.decimate || 1) + (m.presamples || 0) + (m.shift || 0) };
     this.draw();
   }
 
@@ -231,7 +232,7 @@ export class CodeBand {
   hover(e) {
     const t = this.hit(e);
     if (!t) { this.tip.style.display = 'none'; return; }
-    const fmt = (v) => Math.round(v).toLocaleString();
+    const fmt = (v) => fmtNum(Math.round(v) || 0);
     let html;
     if (t.kind === 'span') {
       const i = t.i, f = this.band.functions[this.sp.func[i]] || {};

@@ -4,6 +4,7 @@ Captures live in memory (the newest eight; older ones can be kept as ``.sr`` fil
 """
 from __future__ import annotations
 
+import copy
 import io
 import itertools
 import logging
@@ -13,7 +14,8 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -21,7 +23,7 @@ import numpy as np
 from cwstudio.capabilities import Unsupported, require
 from cwstudio.logic import decoders as dec
 from cwstudio.logic import formats, sigrok, synth
-from cwstudio.logic.model import AnalogChannel, LogicCapture, parse_pattern
+from cwstudio.logic.model import AnalogChannel, Channel, LogicCapture, parse_pattern
 from cwstudio.logic.sources import CLK_SOURCES, LA_TRIGGER_HELP, LA_TRIGGERS, LogicJob, adc_rate
 from cwstudio.web import FileResponse, HTTPException, Request, Response, UploadFile
 
@@ -48,6 +50,7 @@ class LogicService:
         self.last: Optional[Dict[str, Any]] = None
         self.dir = os.path.join(session.data_dir, "logic")
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="la-decode")
+        self._procs: Any = None  # the decode worker process pool, made on first use (False when it cannot run)
         self._pending: set = set()
 
     # --- helpers -----------------------------------------------------------------------------------
@@ -68,6 +71,16 @@ class LogicService:
             return self.captures[cid]
 
     def add_capture(self, cap: LogicCapture, select: bool = True, persist: bool = False) -> Dict[str, Any]:
+        cap.meta.setdefault("orig_names", [c.name for c in cap.channels])
+        with self._lock:
+            if cap.source not in ("file", "trace") and cap.channels:
+                # a new capture from the same source and channels keeps the names, colours, hidden channels and order set on the previous one (like a repeat capture in PulseView)
+                prev = next((c for c in reversed(self.captures.values()) if c.source == cap.source and c.meta.get("orig_names") == cap.meta["orig_names"]), None)
+                if prev is not None:
+                    for ch, old in zip(cap.channels, prev.channels):
+                        ch.name, ch.color, ch.hidden = old.name, old.color, old.hidden
+                    if prev.meta.get("order") and sorted(prev.meta["order"]) == list(range(len(cap.channels))):
+                        cap.meta["order"] = list(prev.meta["order"])
         cap.meta.setdefault("order", list(range(len(cap.channels))))
         with self._lock:
             self.captures[cap.id] = cap
@@ -78,7 +91,8 @@ class LogicService:
                 self.current_id = cap.id
         if persist:
             try:
-                path = formats.save(cap, os.path.join(self.dir, "captures", time.strftime("%Y%m%d-%H%M%S") + f"-{cap.source}"), "sr")
+                # the capture id keeps repeat captures within the same second from overwriting each other
+                path = formats.save(cap, os.path.join(self.dir, "captures", time.strftime("%Y%m%d-%H%M%S") + f"-{cap.source}-{cap.id}"), "sr")
                 cap.meta["saved"] = path
             except Exception as e:  # noqa: BLE001
                 cap.meta["save_error"] = str(e)
@@ -342,6 +356,8 @@ class LogicService:
                 members = [cap.ch_index(x) for x in b.get("channels", [])]
                 if not members:
                     raise ValueError("a bus needs at least one channel")
+                if len(members) > 32:
+                    raise ValueError("a bus holds at most 32 channels")
                 buses.append({"name": str(b.get("name") or "bus")[:40], "channels": members, "format": b.get("format", "hex") if b.get("format") in ("hex", "dec", "bin") else "hex"})
             self.buses = buses
         self.publish("la", {"kind": "channels", "current": cap.id})
@@ -369,8 +385,10 @@ class LogicService:
     def search(self, p: Dict[str, Any]) -> Dict[str, Any]:
         """kind edge (channel, edge any/rising/falling), pattern (pattern like 1X0 over channels in display order or channels, optional edge_channel and edge) or decoded (text, decoder); direction next/prev from sample ``from``."""
         cap = self.cap(p.get("capture"))
-        frm = float(p.get("from", -1))
         direction = -1 if str(p.get("direction", "next")).startswith("prev") else 1
+        frm = float(p.get("from", -1) if p.get("from") is not None else -1)
+        if direction < 0 and frm < 0:
+            frm = float(cap.n)  # searching backwards with no start point: from the end
         kind = p.get("kind", "edge")
         if kind == "edge":
             hit = cap.next_edge(p["channel"], frm, direction, p.get("edge", "any"))
@@ -388,6 +406,8 @@ class LogicService:
             if not q:
                 raise ValueError("type the decoded value to look for")
             items = self.annotations({"decoder": p.get("decoder", "all"), "q": q, "after" if direction > 0 else "before": frm, "limit": 1, "capture": cap.id})
+            if items["pending"] and not items["items"]:
+                raise ValueError("the decoders are still running on this capture; search again in a moment")
             it = items["items"][0] if items["items"] else None
             return {"found": it is not None, "index": it["s"] if it else None, "end": it["e"] if it else None, "t": it["t"] if it else None, "item": it}
         raise ValueError("search kind must be edge, pattern or decoded")
@@ -472,7 +492,7 @@ class LogicService:
             hit = self._results.get(key)
             if hit is not None:
                 return hit
-            if sum(c.edges.shape[0] for c in cap.channels) < self.SYNC_DECODE_EDGES:
+            if not self.big(cap):
                 pass
             elif key in self._pending:
                 return None
@@ -481,7 +501,7 @@ class LogicService:
 
                 def work():
                     try:
-                        self.result(did, cap)
+                        self.result(did, cap, in_process=True)
                     finally:
                         with self._lock:
                             self._pending.discard(key)
@@ -490,7 +510,37 @@ class LogicService:
                 return None
         return self.result(did, cap)
 
-    def result(self, did: str, cap: LogicCapture):
+    def big(self, cap: LogicCapture) -> bool:
+        """Whether decoding this capture is long enough to go to the decode worker process."""
+        return sum(c.edges.shape[0] for c in cap.channels) >= self.SYNC_DECODE_EDGES
+
+    def _run_decoder(self, cap: LogicCapture, kind: str, mapping: Dict[str, int], options: Dict[str, Any], in_process: bool):
+        """One decoder run, in a worker process for big captures: the decoders are Python loops that would hold the GIL for seconds and stall every other API call and the viewer's range queries."""
+        if not in_process:
+            return dec.decode(cap, kind, mapping, options)
+        pool = self._proc_pool()
+        if pool is None:
+            return dec.decode(cap, kind, mapping, options)
+        try:
+            return pool.submit(dec.decode, _light_copy(cap, mapping.values()), kind, mapping, options).result()
+        except BrokenProcessPool:
+            log.warning("the decode worker process died; decoding in Studio's process instead")
+            with self._lock:
+                self._procs = False
+            return dec.decode(cap, kind, mapping, options)
+
+    def _proc_pool(self):
+        with self._lock:
+            if self._procs is None:  # the PyInstaller bundle's launcher calls multiprocessing.freeze_support(), so spawn works there too
+                try:
+                    import multiprocessing
+                    self._procs = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+                except Exception as e:  # noqa: BLE001
+                    log.warning("no decode worker process (%s); decoding in Studio's process", e)
+                    self._procs = False
+            return self._procs or None
+
+    def result(self, did: str, cap: LogicCapture, in_process: bool = False):
         d = self.decoders[did]
         key = (cap.id, cap.version, did, d["rev"])
         with self._lock:
@@ -501,7 +551,7 @@ class LogicService:
             if d["type"] == "sigrok":
                 r = self._sigrok_decode(cap, d["options"].get("spec", ""))
             else:
-                r = dec.decode(cap, d["type"], self._resolve(cap, d["channels"]), d["options"])
+                r = self._run_decoder(cap, d["type"], self._resolve(cap, d["channels"]), d["options"], in_process)
         except (dec.DecodeError, KeyError, ValueError, RuntimeError, Unsupported) as e:
             r = e if not isinstance(e, KeyError) else dec.DecodeError(str(e).strip("'\""))
         with self._lock:
@@ -534,7 +584,9 @@ class LogicService:
             r = self._sigrok_decode(cap, str((p.get("options") or {}).get("spec", "")))
         else:
             mapping = p.get("channels") or dec.guess_channels(kind, cap) if kind in dec.DECODERS else p.get("channels")
-            r = dec.decode(cap, kind, self._resolve(cap, mapping or {}), p.get("options") or {})
+            if kind not in dec.DECODERS:
+                raise dec.DecodeError(f"unknown decoder {kind!r}; choose one of {', '.join(list(dec.DECODERS) + ['sigrok'])}")
+            r = self._run_decoder(cap, kind, self._resolve(cap, mapping or {}), p.get("options") or {}, self.big(cap))
         items = r.items()
         rows = p.get("rows")
         if rows:
@@ -551,13 +603,17 @@ class LogicService:
         ids = list(self.decoders) if which == "all" else [which]
         names = [c.name for c in cap.channels]
         rows: List[Dict[str, Any]] = []
+        pending: List[str] = []
         for did in ids:
             if did not in self.decoders:
                 raise LookupError(f"no decoder {did}")
             d = self.decoders[did]
             if not d.get("enabled", True) and which == "all":
                 continue
-            r = self.result(did, cap)
+            r = self.result_or_pending(did, cap)
+            if r is None:
+                pending.append(did)
+                continue
             if isinstance(r, Exception):
                 continue
             for it in r.items():
@@ -586,13 +642,25 @@ class LogicService:
         lim = int(p.get("limit", 200))
         page = rows[off:off + lim]
         items = [{"t": cap.t(r["s"]), "t_end": cap.t(r["e"]), "s": r["s"], "e": r["e"], "decoder": r["decoder"], "decoder_id": r["decoder_id"], "row": r["row"], "label": r["label"], "channel": r["channel"], "channel_name": names[r["channel"]] if r["channel"] is not None and r["channel"] < len(names) else "", "kind": r["kind"], "text": r["text"], "value": r["value"] if not isinstance(r["value"], (bytes, bytearray)) else r["value"].hex()} for r in page]
-        return {"capture": cap.id, "total": total, "offset": off, "items": items}
+        return {"capture": cap.id, "total": total, "offset": off, "items": items, "pending": pending}
 
     def annotations_csv(self, which: str = "all", q: str = "") -> bytes:
         res = self.annotations({"decoder": which, "q": q, "limit": 10 ** 9})
+        if res["pending"]:
+            raise ValueError("the decoders are still running on this capture; export again when they finish")
         buf = io.StringIO()
         formats.annotations_csv(res["items"], buf)
         return buf.getvalue().encode("utf-8")
+
+
+def _light_copy(cap: LogicCapture, used) -> LogicCapture:
+    """The capture as a decode worker needs it: the channels it reads keep their edges, the others are empty placeholders (indices stay the same), no analog rows."""
+    keep = {int(i) for i in used}
+    out = copy.copy(cap)
+    out.channels = [c if i in keep else Channel(c.name, c.init, c.edges[:0]) for i, c in enumerate(cap.channels)]
+    out.analog = []
+    out.meta = {}
+    return out
 
 
 def _hexmatch(q: str, v: int) -> bool:

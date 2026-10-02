@@ -6,6 +6,7 @@ The facts behind each rule (with file references into the chipwhisperer library)
 """
 from __future__ import annotations
 
+import weakref
 from typing import Any, Dict, Optional
 
 MODELS = {
@@ -30,6 +31,9 @@ LA_GROUPS = {
     "USERIO 20-pin": ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "CK"],
     "glitch": ["glitch out", "source clock", "MMCM1", "MMCM2", "glitch go", "capture trigger", "glitch enable", "manual trigger", "MMCM1 trigger"],
 }
+
+
+ADC_MUL_REASON = "the ADC clock multiplier (clock.adc_mul) is on the ChipWhisperer-Husky only; the CW-Lite and Pro set it with clock.adc_src"
 
 
 class Unsupported(RuntimeError):
@@ -81,7 +85,7 @@ def capabilities(scope, target=None) -> Dict[str, Any]:
     if m is None:
         none = cap(False, "connect a scope first")
         return {"connected": scope is not None, "model": None, "label": None, "uart": none, "simpleserial": none, "spi": none, "jtag": none, "swd": none, "trace": none, "gpio": none, "userio": none, "bitbanger": none, "onewire": none,
-                "triggers": {}, "programmers": {}, "logic_analyzer": logic_sources(None)}
+                "triggers": {}, "programmers": {}, "logic_analyzer": logic_sources(None), "clock": {"adc_mul": none}}
     husky, nano, openadc = m in HUSKY, m == "nano", m in OPENADC
     spi_fw = _feature(scope, "TARGET_SPI")
     mpsse_fw = _feature(scope, "MPSSE")
@@ -110,8 +114,10 @@ def capabilities(scope, target=None) -> Dict[str, Any]:
     jtag_ok = jtag_model and not getattr(scope, "sim_model", None)
     jtag_reason = "the CW-Nano's 20-pin header has no TCK/TDI/TDO (SPI) lines" if nano else (fw(mpsse_fw, "JTAG/SWD (MPSSE)") or ("needs real hardware: OpenOCD cannot drive the simulator" if jtag_model else None))
     out["jtag"] = cap(jtag_ok, jtag_reason, headers=["20-pin target"] + (["USERIO 20-pin"] if husky else []), needs="OpenOCD", speed_khz=500, model_supports=jtag_model)
-    swd_userio = husky and pin_ctl is not False
-    out["swd"] = cap(jtag_ok, jtag_reason, headers=["20-pin target"] + (["USERIO 20-pin"] if swd_userio else []), needs="OpenOCD", speed_khz=500, model_supports=jtag_model)
+    # On a Husky, enable_MPSSE drives the TMS/SWDIO direction pin through set_husky_tms_wr, which needs the HUSKY_PIN_CONTROL firmware feature (SAM firmware 1.4); without it the library logs "SWD mode will not work" on either header.
+    swd_fw = not husky or pin_ctl is not False
+    swd_reason = fw(pin_ctl, "SWD on the Husky (SAM firmware 1.4 or newer)") if jtag_ok and not swd_fw else jtag_reason
+    out["swd"] = cap(jtag_ok and swd_fw, swd_reason, headers=["20-pin target"] + (["USERIO 20-pin"] if husky else []), needs="OpenOCD", speed_khz=500, model_supports=jtag_model and swd_fw)
     out["trace"] = cap(husky and (trace_present or out["simulated"]), "Arm trace needs a ChipWhisperer-Husky" if not husky else "the Husky trace component is not available", modes=["swo", "parallel"], notebooks="https://github.com/newaetech/chipwhisperer-jupyter/tree/main/demos/husky/trace")
     # Every model can drive its pins; only the OpenADC scopes can read them back (the CW-Nano getters return constants).
     drive = GPIO_DRIVE["nano" if nano else "openadc"]
@@ -150,6 +156,7 @@ def capabilities(scope, target=None) -> Dict[str, Any]:
     out["programmers"] = p
 
     out["logic_analyzer"] = logic_sources(scope, m, la_present)
+    out["clock"] = {"adc_mul": cap(husky, ADC_MUL_REASON)}
     return out
 
 
@@ -181,9 +188,33 @@ _MODULE_REASON = {"SAD": "SAD triggering needs a ChipWhisperer-Pro or Husky", "D
                   "trace": "the trace trigger needs a ChipWhisperer-Husky", "ADC": "ADC level triggering needs a ChipWhisperer-Husky", "edge_counter": "edge counting needs a ChipWhisperer-Husky", "bitbanger": "the bit-banger trigger needs a Husky and a chipwhisperer library newer than 6.0.0"}
 
 
+# The gates of the connected scope, computed once per scope object and model: the settings tree and every setting write consult them, and recomputing the capabilities each time made the tree slower. A new connection is a new scope object, so it misses the cache; invalidate_gates() clears it on connect and disconnect too.
+_gate_cache: Dict[str, Any] = {"ref": None, "model": None, "gates": None}
+
+
+def invalidate_gates() -> None:
+    """Forget the cached setting gates (the session calls it on scope connect and disconnect)."""
+    _gate_cache.update(ref=None, model=None, gates=None)
+
+
 def setting_gates(scope, caps: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
-    """Per-model choices for scope settings whose valid values depend on the hardware: {path: {"choices": [...], "disabled": {value: reason}}}. Unsupported values stay listed but disabled, with the reason."""
-    c = caps or capabilities(scope)
+    """Per-model choices for scope settings whose valid values depend on the hardware: {path: {"choices": [...], "disabled": {value: reason}}}. Unsupported values stay listed but disabled, with the reason. A path the model does not have at all is {path: {"unavailable": reason}}. Cached per scope object and model unless ``caps`` is given."""
+    if scope is None:
+        return {}
+    if caps is not None:
+        return _compute_gates(caps)
+    ref = _gate_cache["ref"]
+    if ref is not None and ref() is scope and _gate_cache["model"] == getattr(scope, "sim_model", None):
+        return _gate_cache["gates"]
+    gates = _compute_gates(capabilities(scope))
+    try:
+        _gate_cache.update(ref=weakref.ref(scope), model=getattr(scope, "sim_model", None), gates=gates)
+    except TypeError:  # an object without weak reference support: no caching
+        invalidate_gates()
+    return gates
+
+
+def _compute_gates(c: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     m = c.get("model")
     if not m:
         return {}
@@ -212,6 +243,9 @@ def setting_gates(scope, caps: Optional[Dict[str, Any]] = None) -> Dict[str, Dic
     if nano:
         modes = ["rising_edge", "falling_edge", "low", "high"]
         gates["adc.basic_mode"] = {"choices": modes, "disabled": {x: "the CW-Nano triggers on a rising edge only" for x in modes if x != "rising_edge"}}
+    adc_mul = (c.get("clock") or {}).get("adc_mul") or {}
+    if not adc_mul.get("available"):
+        gates["clock.adc_mul"] = {"unavailable": adc_mul.get("reason") or ADC_MUL_REASON}
     return gates
 
 
@@ -231,15 +265,19 @@ def gate_settings(nodes, scope) -> list:
         return nodes
 
     def walk(ns):
+        keep = []
         for n in ns or []:
+            g = gates.get(n.get("path"))
+            if g and "unavailable" in g:
+                continue  # the model has no such setting (the simulator standing in for it would otherwise offer it)
             if n.get("kind") == "group":
-                walk(n.get("children"))
-            elif n.get("path") in gates and n.get("writable"):
-                g = gates[n["path"]]
+                n["children"] = walk(n.get("children"))
+            elif g and n.get("writable"):
                 n["choices"] = list(g["choices"])
                 n["disabled_choices"] = dict(g["disabled"])
-    walk(nodes)
-    return nodes
+            keep.append(n)
+        return keep
+    return walk(nodes)
 
 
 def check_setting(scope, path: str, value) -> None:
@@ -248,6 +286,8 @@ def check_setting(scope, path: str, value) -> None:
     g = gates.get(path)
     if not g:
         return
+    if "unavailable" in g:
+        raise Unsupported(f"{path}: {g['unavailable']}")
     if path == "trigger.triggers" and isinstance(value, str):
         import re
         for tok in re.split(r"\s+", value.strip().lower()):

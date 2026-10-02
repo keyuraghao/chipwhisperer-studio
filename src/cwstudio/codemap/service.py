@@ -26,6 +26,20 @@ log = logging.getLogger("cwstudio.codemap")
 DEFAULT_KEY = bytes.fromhex("2b7e151628aed2a6abf7158809cf4f3c")
 
 
+def _check_mapping(m: power.Mapping) -> None:
+    """Reject settings that make the cycle to sample mapping meaningless (before they are applied)."""
+    if not 0.2 < m.scale < 5:
+        raise ValueError("scale must stay between 0.2 and 5")
+    if (m.adc_freq is not None and m.adc_freq <= 0) or (m.target_freq is not None and m.target_freq <= 0):
+        raise ValueError("adc_freq and target_freq must be positive (Hz)")
+    if m.decimate < 1:
+        raise ValueError("decimate must be 1 or more")
+    if m.adc_offset < 0 or m.presamples < 0:
+        raise ValueError("adc_offset and presamples cannot be negative")
+    if not np.isfinite(m.shift):
+        raise ValueError("shift must be a number")
+
+
 def engine_status() -> Dict[str, Any]:
     """Which architectures can be emulated here (Unicorn is needed for Arm and RISC-V)."""
     try:
@@ -122,7 +136,9 @@ class CodeMapService:
                 path = cand
         st = os.stat(path)
         key = f"{path}:{st.st_mtime_ns}:{st.st_size}"
-        p = self._programs.get(key)
+        p = self._programs.pop(key, None)
+        if p is not None:
+            self._programs[key] = p  # most recently used last
         if p is None:
             eng = engine_status()
             if not eng["elf"]["available"]:
@@ -131,6 +147,8 @@ class CodeMapService:
             p.objdump = find_objdump(self.s.toolchains, p.arch) if p.arch else None
             self._programs = {k: v for k, v in self._programs.items() if not k.startswith(path + ":")}
             self._programs[key] = p
+            while len(self._programs) > 6:  # parsed debug information of a few recent ELFs, not of every file ever opened
+                self._programs.pop(next(iter(self._programs)))
         if sources is not None:
             p.set_source_roots(sources)
         return p
@@ -171,10 +189,11 @@ class CodeMapService:
         for k in ("adc_offset", "presamples", "decimate"):
             if over.get(k) is not None:
                 setattr(m, k, int(over[k]))
-        m.spc = m.adc_freq / m.target_freq / max(1, m.decimate)
         for k in ("scale", "shift"):
             if over.get(k) is not None:
                 setattr(m, k, float(over[k]))
+        _check_mapping(m)
+        m.spc = m.adc_freq / m.target_freq / max(1, m.decimate)
         return m
 
     # --- build ------------------------------------------------------------------------------------
@@ -217,16 +236,24 @@ class CodeMapService:
                 idx = None
                 tin = key = b""
             key = bytes.fromhex(p["key"].replace(" ", "")) if p.get("key") else (key or DEFAULT_KEY)
-            text = bytes.fromhex(p["text"].replace(" ", "")) if p.get("text") else (tin or bytes(16))
+            text = bytes.fromhex(p["text"].replace(" ", "")) if p.get("text") is not None else (tin or bytes(16))  # "" sends a command without data
             cmd = p.get("cmd") or "p"
+            raw = p.get("raw")
             try:
-                run, resp = fw.encrypt(key, text, cmd)
+                if raw is not None:  # firmware that does not speak SimpleSerial (basic-passwdcheck): these serial bytes go in as they are
+                    raw_b = raw.encode() if p.get("raw_text") else bytes.fromhex(str(raw).replace(" ", ""))
+                    run, _snap = fw.command_raw(raw_b)
+                    resp = run.output
+                    key, text, cmd, textout = b"", raw_b, "raw", None
+                else:
+                    run, resp = fw.encrypt(key, text, cmd)
             except EmuError as e:
                 raise Unsupported(f"emulation failed: {e}") from e
             tl = Timeline.build(prog, run)
+            mapping = self._scope_mapping(dict(p.get("mapping") or {}))  # before anything changes: a bad mapping leaves the previous code map as it was
             self.prog, self.fw, self.timeline = prog, fw, tl
             self.P = power.cycle_power(run)
-            self.mapping = self._scope_mapping(dict(p.get("mapping") or {}))
+            self.mapping = mapping
             self.alignment = None
             expect = None
             if cmd == "p" and len(text) == 16 and len(key) == 16:
@@ -237,7 +264,8 @@ class CodeMapService:
                          "response": resp.hex() if resp is not None else None, "aes_ok": (resp == expect) if expect is not None and resp is not None else None,
                          "stored_textout": textout.hex() if textout else None, "matches_stored": (resp == textout) if textout and resp is not None else None,
                          "instructions": run.instructions, "cycles": run.total_cycles, "trigger_cycles": (lo - hi) if hi is not None and lo is not None else None,
-                         "trigger_source": run.trigger_source, "built": time.time(), "seconds": None, "firmware": fw.info(), "program": prog.summary(),
+                         "trigger_source": run.trigger_source, "halted": fw.machine.where(run.halted) if run.halted is not None else None, "output": run.output[:512].hex(),
+                         "built": time.time(), "seconds": None, "firmware": fw.info(), "program": prog.summary(),
                          "sim_emulates": self._sim_emulates(prog)}
             want = p.get("align", "auto")
             if want is True or (want == "auto" and len(store) >= 1):
@@ -272,7 +300,7 @@ class CodeMapService:
     # --- mapping & alignment ------------------------------------------------------------------------
     def set_mapping(self, p: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
-            m = self.mapping
+            m = power.Mapping(**self.mapping.__dict__)  # changes apply only once all of them are valid
             for k in ("shift", "scale"):
                 if p.get(k) is not None:
                     setattr(m, k, float(p[k]))
@@ -288,11 +316,11 @@ class CodeMapService:
             for k in ("adc_freq", "target_freq"):
                 if p.get(k):
                     setattr(m, k, float(p[k]))
-            m.spc = (m.adc_freq or 4 * 7.37e6) / (m.target_freq or 7.37e6) / max(1, m.decimate)
             if p.get("reset"):
                 m.shift, m.scale = 0.0, 1.0
-            if not 0.2 < m.scale < 5:
-                raise ValueError("scale must stay between 0.2 and 5")
+            _check_mapping(m)
+            m.spc = (m.adc_freq or 4 * 7.37e6) / (m.target_freq or 7.37e6) / max(1, m.decimate)
+            self.mapping = m
         self.publish()
         return {"mapping": m.to_json(), "alignment": self.alignment}
 
@@ -300,22 +328,35 @@ class CodeMapService:
         tl = self._need()
         store = self.s.store
         src = p.get("source") or "mean"
+        if src not in ("mean", "trace"):
+            raise ValueError("source must be 'mean' or 'trace'")
         if not len(store):
             raise LookupError("no stored traces to align with: capture some first")
         if src == "trace":
             i = p.get("trace")
             i = int(i) if i is not None else (self.meta.get("trace") if self.meta.get("trace") is not None else len(store) - 1)
-            x = store.get(i)[0]
+            if not -len(store) <= i < len(store):
+                raise LookupError(f"no trace {i} (the store has {len(store)})")
+            x = store.get(i % len(store))[0]
         else:
             st = store.stats(0, int(p["traces"]) if p.get("traces") else None)
             x = st.get("mean")
             if x is None:
                 raise LookupError("no stored traces to align with")
         sr = (float(p.get("scale_min") or 0.9), float(p.get("scale_max") or 1.1))
-        res = power.align(np.asarray(x), self.P, tl.t0, self.mapping, max_shift=int(p["max_shift"]) if p.get("max_shift") else None, scale_range=sr)
+        if not 0.2 < sr[0] <= sr[1] < 5:
+            raise ValueError("need 0.2 < scale_min <= scale_max < 5")
+        ms = int(p["max_shift"]) if p.get("max_shift") else None
+        if ms is not None and not 1 <= ms <= 200_000:
+            raise ValueError("max_shift must be 1 to 200000 samples")
+        res = power.align(np.asarray(x), self.P, tl.t0, self.mapping, max_shift=ms, scale_range=sr)
         res["source"] = src
         res["samples"] = int(len(x))
-        if p.get("apply", True):
+        apply = p.get("apply", "auto")
+        if apply == "auto":  # a low confidence fit is more likely wrong than the nominal mapping from the scope settings: keep the mapping
+            apply = res["label"] != "low"
+        res["applied"] = bool(apply)
+        if apply:
             self.mapping.shift, self.mapping.scale = res["shift"], res["scale"]
         self.alignment = res
         return res
@@ -330,7 +371,10 @@ class CodeMapService:
         tl = self._need()
         if n is None:
             n = self.s.store.summary().get("samples") or 5000
-        return power.model_samples(self.P, tl.t0, self.mapping, int(n)).astype(np.float32)
+        n = int(n)
+        if not 0 <= n <= 2_000_000:
+            raise ValueError("n must be 0 to 2000000 samples")
+        return power.model_samples(self.P, tl.t0, self.mapping, n).astype(np.float32)
 
     # --- queries -------------------------------------------------------------------------------------
     def _with_samples(self, d: Dict[str, Any]) -> Dict[str, Any]:
@@ -348,8 +392,11 @@ class CodeMapService:
         if "start" not in p or "end" not in p:
             raise ValueError("give start and end (sample indices)")
         s0, s1 = float(p["start"]), float(p["end"])
+        if not (np.isfinite(s0) and np.isfinite(s1)):
+            raise ValueError("start and end must be finite sample indices")
         c0, c1 = (float(x) for x in self.mapping.cycle([s0, s1]))
-        out = tl.region(c0, c1, limit=int(p.get("limit") or 400))
+        limit = int(p["limit"]) if p.get("limit") is not None else 400
+        out = tl.region(c0, c1, limit=max(1, limit))
         out["samples"] = [s0, s1]
         return self._with_samples(out)
 
@@ -368,7 +415,7 @@ class CodeMapService:
         if p.get("file") is not None and p.get("line") is not None:
             fi = p["file"]
             fi = int(fi) if isinstance(fi, int) or (isinstance(fi, str) and fi.lstrip("-").isdigit()) else tl.prog.find_file(str(fi))
-            if fi < 0:
+            if not 0 <= fi < len(tl.prog.files):
                 raise LookupError(f"no source file {p['file']!r} in the debug information")
             line = int(p["line"])
             rng = tl.line_ranges(fi, line)
@@ -378,6 +425,8 @@ class CodeMapService:
 
     def at(self, sample: float) -> Optional[Dict[str, Any]]:
         tl = self._need()
+        if not np.isfinite(sample):
+            raise ValueError("sample must be a finite number")
         c = float(self.mapping.cycle(sample))
         d = tl.at(c)
         if d:
@@ -412,10 +461,14 @@ class CodeMapService:
             if f is None:
                 raise LookupError(f"no function {p['function']!r}")
             ranges = [(f.lo, f.hi)]
-        else:
+        elif p.get("file") is not None and p.get("line") is not None:
             fi = p.get("file")
             fi = int(fi) if str(fi).lstrip("-").isdigit() else prog.find_file(str(fi))
-            ranges = prog.ranges_for_line(fi, int(p.get("line") or 0))
+            if not 0 <= fi < len(prog.files):
+                raise LookupError(f"no source file {p['file']!r} in the debug information")
+            ranges = prog.ranges_for_line(fi, int(p["line"]))
+        else:
+            raise ValueError("give function, file and line, or lo and hi (addresses)")
         out = []
         counts = dict(zip(*np.unique(tl.run.pcs, return_counts=True))) if len(tl.run.pcs) else {}
         for lo, hi in ranges[:16]:
@@ -483,7 +536,8 @@ def register_routes(app, session) -> None:
         except HTTPException:
             raise
         except LookupError as e:
-            raise HTTPException(status_code=404, detail=f"{type(e).__name__}: {str(e).strip(chr(39))}")
+            msg = e.args[0] if isinstance(e, KeyError) and e.args else str(e)  # KeyError's str() is the repr of its message
+            raise HTTPException(status_code=404, detail=f"{type(e).__name__}: {msg}")
         except Exception as e:  # noqa: BLE001
             log.debug("codemap API error", exc_info=True)
             raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
@@ -506,7 +560,7 @@ def register_routes(app, session) -> None:
 
     @app.post("/api/codemap/build")
     async def codemap_build(req: Request):
-        """Body: elf (path; default the programmed firmware or the newest build), sources (folder), trace (index; default the newest), key/text (hex, instead of a trace), cmd ('p'), core, protocol ('2.1', '1.1'), wait_states, mapping {adc_freq, target_freq, adc_offset, presamples, decimate, scale, shift}, align (true, false or 'auto'), options {skip: [...], getch: [...], putch: [...], trigger_high: [...], trigger_low: [...]}."""
+        """Body: elf (path; default the programmed firmware or the newest build), sources (folder), trace (index; default the newest), key/text (hex, instead of a trace; text "" sends the command without data), cmd ('p'), raw (hex serial bytes fed as they are, for firmware that is not SimpleSerial; raw_text true: raw is text), core, protocol ('2.1', '1.1'), wait_states, mapping {adc_freq, target_freq, adc_offset, presamples, decimate, scale, shift}, align (true, false or 'auto'), options {skip: [...], getch: [...], putch: [...], trigger_high: [...], trigger_low: [...], max_instructions (per command, default 4000000)}."""
         return await run(svc.build, await body(req))
 
     @app.post("/api/codemap/upload")
@@ -534,7 +588,7 @@ def register_routes(app, session) -> None:
 
     @app.post("/api/codemap/align")
     async def codemap_align(req: Request):
-        """Body: source ('mean' or 'trace'), trace, scale_min, scale_max, max_shift, apply. Fits shift and scale of the mapping by correlating the emulated power model with the traces."""
+        """Body: source ('mean' or 'trace'), trace, scale_min, scale_max, max_shift, apply (true, false or 'auto': apply unless the confidence is low). Fits shift and scale of the mapping by correlating the emulated power model with the traces."""
         return await run(svc.align, await body(req))
 
     @app.put("/api/codemap/mapping")

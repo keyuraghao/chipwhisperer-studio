@@ -21,15 +21,27 @@ def edge_dtype(n: int):
     return np.int32 if n < 2 ** 31 - 1 else np.int64
 
 
+_LIMITS: Dict[str, Any] = {}
+
+
+def _limits(dt):
+    info = np.iinfo(dt)
+    _LIMITS[np.dtype(dt).str] = (int(info.min), int(info.max))
+    return _LIMITS[np.dtype(dt).str]
+
+
 def ss(a: np.ndarray, v, side: str = "left"):
     """``np.searchsorted`` on an integer sample array without converting the array: numpy would copy a whole int32 edge list to compare it with int64 or float keys, so the keys are cast to its dtype instead (floats rounded the way integer positions compare: down for side right, up for side left)."""
-    v = np.asarray(v)
     if a.dtype.kind in "iu":
+        if isinstance(v, (int, np.integer)) and not isinstance(v, bool):
+            lo, hi = _LIMITS.get(a.dtype.str) or _limits(a.dtype)
+            return int(a.searchsorted(a.dtype.type(min(max(int(v), lo), hi)), side=side))
+        v = np.asarray(v)
         if v.dtype.kind == "f":
             v = np.floor(v) if side == "right" else np.ceil(v)
         if v.dtype != a.dtype:
-            info = np.iinfo(a.dtype)
-            v = np.clip(v, info.min, info.max).astype(a.dtype)
+            lo, hi = _LIMITS.get(a.dtype.str) or _limits(a.dtype)
+            v = np.clip(v, lo, hi).astype(a.dtype)
     r = np.searchsorted(a, v, side=side)
     return int(r) if np.ndim(r) == 0 else r
 
@@ -156,7 +168,7 @@ class LogicCapture:
         return self.channels[self.ch_index(ref)]
 
     def ch_index(self, ref) -> int:
-        """A channel by index (int or digit string) or by name."""
+        """A channel by index (int or digit string) or by name (exact, then any case, then the name it had before a rename)."""
         if isinstance(ref, (int, np.integer)):
             i = int(ref)
         elif isinstance(ref, str) and ref.strip().lstrip("-").isdigit() and not any(c.name == ref for c in self.channels):
@@ -169,6 +181,9 @@ class LogicCapture:
             for k, c in enumerate(self.channels):
                 if c.name.lower() == low:
                     return k
+            orig = self.meta.get("orig_names") or []
+            if ref in orig and len(orig) == len(self.channels):
+                return orig.index(ref)  # the name the channel had before it was renamed
             raise KeyError(f"no channel {ref!r}; channels are {', '.join(c.name for c in self.channels)}")
         if not 0 <= i < len(self.channels):
             raise KeyError(f"channel index {i} out of range (0..{len(self.channels) - 1})")

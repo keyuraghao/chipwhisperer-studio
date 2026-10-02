@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -12,18 +13,28 @@ import time
 import webbrowser
 
 
+def _port_free(host: str, port: int) -> bool:
+    """Whether uvicorn could listen on host:port. Like uvicorn, SO_REUSEADDR (except on Windows, where it would let two servers share the port), so connections of a Studio that just closed (TIME_WAIT) do not count: otherwise a restart moves to the next port, a different origin, and the UI forgets its settings (theme, last tab)."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as s:
+        if os.name != "nt":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
 def _free_port(host: str, preferred: int) -> int:
     for port in [preferred] + list(range(preferred + 1, preferred + 50)):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind((host if host != "0.0.0.0" else "127.0.0.1", port))
-                return port
-            except OSError:
-                continue
+        if _port_free(host, port):
+            return port
     return preferred
 
 
 def _wait_ready(host: str, port: int, timeout: float = 20.0) -> bool:
+    """Wait until something accepts connections on host:port (used by the MCP server for its embedded Studio)."""
     end = time.time() + timeout
     while time.time() < end:
         try:
@@ -31,6 +42,18 @@ def _wait_ready(host: str, port: int, timeout: float = 20.0) -> bool:
                 return True
         except OSError:
             time.sleep(0.1)
+    return False
+
+
+def _wait_started(server, timeout: float = 20.0, alive=None) -> bool:
+    """Wait until this Studio's uvicorn server is listening (it sets started once its socket is open; connecting to the port instead could reach another program that holds it). Give up early once alive() says the server thread has stopped, for example because the port could not be opened."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if getattr(server, "started", False):
+            return True
+        if alive is not None and not alive():
+            return False
+        time.sleep(0.05)
     return False
 
 
@@ -69,7 +92,7 @@ def desktop_entry(install: bool = True) -> int:
     with open(desktop, "w", encoding="utf-8") as f:
         f.write("[Desktop Entry]\nType=Application\nName=ChipWhisperer Studio\nGenericName=Side-channel analysis\n"
                 "Comment=Capture, analyse and glitch with ChipWhisperer hardware\n"
-                f"Exec={' '.join(quote(a) for a in cmd)}\nIcon={DESKTOP_ID}\nTerminal={'true' if default_mode() == 'browser' else 'false'}\n"
+                f"Exec={' '.join(quote(a) for a in cmd)}\nIcon={DESKTOP_ID}\nStartupWMClass={DESKTOP_ID}\nTerminal={'true' if default_mode() == 'browser' else 'false'}\n"
                 "Categories=Development;Electronics;\nKeywords=ChipWhisperer;side-channel;CPA;glitch;power analysis;\n")
     os.chmod(desktop, 0o755)
     if shutil.which("update-desktop-database"):
@@ -80,6 +103,7 @@ def desktop_entry(install: bool = True) -> int:
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+    argv = [a for a in argv if not a.startswith("-psn_")]  # macOS process serial number that Finder may pass to an application it opens
     if argv[:1] == ["mcp"]:
         from cwstudio.mcp_server import main as mcp_main
         return mcp_main(argv[1:])
@@ -115,22 +139,23 @@ def main(argv=None):
     session = Session(simulate=args.simulate, data_dir=args.data_dir)
     app = create_app(session)
     port = _free_port(args.host, args.port)
-    url_host = "127.0.0.1" if args.host == "0.0.0.0" else args.host
-    url = f"http://{url_host}:{port}/"
+    url_host = local_host(args.host)
+    url = f"http://{'[' + url_host + ']' if ':' in url_host else url_host}:{port}/"
     if args.simulate:
         url += "?simulate=1"
 
+    # One line per HTTP request only with --log-level debug: the UI polls, so at info level the access log buries Studio's own messages.
     config = uvicorn.Config(app, host=args.host, port=port, log_level=args.log_level, ws_max_size=64 * 1024 * 1024,
-                            timeout_graceful_shutdown=3)
+                            timeout_graceful_shutdown=3, access_log=args.log_level == "debug")
     server = uvicorn.Server(config)
     app.state.server = server
 
     if mode != "window":
         def opener():
-            if _wait_ready(url_host, port):
+            if _wait_started(server):
                 print(f"ChipWhisperer Studio running at {url}", flush=True)
                 if mode == "browser":
-                    webbrowser.open(url)
+                    open_browser(url)
         threading.Thread(target=opener, daemon=True).start()
         try:
             server.run()
@@ -138,20 +163,29 @@ def main(argv=None):
             pass
         return 0
 
-    # Own window: the server runs in the background and the window owns the main thread (macOS requires that); closing the window quits Studio.
-    thread = threading.Thread(target=server.run, name="studio-server", daemon=True)
+    # Own window: the server runs in the background and the window owns the main thread (macOS requires that); closing the window quits Studio, and shutting Studio down (/api/shutdown, Ctrl+C, SIGTERM) closes the window.
+    def serve():
+        try:
+            server.run()
+        except SystemExit:  # uvicorn exits when it cannot open the port; it has logged why
+            pass
+    thread = threading.Thread(target=serve, name="studio-server", daemon=True)
     thread.start()
-    if not _wait_ready(url_host, port):
-        print("ChipWhisperer Studio did not start", file=sys.stderr, flush=True)
+    if not _wait_started(server, alive=thread.is_alive):
+        print(f"ChipWhisperer Studio did not start (is port {port} on {args.host} in use?)", file=sys.stderr, flush=True)
+        server.should_exit = True
+        thread.join(10)
         return 1
     print(f"ChipWhisperer Studio running at {url}", flush=True)
+    _sigterm_as_interrupt()
     from cwstudio import window
     try:
-        window.open_window(url)
+        window.open_window(url, should_close=lambda: not thread.is_alive())
     except window.WindowUnavailable as e:
         print(f"Studio cannot open its own window: {e}", flush=True)
-        print("Opening it in your web browser instead. Close this console window or press Ctrl+C to quit.", flush=True)
-        webbrowser.open(url)
+        if has_display():
+            print("Opening it in your web browser instead. Close this console window or press Ctrl+C to quit.", flush=True)
+        open_browser(url)
         try:
             while thread.is_alive():
                 thread.join(0.5)
@@ -162,6 +196,56 @@ def main(argv=None):
     server.should_exit = True
     thread.join(10)
     return 0
+
+
+def has_display() -> bool:
+    """False on a Linux machine without a graphical session (SSH, a server), where only text browsers could open."""
+    return not sys.platform.startswith("linux") or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def open_browser(url: str) -> None:
+    """Open url in the web browser. Without a graphical display Python would start a text browser (lynx, w3m) in the terminal and block, so say where Studio is instead."""
+    if not has_display() and not os.environ.get("BROWSER"):
+        from urllib.parse import urlparse
+        port = urlparse(url).port
+        print(f"There is no graphical display: open {url} from a browser on this machine, or forward the port (ssh -L {port}:127.0.0.1:{port} ...) and open it on yours. Press Ctrl+C to quit.", flush=True)
+        return
+    keys = ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME")
+    saved = {k: os.environ.get(k) for k in keys}
+    try:
+        if getattr(sys, "frozen", False):  # the browser is a system program: start it without the bundle's library path
+            from cwstudio.window import system_env
+            clean = system_env()
+            for k in keys:
+                if k in clean:
+                    os.environ[k] = clean[k]
+                else:
+                    os.environ.pop(k, None)
+        webbrowser.open(url)
+    except Exception as e:  # noqa: BLE001
+        print(f"Could not open a web browser ({e}): open {url} yourself.", flush=True)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def local_host(host: str) -> str:
+    """The address this machine uses to reach a server bound to host (a wildcard address means every interface, so use loopback)."""
+    return {"0.0.0.0": "127.0.0.1", "": "127.0.0.1", "::": "::1"}.get(host, host)
+
+
+def _sigterm_as_interrupt() -> None:
+    """In window mode uvicorn runs in a thread and does not handle signals: make SIGTERM (logout, kill, a service manager) take the same clean path as Ctrl+C, so the window closes, the hardware is released and the port is freed."""
+    def handler(_sig, _frame):
+        raise KeyboardInterrupt
+    try:
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGTERM, handler)
+    except (ValueError, OSError, AttributeError):
+        pass
 
 
 def default_mode() -> str:

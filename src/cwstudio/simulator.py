@@ -5,6 +5,7 @@ The simulator implements the subset of the `chipwhisperer` API that Studio uses 
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -109,10 +110,15 @@ class SimADC(_Settings):
         return v
 
 
+# ADC clock sources of the CW-Lite and Pro: (clock the ADC follows, multiplier). The Husky sets the multiplier with adc_mul instead.
+ADC_SOURCES = {"clkgen_x4": ("clkgen", 4), "clkgen_x1": ("clkgen", 1), "extclk_x4": ("extclk", 4), "extclk_x1": ("extclk", 1), "extclk_dir": ("extclk", 1)}
+
+
 @_make_props
 class SimClock(_Settings):
     FIELDS = [
-        ("adc_src", "clkgen_x4", "ADC clock source."),
+        ("adc_src", "clkgen_x4", "ADC clock source (CW-Lite, Pro): clkgen_x4, clkgen_x1, extclk_x4, extclk_x1 or extclk_dir. Sets adc_mul to the multiplier."),
+        ("adc_mul", 4, "ADC clock multiplier (Husky only): the ADC samples at adc_mul times the target clock (1..16)."),
         ("adc_freq", 29538459, "ADC sampling frequency (derived)."),
         ("adc_locked", True, "ADC DCM locked (read only)."),
         ("clkgen_src", "system", "CLKGEN source."),
@@ -121,14 +127,58 @@ class SimClock(_Settings):
         ("freq_ctr", 7384615, "Frequency counter reading (read only)."),
     ]
 
-    def __init__(self):
-        pass
+    def __init__(self, husky: bool = True):
+        self._husky = husky  # clock.adc_mul exists on the Husky only; as a CW-Lite, Pro or Nano the simulator has no such attribute, like the hardware
+
+    def _dict_repr(self):
+        return OrderedDict((name, getattr(self, name)) for name, _default, _doc in self.FIELDS if self._husky or name != "adc_mul")
+
+    def _derive(self, clkgen=None, mul=None):
+        """The ADC rate follows the target clock (CLKGEN; on EXTCLK the simulated target is clocked from CLKGEN through HS2 as usual, so the same frequency) times the multiplier, as on the hardware."""
+        f = float(self._clkgen_freq if clkgen is None else clkgen)
+        self._adc_freq = int(f * (self._adc_mul if mul is None else mul))
+        self._freq_ctr = int(f)
 
     def _validate_clkgen_freq(self, v):
         v = float(v)
-        self._adc_freq = int(v * 4)
-        self._freq_ctr = int(v)
+        self._derive(clkgen=v)
         return int(v)
+
+    def _validate_adc_src(self, v):
+        if v not in ADC_SOURCES:
+            raise ValueError(f"adc_src must be one of {', '.join(ADC_SOURCES)}")
+        self._adc_mul = ADC_SOURCES[v][1]
+        self._derive()
+        return v
+
+    def _validate_adc_mul(self, v):
+        v = int(v)
+        if not 1 <= v <= 16:
+            raise ValueError("adc_mul must be 1..16")
+        if v in (1, 4) and self._adc_src != "extclk_dir":  # keep adc_src describing the same clock where it can
+            self._adc_src = f"{ADC_SOURCES[self._adc_src][0]}_x{v}"
+        self._derive(mul=v)
+        return v
+
+
+def _husky_only(prop):
+    """Wrap a SimClock property so that it exists on the Husky models only (AttributeError with the reason otherwise, as on a CW-Lite or Pro)."""
+    def check(self):
+        if not self._husky:
+            from cwstudio.capabilities import ADC_MUL_REASON
+            raise AttributeError(ADC_MUL_REASON)
+
+    def fget(self):
+        check(self)
+        return prop.fget(self)
+
+    def fset(self, v):
+        check(self)
+        prop.fset(self, v)
+    return property(fget, fset, doc=prop.__doc__)
+
+
+SimClock.adc_mul = _husky_only(SimClock.adc_mul)
 
 
 @_make_props
@@ -194,7 +244,7 @@ class SimScope:
         self.fw_version = {"major": 0, "minor": 1, "debug": 0}
         self.gain = SimGain()
         self.adc = SimADC()
-        self.clock = SimClock()
+        self.clock = SimClock(husky=sim_model in ("husky", "huskyplus"))
         self.trigger = SimTrigger()
         self.io = SimIO()
         self.glitch = SimGlitch()
@@ -278,6 +328,15 @@ class SimScope:
             self.adc._state = False
             return False
         deadline = time.time() + float(self.adc.timeout)
+        if not self.trigger_driven():
+            # the trigger watches pins the simulated target never toggles: like real hardware, wait out the timeout; the target's run is not captured
+            time.sleep(max(0.0, deadline - time.time()))
+            if self.target is not None:
+                self.target._triggered = False
+                self.target._last_run = None
+            self._armed = False
+            self.adc._state = False
+            return True
         while self.target is None or not self.target._triggered:
             if time.time() > deadline:
                 self._armed = False
@@ -293,12 +352,27 @@ class SimScope:
             self.target._last_run = None
         else:
             self._last_trace = self._synth(self.target._last_pt, self.target._key)
-            trig = int(self.leak_start + 16 * self.leak_spacing)
+            leak_start, leak_spacing = self._leak_pos()
+            trig = int(leak_start + 16 * leak_spacing)
         self.target._triggered = False
         self._armed = False
         self.adc._state = False
         self.adc._trig_count = trig
         return False
+
+    # pins the simulated target drives: TIO4 is its trigger output; the UART lines (TIO1, TIO2) idle high and never give an edge on their own
+    _TRIGGER_PIN = "tio4"
+    _IDLE_HIGH = ("tio1", "tio2")
+
+    def trigger_driven(self) -> bool:
+        """Whether the configured trigger (trigger.triggers, e.g. 'tio4', 'tio1 OR tio4', 'tio4 AND tio1') ever fires when the simulated target raises its trigger pin. Only TIO4 is driven by the target, so a trigger on other pins times out as it would on real hardware."""
+        expr = str(self.trigger.triggers or self._TRIGGER_PIN).strip().lower()
+        pins = [p for p in re.split(r"\s+(?:or|and|nand)\s+|\s*[|&]\s*", expr) if p]
+        if self._TRIGGER_PIN not in pins:
+            return False
+        if re.search(r"\sand\s|&", expr) and not re.search(r"\snand\s", expr):
+            return all(p == self._TRIGGER_PIN or p in self._IDLE_HIGH for p in pins)  # AND: every other input must be high when TIO4 rises
+        return True
 
     def load_firmware(self, path: str) -> Dict[str, Any]:
         """Program the simulated target: an ELF (or a .hex with its .elf next to it) runs in the emulator from now on; anything else keeps the built-in AES model."""
@@ -311,15 +385,31 @@ class SimScope:
         return self._last_trace
 
     # --- leakage model ------------------------------------------------------
+    def _spc(self) -> int:
+        """ADC samples per target clock cycle (4 with the default clkgen_x4 / adc_mul 4)."""
+        try:
+            return int(self.clock._adc_mul)  # also set by adc_src on the models without adc_mul
+        except (AttributeError, TypeError, ValueError):
+            return 4
+
+    def _leak_pos(self):
+        """Sample index of the first S-box leak and the spacing between bytes at the current ADC clock. They are set for 4 samples per target clock; another multiplier stretches or squeezes the trace like on the hardware (the default is used exactly as set)."""
+        spc = self._spc()
+        if spc == 4:
+            return self.leak_start, self.leak_spacing
+        return int(round(self.leak_start * spc / 4)), max(1, int(round(self.leak_spacing * spc / 4)))
+
     def _background(self, n: int) -> np.ndarray:
         """Clock ripple + slow envelope for `n` samples (key independent, cached)."""
+        spc = self._spc()
         bg = self._bg_cache
-        if bg is None or bg.shape[0] != n:
+        if bg is None or bg.shape[0] != n or getattr(self, "_bg_spc", 4) != spc:
             t = np.arange(n, dtype=np.float32)
-            clk = 0.03 * np.sin(2 * np.pi * t / 4.0)
-            env = 0.02 * np.sin(2 * np.pi * t / 700.0)
+            clk = 0.03 * np.sin(2 * np.pi * t / float(spc))  # one ripple period per target clock cycle
+            env = 0.02 * np.sin(2 * np.pi * t / (700.0 * spc / 4))
             bg = clk + env
             self._bg_cache = bg
+            self._bg_spc = spc
         return bg
 
     def _leak_geometry(self, n: int, offset: int):
@@ -328,24 +418,25 @@ class SimScope:
         Returns None when the per-byte windows overlap (custom leak_spacing), in which case `_synth` applies them one by one so every sample sees the same sequence of float32 roundings.
         """
         width = 6
-        geo_key = (n, offset, self.leak_start, self.leak_spacing)
+        leak_start, leak_spacing = self._leak_pos()
+        geo_key = (n, offset, leak_start, leak_spacing)
         cached = self._geo_cache
         if cached is not None and cached[0] == geo_key:
             return cached[1]
         geo = None
-        if self.leak_spacing >= 6 * width:
+        if leak_spacing >= 6 * width:
             b_idx, b_win, b_shape = [], [], []
             for b in range(16):
-                center = self.leak_start + b * self.leak_spacing - offset
+                center = leak_start + b * leak_spacing - offset
                 if 0 <= center < n:
                     idx = np.arange(max(0, center - 3 * width), min(n, center + 3 * width))
                     b_idx.append(idx)
                     b_win.append(np.full(idx.shape[0], b, np.intp))
                     b_shape.append(np.exp(-0.5 * ((idx - center) / width) ** 2))
             r_idx, r_shape = [], []
-            r_start = self.leak_start + 16 * self.leak_spacing - offset
+            r_start = leak_start + 16 * leak_spacing - offset
             for r in range(9):
-                c = r_start + r * 16 * self.leak_spacing
+                c = r_start + r * 16 * leak_spacing
                 if 0 <= c < n:
                     idx = np.arange(max(0, c - 40), min(n, c + 40))
                     r_idx.append(idx)
@@ -375,9 +466,10 @@ class SimScope:
             if r_idx.shape[0]:
                 wave[r_idx] -= r_shape
         else:
+            leak_start, leak_spacing = self._leak_pos()
             if has_key:
                 for b in range(16):
-                    center = self.leak_start + b * self.leak_spacing - offset
+                    center = leak_start + b * leak_spacing - offset
                     if 0 <= center < n:
                         hw = int(HW[SBOX[pt[b] ^ key[b]]])
                         width = 6
@@ -385,9 +477,9 @@ class SimScope:
                         idx = np.arange(lo, hi)
                         bump = np.exp(-0.5 * ((idx - center) / width) ** 2)
                         wave[lo:hi] -= (self.leak_amplitude * (hw - 4) + 0.15) * bump
-            r_start = self.leak_start + 16 * self.leak_spacing - offset
+            r_start = leak_start + 16 * leak_spacing - offset
             for r in range(9):
-                c = r_start + r * 16 * self.leak_spacing
+                c = r_start + r * 16 * leak_spacing
                 if 0 <= c < n:
                     lo, hi = max(0, c - 40), min(n, c + 40)
                     idx = np.arange(lo, hi)
@@ -491,16 +583,49 @@ class SimTarget:
     def _firmware(self):
         return getattr(self.scope, "firmware", None) if self.scope is not None else None
 
+    def _fw_glitch(self) -> str:
+        """Outcome of the armed glitch on the emulated firmware: 'normal', 'skip' (the core misses instructions where the glitch lands) or 'reset' (too strong: the target crashes). Where it lands (ext_offset) is up to the firmware itself."""
+        g = self.scope.glitch
+        w = abs(float(g.width))
+        lo, hi = self.glitch_width_ok
+        if w < 1.0:
+            return "normal"
+        if w > hi + 5 or int(g.repeat) > 20:
+            return "reset"
+        r = self.scope._rng.random()
+        if lo <= w <= hi:
+            return "skip" if r < 0.75 else ("reset" if r < 0.85 else "normal")
+        if w > hi - 5:
+            return "reset" if r < 0.3 else "normal"
+        return "normal"
+
     def _fw_write(self, fw, cmd: str, data: bytes) -> None:
-        """A command for the emulated firmware: run it and keep its response (and, for commands that raise the trigger, the run the scope turns into a trace)."""
+        """A command for the emulated firmware: run it and keep its response (and, for commands that raise the trigger, the run the scope turns into a trace). An armed glitch makes the emulated core skip the instructions at ext_offset cycles after the trigger, or crash it."""
         if cmd == "k":
             self._key = bytes(data)
             return
+        key = self._key if cmd == "p" else None
+        outcome = self._fw_glitch() if self._glitch_active() else "normal"
         try:
-            run, resp, P = fw.command(cmd, data, self._key if cmd == "p" else None)
+            run, resp, P = fw.command(cmd, data, key)
         except Exception as e:  # noqa: BLE001
             log.warning("emulated firmware: %s", e)
             self._pending_response = None
+            return
+        if outcome == "skip" and run.trig:
+            g = self.scope.glitch
+            try:
+                run, resp, P = fw.glitched(cmd, data, key, int(g.ext_offset), 1 + (max(1, int(g.repeat)) - 1) // 2)
+            except Exception as e:  # noqa: BLE001  the glitched firmware faulted or hung: the target crashed
+                log.debug("glitched firmware crashed: %s", e)
+                outcome = "reset"
+        if outcome == "reset" and run.trig:  # the trigger fired, then the target crashed: no response, and it starts over
+            self._last_run = (run, P)
+            self._triggered = True
+            self._trigger_count += 1
+            self._pending_response = None
+            self._reset_count += 1
+            fw._state = None
             return
         if cmd == "p":
             self._last_pt = data

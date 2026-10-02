@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import struct
+from array import array
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -32,7 +33,12 @@ TRIG_HIGH = ("trigger_high",)
 TRIG_LOW = ("trigger_low",)
 FALLBACK_WINDOW = ("aes_indep_enc", "AES128_ECB_indp_crypto", "get_pt")
 BOOT_LIMIT = 5_000_000
-RUN_LIMIT = 4_000_000
+RUN_LIMIT = 4_000_000  # per command; options max_instructions raises it for long computations (RSA, ECC)
+PROBE_LIMIT = 300_000  # the SimpleSerial version probe ('v') is tiny; firmware that does something long with it is not SimpleSerial
+
+
+ARM_EXCEPTIONS = {1: "undefined instruction", 2: "supervisor call (SVC)", 3: "prefetch abort", 4: "data abort", 7: "breakpoint (BKPT)", 18: "usage fault"}
+RISCV_EXCEPTIONS = {0: "misaligned instruction fetch", 1: "instruction access fault", 2: "illegal instruction", 3: "breakpoint (EBREAK)", 4: "misaligned load", 5: "load access fault", 6: "misaligned store", 7: "store access fault", 8: "environment call (ECALL)", 11: "environment call (ECALL)"}
 
 
 class EmuError(RuntimeError):
@@ -53,6 +59,7 @@ class Run:
     trig: List[Tuple[str, int]] = field(default_factory=list)  # ("high"|"low", cycle)
     total_cycles: int = 0
     trigger_source: str = "symbol"
+    halted: Optional[int] = None  # address of the endless loop the firmware stopped in instead of waiting for input (e.g. "while (1);" after its last output)
 
     @property
     def instructions(self) -> int:
@@ -159,6 +166,28 @@ def _first(prog: Program, names: Sequence[str]) -> Optional[int]:
     return None
 
 
+def self_loops(prog: Program) -> List[int]:
+    """Addresses of jump-to-self instructions ("while (1);", fault handlers): reaching one means the firmware stopped for good."""
+    out: List[int] = []
+    for s in prog.segments:
+        if not s.executable or not s.data:
+            continue
+        d = s.data[: len(s.data) & ~1]
+        hws = np.frombuffer(d, "<u2")
+        if prog.arch == "arm":
+            hits = np.flatnonzero(hws == 0xE7FE) * 2  # b.n .
+        elif prog.arch == "avr":
+            hits = np.flatnonzero(hws == 0xCFFF) * 2  # rjmp .-2
+        elif prog.arch == "riscv":
+            c = np.flatnonzero(hws == 0xA001) * 2  # c.j .
+            w = np.flatnonzero((hws[:-1] == 0x006F) & (hws[1:] == 0)) * 2 if len(hws) > 1 else np.zeros(0, np.int64)  # jal x0, .
+            hits = np.concatenate([c, w])
+        else:
+            hits = np.zeros(0, np.int64)
+        out.extend((s.vaddr + hits).tolist())
+    return sorted(set(out))
+
+
 def _hook_read_after(uc, fn) -> None:
     """UC_HOOK_MEM_READ_AFTER (the callback sees the value read); the Python binding leaves it out of hook_add, so register it the way hook_add does, falling back to a read hook that fetches the value itself."""
     import unicorn as U
@@ -193,16 +222,54 @@ class _Machine:
         self.trig: List[Tuple[str, int]] = []
         self.snap = None
         self.blocked = False
+        self.halted: Optional[int] = None
         self.fault: Optional[str] = None
+        self.boot_limit = int(options.get("max_boot_instructions") or BOOT_LIMIT)
+        self.run_limit = int(options.get("max_instructions") or RUN_LIMIT)
         self.getch = _first(prog, options.get("getch") or GETCH)
         self.putch = _first(prog, options.get("putch") or PUTCH)
         if self.getch is None or self.putch is None:
-            raise EmuError("the firmware has no getch/putch function to feed SimpleSerial input through (expected one of " + ", ".join(GETCH) + "); give their names in the code map options")
+            missing = " and ".join(n for n, a in (("getch", self.getch), ("putch", self.putch)) if a is None)
+            raise EmuError(f"the firmware has no {missing} function to feed SimpleSerial input through (expected one of " + ", ".join(GETCH if self.getch is None else PUTCH) + "); if the compiler inlined it (link time optimisation), build without -flto, or give the function names in the code map options (getch, putch)")
         self.trigger_source = "symbol"
 
     def skip_list(self) -> List[str]:
         names = list(SKIP_FUNCS) + list(self.opt.get("skip") or [])
         return [n for n in names if n in self.prog.symbols and n not in (self.opt.get("noskip") or [])]
+
+    def where(self, pc: int) -> str:
+        """``0x... in func (file:line)`` for messages."""
+        f = self.prog.func_at(pc)
+        s = f"0x{pc:x}"
+        if f is not None:
+            s += f" in {f.name}"
+            fi, ln = self.prog.line_at(pc)
+            if fi is not None and fi >= 0 and ln:
+                s += f" ({self.prog.short_label(fi)}:{ln})"
+        return s
+
+    def loop_hint(self, tail: Sequence[int]) -> str:
+        """Where a run that hit the instruction limit spent its last instructions, and what to do about it."""
+        if not len(tail):
+            return ""
+        vals, counts = np.unique(np.asarray(tail, np.int64), return_counts=True)
+        hot = int(vals[int(np.argmax(counts))])
+        f = self.prog.func_at(hot)
+        name = f.name if f is not None else None
+        msg = f"; it was still running {self.where(hot)}"
+        if len(vals) <= 64:
+            msg += " in a loop of a few instructions (waiting for a peripheral flag, an interrupt or a timer that the emulator does not provide?"
+            msg += f" Skip that function with options.skip = ['{name}'])" if name else ")"
+        else:
+            msg += f" (a long computation? Raise options.max_instructions above {self.run_limit:,})"
+        return msg
+
+    def halt_message(self, when: str) -> str:
+        out = bytes(self.out)
+        s = f"the firmware stopped in an endless loop at {self.where(self.halted or 0)} {when}"
+        if out:
+            s += f" after sending {out[:80]!r}"
+        return s + "; firmware that does its work in interrupt handlers (an idle main loop) cannot be emulated"
 
 
 class UnicornMachine(_Machine):
@@ -239,9 +306,10 @@ class UnicornMachine(_Machine):
             raise EmuError(f"Unicorn cannot run {prog.arch}")
         self.pages: Dict[int, str] = {}  # page -> "ram" | "io"
         self.io_latch: Dict[int, int] = {}
-        self.pcs: List[int] = []
-        self.mem_idx: List[int] = []
-        self.mem_val: List[int] = []
+        # compact traces (4 bytes per entry instead of a Python int each): a run near the instruction limit stays in the tens of megabytes
+        self.pcs = array("I")
+        self.mem_idx = array("i")
+        self.mem_val = array("I")
         self.fault_addr: Optional[int] = None
         self.info: Dict[int, Tuple[int, int, int]] = {}
         self._map_image()
@@ -338,14 +406,52 @@ class UnicornMachine(_Machine):
         f = self.prog.func_at(addr)
         return (f.hi - f.lo) if f is not None and f.lo == addr else 4
 
+    def _it_blocks(self) -> Dict[int, int]:
+        """Address of every Thumb IT instruction in the executable segments, with the address just past the instructions it makes conditional."""
+        out: Dict[int, int] = {}
+        for s in self.prog.segments:
+            if not s.executable or not s.data:
+                continue
+            d = s.data
+            hws = np.frombuffer(d[: len(d) & ~1], "<u2")
+            for k in np.flatnonzero(((hws & 0xFF00) == 0xBF00) & ((hws & 0xF) != 0)).tolist():
+                mask = int(hws[k]) & 0xF
+                n = 4 - ((mask & -mask).bit_length() - 1)
+                j = k + 1
+                for _ in range(n):
+                    if j >= len(hws):
+                        break
+                    j += 2 if (int(hws[j]) >> 11) in (0b11101, 0b11110, 0b11111) else 1
+                out[s.vaddr + 2 * k] = s.vaddr + 2 * j
+        return out
+
     def _install_hooks(self) -> None:
         U = self.U
         uc = self.uc
         pcs = self.pcs
         app = pcs.append
 
-        def code(uc, addr, size, ud):
-            app(addr)
+        if self.prog.arch == "arm":
+            # Unicorn bug workaround: with memory hooks installed, a load or store skipped inside an IT block leaves its IT state in the CPU, and the next block of code is translated as if it were still conditional (an unconditional return after "itt ne; strne" was skipped, so malloc ran away with the heap). Clear that stale state on the first instruction after each IT block.
+            its = self._it_blocks()
+            it_range = [0, 0]
+            XPSR, IT_BITS = self.A.UC_ARM_REG_XPSR, 0x0600FC00
+
+            def code(uc, addr, size, ud):
+                app(addr)
+                if it_range[1]:
+                    if it_range[0] <= addr < it_range[1]:
+                        return
+                    it_range[1] = 0
+                    x = uc.reg_read(XPSR)
+                    if x & IT_BITS:
+                        uc.reg_write(XPSR, x & ~IT_BITS)
+                end = its.get(addr)
+                if end is not None:
+                    it_range[0], it_range[1] = addr + 2, end
+        else:
+            def code(uc, addr, size, ud):
+                app(addr)
         uc.hook_add(U.UC_HOOK_CODE, code)
         midx, mval = self.mem_idx.append, self.mem_val.append
 
@@ -373,7 +479,8 @@ class UnicornMachine(_Machine):
                         uc.reg_write(self.A.UC_RISCV_REG_X0 + rd, 0)
                     uc.reg_write(self.PC, pc + 4)
                     return
-            self.fault = f"exception {no} at 0x{pc:x}" + (f" in {self.prog.func_at(pc).name}" if self.prog.func_at(pc) else "")
+            names = ARM_EXCEPTIONS if self.prog.arch == "arm" else RISCV_EXCEPTIONS
+            self.fault = f"{names.get(no, 'exception %d' % no)} at {self.where(pc)}; traps, system calls and interrupt handlers are not emulated"
             uc.emu_stop()
         uc.hook_add(U.UC_HOOK_INTR, intr)
 
@@ -397,6 +504,12 @@ class UnicornMachine(_Machine):
         def h_putch(uc, addr, size, ud):
             self.out.append(uc.reg_read(self.RET) & 0xFF)
         uc.hook_add(U.UC_HOOK_CODE, h_putch, begin=self.putch, end=self.putch)
+
+        def h_halt(uc, addr, size, ud):
+            self.halted = addr
+            uc.emu_stop()
+        for a in self_loops(self.prog)[:256]:
+            uc.hook_add(U.UC_HOOK_CODE, h_halt, begin=a, end=a)
         th = _first(self.prog, self.opt.get("trigger_high") or TRIG_HIGH)
         tl = _first(self.prog, self.opt.get("trigger_low") or TRIG_LOW)
         if th is not None and tl is not None:
@@ -405,6 +518,13 @@ class UnicornMachine(_Machine):
                 uc.hook_add(U.UC_HOOK_CODE, lambda uc, addr, size, ud, kind=kind: self.trig.append((kind, len(pcs) - 1)), begin=a, end=a)
         else:
             self.trigger_source = "function"
+
+    def _is_sleep(self, pc: int) -> bool:
+        b = self.prog.read(pc, 4)
+        if self.prog.arch == "arm":
+            hw1, hw2 = struct.unpack("<HH", b)
+            return hw1 in (0xBF30, 0xBF20) or (hw1 == 0xF3AF and hw2 in (0x8003, 0x8002))
+        return struct.unpack("<I", b)[0] == 0x10500073
 
     def _save(self):
         ram = [(p, bytes(self.uc.mem_read(p, 0x1000))) for p, k in sorted(self.pages.items()) if k == "ram" and self._ram_page(p)]
@@ -419,15 +539,18 @@ class UnicornMachine(_Machine):
         self.io_latch.update(latch)
 
     # running ----------------------------------------------------------------------------------------------
-    def _go(self, begin: int, limit: int) -> None:
+    def _go(self, begin: int, limit: int, keep: bool = True) -> None:
+        """Run from ``begin`` until getch blocks, the firmware halts or faults, or ``limit`` instructions ran. ``keep`` False (start-up) runs in chunks and drops the recorded trace between them, so a long boot does not pile up memory."""
         U = self.U
         self.blocked = False
+        self.halted = None
         self.fault = None
+        chunk = limit if keep else min(limit, 250_000)
         while True:
             self.fault_addr = None
             n0 = len(self.pcs)
             try:
-                self.uc.emu_start(begin | self.thumb, 0xFFFFFFFF if self.thumb else 0xFFFFFFFC, count=max(1, limit))
+                self.uc.emu_start(begin | self.thumb, 0xFFFFFFFF if self.thumb else 0xFFFFFFFC, count=max(1, min(chunk, limit)))
             except U.UcError as e:
                 if e.errno in (U.UC_ERR_READ_UNMAPPED, U.UC_ERR_WRITE_UNMAPPED) and self.fault_addr is not None:
                     page = self.fault_addr & ~0xFFF
@@ -443,35 +566,72 @@ class UnicornMachine(_Machine):
                     limit -= len(self.pcs) - n0
                     continue
                 pc = self.uc.reg_read(self.PC)
-                f = self.prog.func_at(pc)
-                raise EmuError(f"the firmware faulted ({e}) at 0x{pc:x}" + (f" in {f.name}" if f else "")) from e
-            break
+                last = self.pcs[-1] if len(self.pcs) > n0 else None
+                frm = f" (last instruction {self.where(last)})" if last is not None and last != pc else ""
+                raise EmuError(f"the firmware faulted ({e}) at {self.where(pc)}{frm}") from e
+            ran = len(self.pcs) - n0
+            if not (self.blocked or self.halted is not None or self.fault) and ran < min(chunk, limit):
+                last = self.pcs[-1] if self.pcs else begin
+                if self._is_sleep(last) and ran > 0:  # WFI/WFE stops Unicorn: let an interrupt "wake" it and go on (an idle loop around it then shows up as a loop)
+                    limit -= ran
+                    begin = self.uc.reg_read(self.PC)
+                    continue
+                raise EmuError(f"the emulation stopped unexpectedly after {self.where(last)}")
+            if keep or self.blocked or self.halted is not None or self.fault or limit - ran <= 0:
+                break
+            limit -= ran  # start-up: next chunk, keeping only the tail of the trace (for the message if it never gets to getch)
+            del self.pcs[:-4096]
+            del self.mem_idx[:]
+            del self.mem_val[:]
+            begin = self.uc.reg_read(self.PC)
         if self.fault:
             raise EmuError("the firmware stopped: " + self.fault)
 
     def boot(self) -> None:
         self.uc.reg_write(self.SP, self.initial_sp or 0)
-        self.pcs.clear()
-        self._go(self.reset, BOOT_LIMIT)
+        del self.pcs[:]
+        self._go(self.reset, self.boot_limit, keep=False)
+        if self.halted is not None:
+            raise EmuError(self.halt_message("during start-up, before it read any input"))
         if not self.blocked:
-            raise EmuError(f"the firmware did not reach getch within {BOOT_LIMIT} instructions after reset (stuck at 0x{self.uc.reg_read(self.PC):x}); a hardware init function may need to be skipped")
-        self.pcs.clear()
-        self.mem_idx.clear()
-        self.mem_val.clear()
+            raise EmuError(f"the firmware did not reach getch within {self.boot_limit:,} instructions after reset" + self.loop_hint(self.pcs[-4096:]))
+        del self.pcs[:]
+        del self.mem_idx[:]
+        del self.mem_val[:]
 
-    def run(self, inp: bytes, snap) -> Run:
+    def _insn_size(self, pc: int) -> int:
+        b = self.prog.read(pc, 2)
+        if self.prog.arch == "arm":
+            return 4 if (b[1] >> 3) in (0b11101, 0b11110, 0b11111) else 2
+        return 4 if b[0] & 3 == 3 else 2
+
+    def run(self, inp: bytes, snap, limit: Optional[int] = None, skip: Optional[Tuple[int, int]] = None) -> Run:
+        """Feed ``inp`` from ``snap`` until the firmware waits for more input or halts. ``skip`` = (n, k): run n instructions, then skip the next k without executing them (a fault injection, like a clock glitch that makes the core miss instructions)."""
         self._load(snap)
         self.inq[:] = inp
         self.out.clear()
         self.trig.clear()
-        self.pcs.clear()
-        self.mem_idx.clear()
-        self.mem_val.clear()
+        del self.pcs[:]
+        del self.mem_idx[:]
+        del self.mem_val[:]
         self.snap = None
-        self._go(self.getch, RUN_LIMIT)
-        if not self.blocked:
-            raise EmuError(f"the command did not finish within {RUN_LIMIT} instructions")
-        pcs = np.asarray(self.pcs, np.int64)
+        limit = limit or self.run_limit
+        begin = self.getch
+        if skip is not None and skip[0] < limit:
+            self._go(begin, max(1, skip[0]))
+            if not (self.blocked or self.halted is not None) and len(self.pcs) >= skip[0]:
+                pc = self.uc.reg_read(self.PC)
+                for _ in range(max(1, skip[1])):
+                    pc += self._insn_size(pc)
+                limit -= len(self.pcs)
+                begin = pc
+            else:
+                limit = 0
+        if limit > 0:
+            self._go(begin, limit)
+        if not self.blocked and self.halted is None:
+            raise EmuError(f"the command did not finish within {limit:,} instructions" + self.loop_hint(self.pcs[-4096:]))
+        pcs = np.frombuffer(self.pcs, np.uint32).astype(np.int64) if len(self.pcs) else np.zeros(0, np.int64)
         info = self.info
         for u in np.unique(pcs).tolist():
             if u not in info:
@@ -481,13 +641,13 @@ class UnicornMachine(_Machine):
         if len(pcs):
             np.cumsum(dur[:-1], out=start[1:])
         leak = np.full(len(pcs), -1, np.int64)
-        if self.mem_idx:
-            mi = np.asarray(self.mem_idx, np.int64)
+        if len(self.mem_idx):
+            mi = np.frombuffer(self.mem_idx, np.int32).astype(np.int64)
             ok = mi >= 0
-            leak[mi[ok]] = np.asarray(self.mem_val, np.int64)[ok]
+            leak[mi[ok]] = np.frombuffer(self.mem_val, np.uint32).astype(np.int64)[ok]
         trig = [(k, int(start[i]) if 0 <= i < len(start) else 0) for k, i in self.trig]
         total = int(start[-1] + dur[-1]) if len(pcs) else 0
-        return Run(bytes(self.out), pcs, start, dur, cls, leak, 32, trig, total, self.trigger_source)
+        return Run(bytes(self.out), pcs, start, dur, cls, leak, 32, trig, total, self.trigger_source, self.halted)
 
     def _classify(self, pc: int) -> Tuple[int, int, int]:
         try:
@@ -523,9 +683,10 @@ class AVRMachine(_Machine):
         pc22 = flash_size > 0x20000
         self.cpu = avr.AVRCore(bytes(flash), xmega=xmega, pc22=pc22, sram_start=sram_start, sram_size=sram_size, data_image=data_image)
         self.cpu.sp = sram_start + sram_size - 1
-        self.tp: List[int] = []
-        self.tc: List[int] = []
-        self.tl: List[int] = []
+        self.tp = array("I")  # word address, start cycle and leak value of every executed instruction (compact, see UnicornMachine)
+        self.tc = array("q")
+        self.tl = array("i")
+        self.port_state = {"v": 0}
         self._install_hooks()
 
     def _install_hooks(self) -> None:
@@ -547,6 +708,13 @@ class AVRMachine(_Machine):
             self.out.append(R[24])
             return None
         cpu.add_hook(self.putch, putch)
+
+        def halt(c, a):
+            self.halted = a
+            raise avr.Blocked()
+        for a in self_loops(self.prog)[:256]:
+            if a not in (self.getch, self.putch):
+                cpu.add_hook(a, lambda c, a=a: halt(c, a))
         th = _first(self.prog, self.opt.get("trigger_high") or TRIG_HIGH)
         tl = _first(self.prog, self.opt.get("trigger_low") or TRIG_LOW)
         tp = self.tp
@@ -559,9 +727,8 @@ class AVRMachine(_Machine):
             port = ("xmega", 0x0600, 0) if cpu.xmega else ("avr", 0x28, 0)
         kind, base, bit = port
         m = 1 << bit
+        state = self.port_state  # part of every snapshot: a command that left the trigger high must not hide the next one's rising edge
         if kind == "xmega":  # PORTx.OUT, OUTSET, OUTCLR, OUTTGL
-            state = {"v": 0}
-
             def watch(c, a, v, base=base):
                 old = state["v"]
                 off = a - base
@@ -572,8 +739,6 @@ class AVRMachine(_Machine):
             for off in (4, 5, 6, 7):
                 cpu.write_watch[base + off] = watch
         else:
-            state = {"v": 0}
-
             def watch(c, a, v):
                 old = state["v"]
                 state["v"] = v
@@ -586,45 +751,64 @@ class AVRMachine(_Machine):
         cpu = self.cpu
         cpu.pc = 0
         self.blocked = False
+        self.halted = None
+        tail: Tuple[list, list, list] = ([], [], [])
         try:
-            cpu.run(BOOT_LIMIT)
+            left = self.boot_limit
+            while left > 0 and not self.blocked and self.halted is None:
+                n = min(left, 250_000)
+                tail = ([], [], [])
+                ran = cpu.run(n, tail if left <= n or left - n < 250_000 else None)
+                left -= max(ran, 1)
+                if ran < n:
+                    break
         except self.avr.Fault as e:
             raise EmuError(f"the firmware faulted during start-up: {e}") from e
+        if self.halted is not None:
+            raise EmuError(self.halt_message("during start-up, before it read any input"))
         if not self.blocked:
-            raise EmuError(f"the firmware did not reach getch within {BOOT_LIMIT} instructions after reset (stuck at 0x{cpu.pc * 2:x}); a hardware init function may need to be skipped")
-        self.snap = cpu.snapshot()
+            raise EmuError(f"the firmware did not reach getch within {self.boot_limit:,} instructions after reset" + self.loop_hint([p * 2 for p in tail[0][-4096:]] or [cpu.pc * 2]))
+        self.snap = (cpu.snapshot(), self.port_state["v"])
 
-    def run(self, inp: bytes, snap) -> Run:
+    def run(self, inp: bytes, snap, limit: Optional[int] = None, skip: Optional[Tuple[int, int]] = None) -> Run:
         cpu = self.cpu
-        cpu.restore(snap)
+        cpu.restore(snap[0])
+        self.port_state["v"] = snap[1]
         cpu.cycles = 0
         self.inq[:] = inp
         self.out.clear()
         self.trig.clear()
         tp, tc, tl = self.tp, self.tc, self.tl
-        tp.clear()
-        tc.clear()
-        tl.clear()
+        del tp[:], tc[:], tl[:]
         self.blocked = False
+        self.halted = None
+        limit = limit or self.run_limit
         try:
-            cpu.run(RUN_LIMIT, (tp, tc, tl))
+            if skip is not None and skip[0] < limit:
+                ran = cpu.run(max(1, skip[0]), (tp, tc, tl))
+                if not (self.blocked or self.halted is not None) and ran >= skip[0]:
+                    for _ in range(max(1, skip[1])):
+                        cpu.pc += 2 if self.avr._is_2word(cpu.word(cpu.pc)) else 1
+                    cpu.run(limit - ran, (tp, tc, tl))
+            else:
+                cpu.run(limit, (tp, tc, tl))
         except self.avr.Fault as e:
             raise EmuError(f"the firmware faulted: {e}") from e
-        if not self.blocked:
-            raise EmuError(f"the command did not finish within {RUN_LIMIT} instructions")
-        self.snap = cpu.snapshot()
-        pcs = np.asarray(tp, np.int64) * 2
-        start = np.asarray(tc, np.int64)
+        if not self.blocked and self.halted is None:
+            raise EmuError(f"the command did not finish within {limit:,} instructions" + self.loop_hint([p * 2 for p in tp[-4096:]]))
+        self.snap = (cpu.snapshot(), self.port_state["v"]) if self.blocked else None
+        pcs = np.frombuffer(tp, np.uint32).astype(np.int64) * 2 if len(tp) else np.zeros(0, np.int64)
+        start = np.frombuffer(tc, np.int64).copy() if len(tc) else np.zeros(0, np.int64)
         total = int(cpu.cycles)
         dur = np.empty(len(start), np.int64)
         if len(start):
             dur[:-1] = np.diff(start)
             dur[-1] = total - start[-1]
-        kinds = np.asarray([cpu.kind[p] for p in tp], np.int8) if tp else np.zeros(0, np.int8)
+        kinds = np.asarray(cpu.kind, np.int8)[pcs // 2] if len(pcs) else np.zeros(0, np.int8)
         cls = np.where(kinds == 1, cy.CALL, np.where(kinds == 2, cy.RET, cy.ALU)).astype(np.int8)
-        leak = np.asarray(tl, np.int64)
+        leak = np.frombuffer(tl, np.int32).astype(np.int64) if len(tl) else np.zeros(0, np.int64)
         trig = [(k, int(start[i]) if 0 <= i < len(start) else 0) for k, i in self.trig]
-        return Run(bytes(self.out), pcs, start, dur, cls, leak, 8, trig, total, self.trigger_source)
+        return Run(bytes(self.out), pcs, start, dur, cls, leak, 8, trig, total, self.trigger_source, self.halted)
 
 
 # --- the runner the service and the simulator use ----------------------------------------------------
@@ -672,7 +856,7 @@ class Firmware:
         for ver in [first] + [v for v in ("2.1", "1.1") if v != first]:
             ss = SimpleSerial(ver)
             try:
-                run = self._m.run(ss.frame("v", b""), self._boot)
+                run = self._m.run(ss.frame("v", b""), self._boot, PROBE_LIMIT)
             except EmuError:
                 continue
             res = ss.parse(run.output)
@@ -685,17 +869,17 @@ class Firmware:
         return {"arch": self.prog.arch, "core": self.core, "core_label": cy.CORE_LABELS.get(self.core, self.core), "protocol": self.protocol, "wait_states": self.wait_states,
                 "trigger": m.trigger_source, "skipped": m.skip_list(), "getch": self.prog.func_at(m.getch).name if self.prog.func_at(m.getch) else None}
 
-    def command(self, cmd: str, data: bytes, snap=None) -> Tuple[Run, Any]:
-        """Run one command from ``snap`` (default: just after boot); returns the run and the snapshot after it."""
+    def command(self, cmd: str, data: bytes, snap=None, skip: Optional[Tuple[int, int]] = None, limit: Optional[int] = None) -> Tuple[Run, Any]:
+        """Run one command from ``snap`` (default: just after boot); returns the run and the snapshot after it (None when the firmware halted). ``skip`` = (n, k) skips k instructions after the first n (fault injection)."""
         with self.lock:
             self.machine
-            return self.command_raw(self.ss.frame(cmd, data), snap)
+            return self.command_raw(self.ss.frame(cmd, data), snap, skip, limit)
 
-    def command_raw(self, data: bytes, snap=None) -> Tuple[Run, Any]:
+    def command_raw(self, data: bytes, snap=None, skip: Optional[Tuple[int, int]] = None, limit: Optional[int] = None) -> Tuple[Run, Any]:
         """Feed raw serial bytes from ``snap`` (default: just after boot) until the firmware waits for more; returns the run and the snapshot after it."""
         with self.lock:
             m = self.machine
-            run = m.run(bytes(data), snap if snap is not None else self._boot)
+            run = m.run(bytes(data), snap if snap is not None else self._boot, limit, skip=skip)
             return run, m.snap
 
     def key_state(self, key: bytes):
@@ -711,11 +895,11 @@ class Firmware:
                 self._keys.move_to_end(key)
             return st
 
-    def encrypt(self, key: Optional[bytes], pt: bytes, cmd: str = "p") -> Tuple[Run, Optional[bytes]]:
+    def encrypt(self, key: Optional[bytes], pt: bytes, cmd: str = "p", skip: Optional[Tuple[int, int]] = None, limit: Optional[int] = None) -> Tuple[Run, Optional[bytes]]:
         """Send the key (cached) and then ``cmd`` with ``pt``; returns the run of the second command and its 'r' response."""
         with self.lock:
             st = self.key_state(key) if key else None
-            run, _ = self.command(cmd, pt, st)
+            run, _ = self.command(cmd, pt, st, skip, limit)
             if run.trigger_source == "function" and not run.trig:
                 run.trig = _function_window(self.prog, run)
             return run, self.ss.response(run.output, "r")

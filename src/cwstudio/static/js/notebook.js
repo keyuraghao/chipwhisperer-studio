@@ -1,5 +1,5 @@
 // Notebook tab: Jupyter-style cells that run inside Studio (sharing its scope and target), .ipynb files, NewAE's tutorials. Several notebooks can be open at once as tabs, in one pane or two side by side; each notebook has its own kernel (namespace) on the server, and all kernels run their cells one at a time on Studio's hardware thread.
-import { h, get, post, put, del, upload, toast, downloadUrl } from './api.js';
+import { h, get, post, put, del, upload, toast, downloadUrl, fmtNum } from './api.js';
 import { renderMarkdown as markdownHtml, sanitize } from './markdown.js';
 
 const I = {
@@ -26,6 +26,16 @@ const enc = encodeURIComponent;
 const LAYOUT_KEY = 'cw.nb.layout';
 const dirOf = (path) => (path && path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 const titleOf = (path) => path.replace(/\.ipynb$/, '').split('/').pop();
+// Very long text outputs (a loop printing 100k lines) show only their end, so rendering stays fast; the full text stays in the notebook (Download .ipynb).
+const MAX_OUT = 100000;
+function clip(text) {
+  if (text.length <= MAX_OUT) return text;
+  let cut = text.indexOf('\n', text.length - MAX_OUT);
+  if (cut < 0) cut = text.length - MAX_OUT;
+  let lines = 0;
+  for (let i = text.indexOf('\n'); i >= 0 && i <= cut; i = text.indexOf('\n', i + 1)) lines++;
+  return `[${fmtNum(lines)} earlier lines not shown; download the notebook for the full output]\n` + text.slice(cut + 1);
+}
 // Apply carriage returns like a terminal so tqdm progress bars update in place.
 function applyCR(text) {
   return text.split('\n').map((line) => { const i = line.lastIndexOf('\r'); return i >= 0 && i < line.length - 1 ? line.slice(i + 1) : line.replace(/\r$/, ''); }).join('\n');
@@ -69,15 +79,62 @@ export function initNotebook(ctx, sideEl, viewEl) {
       dirtyEl,
       h('div', { class: 'spacer' }), tracesBtn, kernelPill,
       ib('sm ghost', 'dl', '', () => downloadUrl(`/api/notebooks/download?path=${enc(d.path)}`), 'Download .ipynb'));
-    d.el = h('div', { class: 'nb-doc' }, toolbar, h('div', { class: 'nb-scroll' }, cellsEl));
+    const noticeEl = h('div', { class: 'nb-notice', style: 'display:none' });
+    const scrollEl = h('div', { class: 'nb-scroll' }, cellsEl);
+    d.el = h('div', { class: 'nb-doc' }, toolbar, noticeEl, scrollEl);
+    // A bar above the cells when the file changed elsewhere while this tab has unsaved edits, or was deleted.
+    function notice(kind) {
+      noticeEl.innerHTML = '';
+      d.notice = kind || null;
+      noticeEl.style.display = kind ? '' : 'none';
+      if (!kind) return;
+      noticeEl.dataset.kind = kind;
+      if (kind === 'conflict') {
+        noticeEl.append(h('span', {}, 'This notebook was changed outside this tab (a run from the API or an agent, or another window) while it has unsaved edits. Nothing is saved until you choose.'),
+          h('button', { class: 'btn sm', onclick: () => d.load() }, 'Reload from disk'),
+          h('button', { class: 'btn sm danger', onclick: () => save(true, true) }, 'Keep my version'));
+      } else {
+        noticeEl.append(h('span', {}, 'This notebook was deleted or renamed elsewhere; this tab\'s edits are not saved.'),
+          h('button', { class: 'btn sm', onclick: () => save(true, true) }, 'Save it again'),
+          h('button', { class: 'btn sm', onclick: () => closeDoc(d.path, true) }, 'Close'));
+      }
+    }
 
     const baseDir = () => dirOf(d.path);
-    function markDirty() { d.dirty = true; dirtyEl.textContent = 'unsaved'; refreshTab(d); clearTimeout(d.saveTimer); d.saveTimer = setTimeout(() => save(false), 2500); }
-    async function save(explicit) {
-      if (!d.nb) return;
-      clearTimeout(d.saveTimer);
-      try { await put('/api/notebooks/file', { path: d.path, notebook: d.nb }); d.dirty = false; dirtyEl.textContent = 'saved'; refreshTab(d); if (explicit) toast('Notebook saved', 'ok', 1500); } catch (e) { toast('Save failed: ' + e.message, 'err', 6000); }
+    function markDirty() { d.dirty = true; d.version = (d.version || 0) + 1; dirtyEl.textContent = 'unsaved'; refreshTab(d); clearTimeout(d.saveTimer); if (!d.notice) d.saveTimer = setTimeout(() => save(false), 2500); }
+    // Saves go one after another and send the file's modification time this tab last saw: the server refuses the save when the file changed since (a run, an agent, another window) or was deleted, instead of overwriting it or creating it again. force (an explicit choice in the notice) skips that check.
+    let chain = Promise.resolve();
+    function save(explicit, force) {
+      chain = chain.then(() => saveNow(explicit, force));
+      return chain;
     }
+    async function saveNow(explicit, force) {
+      if (!d.nb || (d.notice && !force)) return;
+      clearTimeout(d.saveTimer);
+      const version = d.version || 0;
+      d.saving = true;
+      try {
+        const r = await put('/api/notebooks/file', { path: d.path, notebook: d.nb, base_mtime: force || d.mtime == null ? undefined : d.mtime, client: clientId });
+        d.mtime = r.mtime;
+        notice(null);
+        if ((d.version || 0) === version) { d.dirty = false; dirtyEl.textContent = 'saved'; }
+        refreshTab(d);
+        if (explicit) toast('Notebook saved', 'ok', 1500);
+      } catch (e) {
+        if (/^NotebookConflict/.test(e.message)) notice('conflict');
+        else if (/^NotebookDeleted/.test(e.message)) notice('deleted');
+        else toast('Save failed: ' + e.message, 'err', 6000);
+      } finally { d.saving = false; }
+    }
+    // The file changed on the server (nb "file" event from another window, the API or an agent).
+    d.onFile = (ev) => {
+      if (ev.action === 'deleted') {
+        if (d.dirty) notice('deleted'); else { closeDoc(d.path, true); toast(`${d.path} was deleted`, 'info', 4000); }
+        return;
+      }
+      if (ev.client === clientId || (d.mtime != null && Math.abs(ev.mtime - d.mtime) < 1e-3)) return; // this tab's own save
+      if (d.dirty || d.saving) { clearTimeout(d.saveTimer); notice('conflict'); } else d.load(true, true);
+    };
 
     const cellById = (id) => d.nb && d.nb.cells.find((c) => c.id === id);
     function focusCell(id, edit) {
@@ -113,8 +170,8 @@ export function initNotebook(ctx, sideEl, viewEl) {
 
     function renderOutput(o) {
       const t = o.output_type;
-      if (t === 'stream') return h('pre', { class: 'nb-out stream ' + (o.name || '') }, applyCR(stripAnsi(o.text || '')));
-      if (t === 'error') return h('pre', { class: 'nb-out error' }, stripAnsi((o.traceback || []).join('\n') || `${o.ename}: ${o.evalue}`));
+      if (t === 'stream') return h('pre', { class: 'nb-out stream ' + (o.name || '') }, applyCR(clip(stripAnsi(o.text || ''))));
+      if (t === 'error') return h('pre', { class: 'nb-out error' }, clip(stripAnsi((o.traceback || []).join('\n') || `${o.ename}: ${o.evalue}`)));
       const data = o.data || {};
       if (data['image/png']) return h('div', { class: 'nb-out img' }, h('img', { src: 'data:image/png;base64,' + data['image/png'] }));
       if (data['image/jpeg']) return h('div', { class: 'nb-out img' }, h('img', { src: 'data:image/jpeg;base64,' + data['image/jpeg'] }));
@@ -126,7 +183,7 @@ export function initNotebook(ctx, sideEl, viewEl) {
         return fr;
       }
       if (data['text/markdown']) return h('div', { class: 'nb-out' }, renderMarkdown(data['text/markdown'], baseDir()));
-      if (data['text/plain'] != null) return h('pre', { class: 'nb-out result' }, stripAnsi(data['text/plain']));
+      if (data['text/plain'] != null) return h('pre', { class: 'nb-out result' }, clip(stripAnsi(String(data['text/plain']))));
       return null;
     }
 
@@ -163,7 +220,19 @@ export function initNotebook(ctx, sideEl, viewEl) {
       el.addEventListener('mousedown', () => focusCell(cell.id));
       el._gutter = gutter;
       el._autosize = autosize;
-      el._setOutputs = () => { outs.innerHTML = ''; (cell.outputs || []).forEach((o) => { const r = renderOutput(o); if (r) outs.append(r); }); };
+      el._setOutputs = () => { cancelAnimationFrame(el._raf); el._raf = 0; el._full = false; outs.innerHTML = ''; (cell.outputs || []).forEach((o) => { const r = renderOutput(o); if (r) outs.append(r); }); };
+      // Output events arrive many times a second while a cell prints: render at most once per frame, and when text was only appended to the last stream re-render just that one.
+      el._queueOutputs = (full) => {
+        el._full = el._full || full;
+        if (el._raf) return;
+        el._raf = requestAnimationFrame(() => {
+          el._raf = 0;
+          const outsList = cell.outputs || [], last = outsList[outsList.length - 1], lastEl = outs.lastElementChild;
+          if (el._full || !last || !lastEl || outs.children.length !== outsList.length) { el._setOutputs(); return; }
+          const r = renderOutput(last);
+          if (r) lastEl.replaceWith(r);
+        });
+      };
       if (cell.cell_type === 'markdown') {
         const md = h('div', { class: 'nb-md', title: 'Double-click to edit' });
         body.insertBefore(md, ta);
@@ -252,11 +321,10 @@ export function initNotebook(ctx, sideEl, viewEl) {
       if (ev.kind === 'queued') { setKernel({ ...k, started: true, queued: [...(k.queued || []), ev.cell] }); if (cell && el) setGutter(el, cell, 'queued'); return; }
       if (ev.kind === 'running') { setKernel({ ...k, started: true, busy: true, cell: ev.cell, queued: (k.queued || []).filter((c) => c !== ev.cell) }); if (cell && el) { cell.outputs = []; el._setOutputs(); setGutter(el, cell, 'running'); } return; }
       if (ev.kind === 'output' && cell && el) {
-        const o = ev.output, outs = cell.outputs, prev = outs[outs.length - 1];
-        if (o.output_type === 'clear_output') cell.outputs = [];
-        else if (o.output_type === 'stream' && prev && prev.output_type === 'stream' && prev.name === o.name) prev.text += o.text;
-        else outs.push(o);
-        el._setOutputs();
+        const o = ev.output, outs = cell.outputs || (cell.outputs = []), prev = outs[outs.length - 1];
+        if (o.output_type === 'clear_output') { cell.outputs = []; el._queueOutputs(true); }
+        else if (o.output_type === 'stream' && prev && prev.output_type === 'stream' && prev.name === o.name) { prev.text += o.text; el._queueOutputs(false); }
+        else { outs.push(o); el._queueOutputs(true); }
         return;
       }
       if (ev.kind === 'cancelled') { setKernel({ ...k, queued: (k.queued || []).filter((c) => c !== ev.cell) }); if (cell && el) setGutter(el, cell); return; }
@@ -268,15 +336,23 @@ export function initNotebook(ctx, sideEl, viewEl) {
       }
     };
 
-    d.load = async (quiet) => {
+    d.load = async (quiet, keepScroll) => {
+      let nb;
       try {
-        d.nb = await get(`/api/notebooks/file?path=${enc(d.path)}`);
+        nb = await get(`/api/notebooks/file?path=${enc(d.path)}`);
       } catch (e) {
         if (!quiet) toast(`${d.path}: ${e.message}`, 'err', 6000);
         return false;
       }
+      d.mtime = nb.mtime; delete nb.mtime;
+      d.nb = nb;
+      clearTimeout(d.saveTimer);
       d.dirty = false; dirtyEl.textContent = '';
+      notice(null);
+      const top = scrollEl.scrollTop;
       renderCells();
+      if (keepScroll) scrollEl.scrollTop = top;
+      refreshTab(d);
       get(`/api/kernel?kernel=${enc(d.path)}`).then(setKernel).catch(() => {});
       return true;
     };
@@ -591,12 +667,16 @@ export function initNotebook(ctx, sideEl, viewEl) {
   async function fetchTutorials() {
     try { renderTut(await post('/api/notebooks/tutorials/fetch')); } catch (e) { toast(e.message, 'err', 6000); }
   }
-  function renderTut(t) {
+  let tutState = null;
+  function renderTut(t, fromList) {
     const busy = t.job && ['resolving', 'downloading', 'extracting'].includes(t.job.state);
     tutProgress.style.display = busy ? '' : 'none';
     if (busy) { if (t.job.total) { tutProgress.max = t.job.total; tutProgress.value = t.job.done; } else tutProgress.removeAttribute('value'); }
     tutInfo.textContent = busy ? `${t.job.state}…` : t.job && t.job.state === 'error' ? t.job.error : t.installed ? `chipwhisperer-jupyter ${t.installed.commit.slice(0, 8)}${t.firmware_linked ? '' : ' (download firmware sources in the Firmware tab so build cells work)'}` : 'NewAE\'s courses (SCA101, Fault101, ...) and demos, matched to your firmware sources.';
-    if (t.job && t.job.state === 'installed' && !busy) loadList();
+    // Reload the list once when a download finishes (the job keeps saying "installed" afterwards, and loadList renders this card again).
+    const state = t.job ? t.job.state : null;
+    if (state === 'installed' && tutState && tutState !== 'installed' && !fromList) loadList();
+    tutState = state;
   }
   async function deleteFile(path) {
     if (!confirm(`Delete ${path}?`)) return;
@@ -607,10 +687,12 @@ export function initNotebook(ctx, sideEl, viewEl) {
     listEl.querySelectorAll('.nb-file').forEach((f) => { f.classList.toggle('active', !!d && f.dataset.path === d.path); f.classList.toggle('open', docs.has(f.dataset.path)); });
     varsName.textContent = d ? titleOf(d.path) : '';
   }
+  let listTimer = null;
+  const listSoon = () => { clearTimeout(listTimer); listTimer = setTimeout(loadList, 300); };
   async function loadList() {
     let r;
     try { r = await get('/api/notebooks'); } catch (e) { return; }
-    renderTut(r.tutorials);
+    renderTut(r.tutorials, true);
     const groups = {};
     r.notebooks.forEach((n) => { const dir = dirOf(n.path); (groups[dir] = groups[dir] || []).push(n); });
     const openDirs = new Set([...docs.keys()].map(dirOf));
@@ -656,12 +738,18 @@ export function initNotebook(ctx, sideEl, viewEl) {
       varsEl),
     h('div', { class: 'help' }, 'Cells run inside Studio: cw.scope() and cw.target() use the connected devices, captured traces appear in the Capture tab, and !make uses Studio\'s compilers. Each open notebook has its own variables (its kernel); cells of all notebooks run one at a time. The studio object adds helpers such as studio.traces, studio.build_firmware() and studio.program().'));
 
+  // Studio's single-key capture shortcuts (s single, r run, Esc stop, space pause, +/- zoom, arrows) belong to the waveform, which the Notebook tab hides. Keep them from firing here, e.g. after Esc leaves a cell or while a toolbar button has focus.
+  const CAPTURE_KEYS = new Set(['s', 'S', 'r', 'R', 'Escape', ' ', '+', '=', '-', '_', 'ArrowLeft', 'ArrowRight']);
+  const captureKey = (e) => CAPTURE_KEYS.has(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target && e.target.tagName) || '');
+  window.addEventListener('keydown', (e) => { if (viewEl.offsetParent && captureKey(e) && (e.target === document.body || e.target === document.documentElement)) e.stopPropagation(); }, true);
+  [viewEl, sideEl].forEach((el) => el.addEventListener('keydown', (e) => { if (captureKey(e) || e.key === 'Escape') e.stopPropagation(); })); // Esc in a cell blurs it first, so the capture shortcut would see no focused input
   document.addEventListener('keydown', (e) => {
     if (!viewEl.offsetParent) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); const d = focusedDoc(); if (d) d.save(true); }
   });
   ctx.on('nb', (ev) => {
     if (ev.kind === 'renamed') { applyRename(ev.old, ev.kernel); loadList(); return; }
+    if (ev.kind === 'file') { const fd = docs.get(ev.path); if (fd) fd.onFile(ev); if (ev.action === 'deleted' || !fd) listSoon(); return; }
     const d = docs.get(ev.kernel);
     if (d) d.onNb(ev);
   });

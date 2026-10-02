@@ -1,7 +1,7 @@
 """Logic capture files: VCD, CSV (Saleae Logic and generic) and sigrok ``.sr`` sessions, in both directions.
 
-* VCD: 1-bit wires and vectors (split into one channel per bit). The sample rate comes from the timescale and the greatest common divisor of the timestamps, or from the ``$comment cwstudio samplerate=... trigger=...`` line Studio writes.
-* CSV: a header row, then either a time column in seconds (Saleae ``Time [s]``, or ``ms``/``us``/``ns`` units in the header) or a sample index column (``Sample``/``index``), then one 0/1 column per channel. Rows may be every sample or only changes. Files without a time column are one row per sample.
+* VCD: 1-bit wires and vectors (split into one channel per bit, named by their declared range), nested scopes (a name used twice gets its scope path), x and z read as 0; real, event and string variables are left out. The sample rate comes from the timescale and the greatest common divisor of the timestamps, or from the ``$comment cwstudio samplerate=... trigger=...`` line Studio writes (with a ``names=`` comment keeping channel names VCD cannot hold).
+* CSV: a header row, then either a time column in seconds (Saleae ``Time [s]``, ``ms``/``us``/``ns`` units in the header, or Saleae Logic 2 ISO 8601 timestamps) or a sample index column (``Sample``/``index``), then one 0/1 column per channel. Rows may be every sample or only changes. Files without a time column are one row per sample; sigrok-cli and PulseView exports start with ``;`` comment lines whose ``Samplerate:`` gives the rate.
 * ``.sr``: a zip with ``version``, an INI ``metadata`` file (samplerate, probe names, unitsize) and ``logic-1-N`` chunks of packed samples.
 """
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import configparser
 import csv
 import io
+import json
 import math
 import os
 import re
@@ -57,6 +58,8 @@ def save(cap: LogicCapture, path: str, fmt: Optional[str] = None, channels: Opti
     fmt = (fmt or os.path.splitext(path)[1].lstrip(".") or "vcd").lower()
     if not path.lower().endswith("." + fmt):
         path += "." + fmt
+    if not cap.channels or (channels is not None and not list(channels)):
+        raise ValueError("this capture has no digital channels to export")
     d = os.path.dirname(os.path.abspath(path))
     os.makedirs(d, exist_ok=True)
     {"vcd": write_vcd, "csv": write_csv, "sr": write_sr}[fmt](cap, path, channels)
@@ -103,28 +106,17 @@ def read_vcd(path: str) -> LogicCapture:
             sr_c = float(ms.group(1))
             trig_c = int(ms.group(2)) if ms.group(2) else 0
             n_c = int(ms.group(3)) if ms.group(3) else None
-    vars_: List[Tuple[str, int, str]] = []  # (id, width, name)
-    for vm in re.finditer(r"\$var\s+\S+\s+(\d+)\s+(\S+)\s+(.+?)\s+\$end", header):
-        width, ident, name = int(vm.group(1)), vm.group(2), vm.group(3).strip()
-        name = re.sub(r"\s*\[\d+(:\d+)?\]\s*$", "", name)
-        vars_.append((ident, width, name))
-    if not vars_:
-        raise ValueError("the VCD file declares no variables")
-    # one channel per bit, vectors MSB first
-    chan_of: Dict[str, List[int]] = {}
-    names: List[str] = []
-    for ident, width, name in vars_:
-        if ident in chan_of:
-            continue
-        if width == 1:
-            chan_of[ident] = [len(names)]
-            names.append(name)
-        else:
-            idxs = []
-            for b in range(width - 1, -1, -1):
-                idxs.append(len(names))
-                names.append(f"{name}[{b}]")
-            chan_of[ident] = idxs
+    chan_of, names, skipped = _vcd_vars(header)
+    nm = re.search(r"\$comment\s+cwstudio\s+names=(\[.*?\])\s+\$end", header, re.S)
+    if nm:
+        try:
+            real = json.loads(nm.group(1))
+            if isinstance(real, list) and len(real) == len(names):
+                names = [str(x) for x in real]
+        except ValueError:
+            pass
+    if not names:
+        raise ValueError("the VCD file declares no wire or reg variables" + (f" (only {', '.join(skipped)})" if skipped else ""))
     times: List[int] = []
     ch_ev: List[List[Tuple[int, int]]] = [[] for _ in names]
     t = 0
@@ -149,8 +141,11 @@ def read_vcd(path: str) -> LogicCapture:
                 val = val.rjust(len(ids), "0" if val[0] in "01" else val[0])[-len(ids):]
                 for k, ci in enumerate(ids):
                     ch_ev[ci].append((t, 1 if val[k] == "1" else 0))
-        elif c0 in "rR":
+        elif c0 in "rRsS":
             i += 1
+        elif w == "$comment":
+            while i < nt and tok[i] != "$end":
+                i += 1
         i += 1
     if not times:
         times = [0]
@@ -186,7 +181,97 @@ def read_vcd(path: str) -> LogicCapture:
         prev = np.concatenate(([init], vv[:-1]))
         keep = (vv != prev) & (pos > 0)
         chans.append(Channel(name, init, pos[keep].astype(dt)))
-    return LogicCapture(chans, n, sr, trigger, source="file")
+    cap = LogicCapture(chans, n, sr, trigger, source="file")
+    if skipped:
+        cap.meta["skipped"] = skipped
+    return cap
+
+
+_RANGE = re.compile(r"^(.*?)\s*\[\s*(-?\d+)\s*(?::\s*(-?\d+)\s*)?\]$")
+_SKIP_TYPES = ("real", "realtime", "event", "string", "real_parameter")
+
+
+def _vcd_vars(header: str) -> Tuple[Dict[str, List[int]], List[str], List[str]]:
+    """The digital variables of a VCD header: {identifier: [channel index per bit, MSB first]}, the channel names and the variables left out (real, event, string).
+
+    Vectors become one channel per bit named by their declared range (``data[7:0]`` gives data[7] .. data[0], ``nib[0:3]`` gives nib[0] .. nib[3]); a 1-bit variable with a bit select keeps it (``bus [3]`` is bus[3]). A name used in more than one scope gets its scope path (``tb.dut.clk``). An identifier declared twice (an alias) is one channel.
+    """
+    tok = header.split()
+    scope: List[str] = []
+    decl: List[Tuple[str, int, str, List[str]]] = []  # (id, width, display name, path)
+    skipped: List[str] = []
+    i, nt = 0, len(tok)
+    while i < nt:
+        w = tok[i]
+        if w == "$scope":
+            j = i + 1
+            parts = []
+            while j < nt and tok[j] != "$end":
+                parts.append(tok[j])
+                j += 1
+            scope.append(parts[-1] if parts else "?")
+            i = j
+        elif w == "$upscope":
+            if scope:
+                scope.pop()
+        elif w in ("$comment", "$date", "$version"):
+            while i < nt and tok[i] != "$end":
+                i += 1
+        elif w == "$var":
+            j = i + 1
+            parts = []
+            while j < nt and tok[j] != "$end":
+                parts.append(tok[j])
+                j += 1
+            i = j
+            if len(parts) < 4:
+                continue
+            vtype, ident, ref = parts[0].lower(), parts[2], " ".join(parts[3:])
+            try:
+                width = int(parts[1])
+            except ValueError:
+                continue
+            if vtype in _SKIP_TYPES:
+                skipped.append(f"{ref} ({vtype})")
+                continue
+            decl.append((ident, max(1, width), ref, list(scope)))
+        i += 1
+    # bit names per variable
+    bitnames: List[List[str]] = []
+    for ident, width, ref, path in decl:
+        m = _RANGE.match(ref)
+        base = m.group(1).strip() if m else ref.strip()
+        if m and m.group(3) is not None:
+            a, b = int(m.group(2)), int(m.group(3))
+            step = -1 if a >= b else 1
+            idx = list(range(a, b + step, step))
+            if len(idx) != width:
+                idx = list(range(width - 1, -1, -1))
+        elif m and width == 1:
+            idx = [int(m.group(2))]
+        else:
+            idx = list(range(width - 1, -1, -1))
+        bitnames.append([base if (width == 1 and not m) else f"{base}[{k}]" for k in idx])
+    # qualify names that collide with their scope path
+    count: Dict[str, int] = {}
+    seen_ids = set()
+    for (ident, _w, _r, _p), bn in zip(decl, bitnames):
+        if ident in seen_ids:
+            continue
+        seen_ids.add(ident)
+        for x in bn:
+            count[x] = count.get(x, 0) + 1
+    chan_of: Dict[str, List[int]] = {}
+    names: List[str] = []
+    for (ident, _w, _r, path), bn in zip(decl, bitnames):
+        if ident in chan_of:
+            continue
+        ids = []
+        for x in bn:
+            ids.append(len(names))
+            names.append(".".join(path + [x]) if count.get(x, 0) > 1 and path else x)
+        chan_of[ident] = ids
+    return chan_of, names, skipped
 
 
 def _vcd_ids(n: int) -> List[str]:
@@ -220,8 +305,12 @@ def write_vcd(cap: LogicCapture, path: str, channels: Optional[Sequence[int]] = 
     tsname, mult, _ = _timescale(cap.samplerate)
     lines = ["$date", "  " + __import__("time").strftime("%Y-%m-%d %H:%M:%S"), "$end", "$version ChipWhisperer Studio $end",
              f"$comment cwstudio samplerate={cap.samplerate!r} trigger={cap.trigger} samples={cap.n} $end", f"$timescale {tsname} $end", "$scope module logic $end"]
+    real = [cap.channels[ci].name for ci in chans]
+    if any(re.sub(r"[\s$]+", "_", x) != x or not x for x in real):
+        # VCD names cannot hold spaces: keep the real ones in a comment Studio reads back
+        lines.insert(5, "$comment cwstudio names=" + json.dumps(real).replace("$", "\\u0024") + " $end")
     for ident, ci in zip(ids, chans):
-        name = re.sub(r"\s+", "_", cap.channels[ci].name) or f"ch{ci}"
+        name = re.sub(r"[\s$]+", "_", cap.channels[ci].name) or f"ch{ci}"
         lines.append(f"$var wire 1 {ident} {name} $end")
     lines += ["$upscope $end", "$enddefinitions $end", "#0", "$dumpvars"]
     for ident, ci in zip(ids, chans):
@@ -262,17 +351,58 @@ def _num(s: str) -> float:
     return float(s.strip())
 
 
+_ISO = re.compile(r"^\s*(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*(Z|[+-]\d{2}:?\d{2})?\s*$")
+
+
+def _iso_seconds(col: List[str]) -> Optional[np.ndarray]:
+    """Seconds from the first row for a column of ISO 8601 timestamps (Saleae Logic 2 exports them with nanoseconds and a UTC offset), or None when the column is not one."""
+    if not col or not _ISO.match(col[0]):
+        return None
+    ns = []
+    for k, x in enumerate(col):
+        m = _ISO.match(x)
+        if not m:
+            raise ValueError(f"row {k + 2}: {x.strip()!r} is not a timestamp like the rows above it")
+        t = np.datetime64(m.group(1).replace(" ", "T"), "ns").astype(np.int64)
+        tz = m.group(2)
+        if tz and tz != "Z":
+            sign = 1 if tz[0] == "+" else -1
+            hh, mm = int(tz[1:3]), int(tz[-2:])
+            t -= sign * (hh * 3600 + mm * 60) * 10 ** 9
+        ns.append(int(t))
+    arr = np.asarray(ns, np.int64)
+    return (arr - arr.min()).astype(np.float64) * 1e-9
+
+
 def read_csv(path: str, samplerate: Optional[float] = None) -> LogicCapture:
     with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
-        sample = f.read(4096)
-        f.seek(0)
-        try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
-        except csv.Error:
-            dialect = csv.excel
-        rows = [r for r in csv.reader(f, dialect) if r and any(x.strip() for x in r)]
+        text = f.read()
+    # sigrok-cli and PulseView start their CSV with ';' comment lines, one of them giving the sample rate
+    lines = text.splitlines()
+    comment_rate = None
+    body_lines = []
+    for ln in lines:
+        st = ln.lstrip()
+        if st.startswith(";") or (st.startswith("#") and not body_lines):
+            m = re.search(r"samplerate\s*[:=]\s*([\d.]+\s*[kKMG]?\s*Hz)", st, re.I)
+            if m:
+                try:
+                    comment_rate = parse_rate(m.group(1))
+                except ValueError:
+                    pass
+            continue
+        body_lines.append(ln)
+    if "\x00" in text[:4096]:
+        raise ValueError("this is a binary file, not a CSV export")
+    sample = "\n".join(body_lines[:50])
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    rows = [r for r in csv.reader(body_lines, dialect) if r and any(x.strip() for x in r)]
     if not rows:
         raise ValueError("the CSV file is empty")
+
     def is_num(x):
         try:
             float(x)
@@ -280,12 +410,44 @@ def read_csv(path: str, samplerate: Optional[float] = None) -> LogicCapture:
         except ValueError:
             return False
     header = None
-    if not all(is_num(x) for x in rows[0]):
+    if not all(is_num(x) for x in rows[0]) and not _ISO.match(rows[0][0]):
         header = [x.strip() for x in rows[0]]
         rows = rows[1:]
     if not rows:
         raise ValueError("the CSV file has a header but no data")
-    data = np.asarray([[float(x) if x.strip() else 0.0 for x in r] for r in rows], np.float64)
+    ncol = len(header) if header else len(rows[0])
+    for k, r in enumerate(rows):
+        if len(r) != ncol:
+            raise ValueError(f"row {k + (2 if header else 1)} has {len(r)} columns but {'the header' if header else 'the first row'} has {ncol}")
+    iso = _iso_seconds([r[0] for r in rows])
+    first_col = 1 if iso is not None else 0
+    data = np.zeros((len(rows), ncol), np.float64)
+    try:
+        # fast path: numpy parses whole columns of number strings in C
+        for j in range(first_col, ncol):
+            data[:, j] = np.array([r[j] for r in rows], dtype=np.float64)
+        fast = True
+    except ValueError:
+        fast = False  # an empty cell or a word: the slow path below fills blanks with 0 and names the bad cell
+    for k, r in enumerate([] if fast else rows):
+        for j in range(first_col, ncol):
+            x = r[j].strip()
+            if not x:
+                continue
+            try:
+                data[k, j] = float(x)
+            except ValueError:
+                col_name = header[j] if header else f"column {j + 1}"
+                raise ValueError(f"row {k + (2 if header else 1)}, column {col_name!r}: {x!r} is not a number. Studio imports raw logic exports (a time or sample column, then one 0/1 column per channel), not decoded protocol tables") from None
+    if iso is not None:
+        data[:, 0] = iso
+        if header is None:
+            header = ["Time [s]"] + [f"D{i}" for i in range(ncol - 1)]
+        elif not re.search(r"time", header[0], re.I):
+            header[0] = "Time [s]"
+        header[0] = re.sub(r"[\[(].*?[\])]", "[s]", header[0])
+    if not samplerate and comment_rate:
+        samplerate = comment_rate
     ncol = data.shape[1]
     first = (header[0].lower() if header else "")
     kind = None  # "time", "index" or "dense"
@@ -358,13 +520,15 @@ def _estimate_rate(rel: np.ndarray) -> float:
 
 
 def write_csv(cap: LogicCapture, path: str, channels: Optional[Sequence[int]] = None) -> None:
-    """Saleae Logic style: ``Time [s]`` then one column per channel, one row at the start, one per change and one at the last sample."""
+    """Saleae Logic style: ``Time [s]`` then one column per channel, one row at the start, one per change and one at the last sample. A row at sample 1 as well keeps the sample rate readable from the times when the capture has few changes."""
     chans = list(range(len(cap.channels))) if channels is None else list(channels)
-    pos = np.unique(np.concatenate([cap.channels[ci].edges.astype(np.int64) for ci in chans] + [np.array([0, max(cap.n - 1, 0)], np.int64)]))
+    pos = np.unique(np.concatenate([cap.channels[ci].edges.astype(np.int64) for ci in chans] + [np.array([0, min(1, max(cap.n - 1, 0)), max(cap.n - 1, 0)], np.int64)]))
     cols = [cap.channels[ci].value_at(pos) for ci in chans]
     t = (pos - cap.trigger) / cap.samplerate
     with open(path, "w", encoding="utf-8", newline="") as f:
-        f.write("Time [s]," + ",".join(cap.channels[ci].name.replace(",", " ") for ci in chans) + "\n")
+        hdr = io.StringIO()
+        csv.writer(hdr, lineterminator="\n").writerow(["Time [s]"] + [cap.channels[ci].name for ci in chans])
+        f.write(hdr.getvalue())
         mat = np.stack(cols, 1) if cols else np.zeros((pos.shape[0], 0), np.int8)
         chunk = 100000
         for s in range(0, pos.shape[0], chunk):
@@ -391,6 +555,8 @@ def format_rate(sr: float) -> str:
 
 
 def read_sr(path: str) -> LogicCapture:
+    if not zipfile.is_zipfile(path):
+        raise ValueError("not a sigrok session (.sr): the file is not a zip archive")
     with zipfile.ZipFile(path) as z:
         names = set(z.namelist())
         if "metadata" not in names:
@@ -435,6 +601,8 @@ def read_sr(path: str) -> LogicCapture:
                 edges[i].append(ch.astype(np.int64) + off)
                 last[i] = int(bits[-1])
             off += arr.shape[0]
+    if not live:
+        raise ValueError("the sigrok session has no logic channels (analog-only sessions are not supported)")
     n = max(off, 1)
     dt = edge_dtype(n)
     chans = [Channel(p, init.get(i, 0), (np.concatenate(edges[i]) if edges[i] else np.zeros(0, np.int64)).astype(dt)) for i, p in live]

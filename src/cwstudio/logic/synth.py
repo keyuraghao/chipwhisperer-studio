@@ -234,10 +234,11 @@ def spi(cs: Optional[Line], sck: Line, mosi: Optional[Line], miso: Optional[Line
 
 
 # ----- I2C --------------------------------------------------------------------------------------------
-def i2c(scl: Line, sda: Line, t: float, ops: Sequence[Tuple], freq: float = 100e3) -> float:
-    """I2C bus activity from ops: ("start",), ("stop",), ("byte", value, ack) where ack True means the receiver pulls SDA low in the 9th clock; returns the end time."""
+def i2c(scl: Line, sda: Line, t: float, ops: Sequence[Tuple], freq: float = 100e3, stretch: float = 0.0) -> float:
+    """I2C bus activity from ops: ("start",), ("stop",), ("byte", value, ack) where ack True means the receiver pulls SDA low in the 9th clock; ``stretch`` seconds of clock stretching (SCL held low by the device) before every byte but the first of a transfer; returns the end time."""
     q = 0.25 / freq
     tl = t  # time SCL went (or is) low
+    after_byte = False
     for op in ops:
         if op[0] == "start":
             if scl.level == 1 and sda.level == 1:
@@ -257,12 +258,15 @@ def i2c(scl: Line, sda: Line, t: float, ops: Sequence[Tuple], freq: float = 100e
             tl = tl + 4 * q
         elif op[0] == "byte":
             value, ack = op[1], op[2]
+            if stretch and after_byte:
+                tl += stretch
             bits = [(value >> k) & 1 for k in range(7, -1, -1)] + [0 if ack else 1]
             for b in bits:
                 sda.set(tl + q, b)
                 scl.set(tl + 2 * q, 1)
                 scl.set(tl + 4 * q, 0)
                 tl = tl + 4 * q
+        after_byte = op[0] == "byte"
     return tl + q
 
 
@@ -275,26 +279,31 @@ def i2c_address(addr: int, read: bool, ten_bit: bool = False) -> List[int]:
 
 # ----- 1-Wire ------------------------------------------------------------------------------------------
 def onewire(line: Line, t: float, ops: Sequence[Tuple]) -> float:
-    """1-Wire standard speed from ops: ("reset", presence), ("write", bytes), ("read", bytes the device sends); returns the end time."""
+    """1-Wire from ops: ("reset", presence), ("write", bytes), ("read", bytes the device sends), ("overdrive", on) to switch to overdrive timing (Maxim AN126 recommended values); returns the end time."""
     us = 1e-6
+    od = False
     for op in ops:
-        if op[0] == "reset":
+        if op[0] == "overdrive":
+            od = bool(op[1])
+        elif op[0] == "reset":
+            low, wait, pres, total = (70, 8.5, 10, 150) if od else (480, 35, 120, 960)
             line.set(t, 0)
-            line.set(t + 480 * us, 1)
+            line.set(t + low * us, 1)
             if op[1]:
-                line.set(t + 480 * us + 35 * us, 0)
-                line.set(t + 480 * us + 35 * us + 120 * us, 1)
-            t += 960 * us
+                line.set(t + (low + wait) * us, 0)
+                line.set(t + (low + wait + pres) * us, 1)
+            t += total * us
         else:
+            w1, w0, r1, r0, slot = (1, 7.5, 1, 6, 10) if od else (6, 60, 2, 30, 70)
             for byte in op[1]:
                 for k in range(8):
                     b = (byte >> k) & 1
                     line.set(t, 0)
                     if op[0] == "write":
-                        line.set(t + (6 if b else 60) * us, 1)
-                    else:  # read slot: master pulls low 2 us, a 0 is held low by the device until 30 us
-                        line.set(t + (2 if b else 30) * us, 1)
-                    t += 70 * us
+                        line.set(t + (w1 if b else w0) * us, 1)
+                    else:  # read slot: the master pulls low briefly, a 0 is held low by the device
+                        line.set(t + (r1 if b else r0) * us, 1)
+                    t += slot * us
     return t
 
 

@@ -1,5 +1,5 @@
 // Interfaces tab: UART, SimpleSerial, SPI, GPIO and USERIO, triggers, bit-banger and 1-Wire, JTAG/SWD through OpenOCD, Arm trace. Every section and choice follows GET /api/capabilities: what the connected ChipWhisperer (or the simulator's model) cannot do stays visible but disabled, with the reason as a hint.
-import { h, get, post, put, toast } from './api.js';
+import { h, get, post, put, toast, fmtClock } from './api.js';
 
 const LS = (k, d) => { try { const v = localStorage.getItem('cw.iface.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
 const SAVE = (k, v) => { try { localStorage.setItem('cw.iface.' + k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } };
@@ -25,7 +25,7 @@ export function createTerminal(ctx, { id = 'term', height } = {}) {
   const persist = () => SAVE(id, { hexShow: hexChk.checked, ts: tsChk.checked, mode: modeSel.value, eol: eolSel.value });
   function line(rec) {
     const t = new Date((rec.t || Date.now() / 1000) * 1000);
-    const ts = h('span', { class: 'ts' }, t.toLocaleTimeString([], { hour12: false }) + '.' + String(t.getMilliseconds()).padStart(3, '0') + ' ');
+    const ts = h('span', { class: 'ts' }, fmtClock(t, { hour12: false }) + '.' + String(t.getMilliseconds()).padStart(3, '0') + ' ');
     const body = hexChk.checked ? rec.hex.replace(/(..)/g, '$1 ').trim() : rec.data.replace(/\r/g, '␍').replace(/\n/g, '⏎');
     return h('div', { class: rec.dir }, ts, (rec.dir === 'tx' ? '→ ' : '← ') + body);
   }
@@ -38,9 +38,16 @@ export function createTerminal(ctx, { id = 'term', height } = {}) {
   }
   function redraw() { out.innerHTML = ''; out.classList.toggle('show-ts', tsChk.checked); recs.forEach((r) => out.append(line(r))); out.scrollTop = out.scrollHeight; }
   function paintHistory() { histSel.innerHTML = ''; histSel.append(h('option', { value: '' }, history.length ? `history (${history.length})` : 'no history yet'), ...history.map((x, i) => h('option', { value: i }, (x.mode === 'hex' ? '[hex] ' : '') + x.data))); }
+  const sendBtn = h('button', { class: 'btn sm', onclick: () => send() }, 'Send');
+  /** Writing needs a connected target: Send stays disabled until there is one, with the reason as its hint. */
+  function gate() {
+    const ok = !!(ctx.status && ctx.status.target && ctx.status.target.connected);
+    sendBtn.disabled = !ok; sendBtn.title = ok ? '' : 'connect a target first (Connect tab)';
+  }
+  ctx.on('status', gate);
   async function send() {
     const data = input.value;
-    if (!data && modeSel.value === 'hex') return;
+    if (sendBtn.disabled || (!data && modeSel.value === 'hex')) return;
     try {
       await post('/api/target/serial/write', { data, hex: modeSel.value === 'hex', eol: eolSel.value });
       history = [{ data, mode: modeSel.value }, ...history.filter((x) => x.data !== data || x.mode !== modeSel.value)].slice(0, 30);
@@ -59,11 +66,12 @@ export function createTerminal(ctx, { id = 'term', height } = {}) {
   ctx.on('serial', append);
   get('/api/target/serial').then((rs) => rs.slice(-200).forEach(append)).catch(() => {});
   const el = h('div', { class: 'terminal' }, out,
-    h('div', { class: 'row', style: 'margin-top:6px' }, input, h('button', { class: 'btn sm', onclick: send }, 'Send')),
+    h('div', { class: 'row', style: 'margin-top:6px' }, input, sendBtn),
     h('div', { class: 'row' }, h('label', {}, 'Send as'), modeSel, eolSel),
     h('div', { class: 'row' }, h('label', {}, 'History'), histSel),
     h('div', { class: 'row' }, h('label', {}, hexChk, ' show hex'), h('label', {}, tsChk, ' timestamps'), h('button', { class: 'link', onclick: () => { recs.length = 0; out.innerHTML = ''; } }, 'clear')));
-  return { el, append, send };
+  gate();
+  return { el, append, send, gate };
 }
 
 /** One gated section: a card whose controls are enabled only when its capability is available. */
@@ -153,10 +161,11 @@ export function initInterfaces(ctx, el) {
   async function ssSend() {
     try { const r = await post('/api/interfaces/simpleserial/send', { cmd: ssCmd.value || 'p', data: ssData.value, read_len: +ssLen.value }); ssResp.textContent = r.response != null ? 'r ' + r.response : '(no response)'; } catch (e) { toast(errMsg(e), 'err'); }
   }
+  const ssSendBtn = h('button', { class: 'btn sm', onclick: ssSend }, 'Send');
   ss.body.append(
     h('div', { class: 'row' }, h('label', {}, 'Version'), ssSeg),
     h('div', { class: 'row' }, h('button', { class: 'btn primary sm', onclick: ssConnect }, 'Connect target'), ssState),
-    h('div', { class: 'row' }, h('label', {}, 'Command'), ssCmd, ssData, ssLen, h('button', { class: 'btn sm', onclick: ssSend }, 'Send')),
+    h('div', { class: 'row' }, h('label', {}, 'Command'), ssCmd, ssData, ssLen, ssSendBtn),
     ssResp,
     h('div', { class: 'help' }, 'v1.0 sends without waiting for an acknowledgement; v1.1 and v2.1 wait for it. The Connect tab target choice still works the same way.'));
 
@@ -181,12 +190,19 @@ export function initInterfaces(ctx, el) {
       while (spiOut.rows.length > 12) spiOut.deleteRow(spiOut.rows.length - 1);
     } catch (e) { toast(errMsg(e), 'err'); }
   }
+  // these need the SPI master on: disabled (with the reason) until Enable succeeded
+  const spiOnly = [
+    h('button', { class: 'btn sm', onclick: () => spiEnable(false) }, 'Disable'),
+    h('button', { class: 'btn sm', onclick: () => spiXfer() }, 'Send'),
+    h('button', { class: 'btn sm', onclick: () => spiXfer('9f 00 00 00') }, 'JEDEC ID'), h('button', { class: 'btn sm', onclick: () => spiXfer('05 00') }, 'Status'), h('button', { class: 'btn sm', onclick: () => spiXfer('03 00 00 00' + ' 00'.repeat(16)) }, 'Read 16 B @0'),
+    h('button', { class: 'btn sm', onclick: async () => { try { await post('/api/interfaces/spi/toggle_sck', { cycles: +spiSck.value }); toast('SCK toggled', 'ok'); } catch (e) { toast(errMsg(e), 'err'); } } }, 'Toggle')];
+  const [spiOff, spiSend, spiJedec, spiStat, spiRead, spiToggle] = spiOnly;
   spi.body.append(
     h('div', { class: 'row' }, h('label', {}, 'Clock Hz'), spiSpeed, h('label', {}, 'CS'), spiCs),
-    h('div', { class: 'row' }, h('button', { class: 'btn primary sm', onclick: () => spiEnable(true) }, 'Enable'), h('button', { class: 'btn sm', onclick: () => spiEnable(false) }, 'Disable'), spiState),
-    h('div', { class: 'row' }, h('label', {}, 'Transfer'), spiData, h('button', { class: 'btn sm', onclick: () => spiXfer() }, 'Send')),
-    h('div', { class: 'row' }, h('label', {}, 'Flash'), h('button', { class: 'btn sm', onclick: () => spiXfer('9f 00 00 00') }, 'JEDEC ID'), h('button', { class: 'btn sm', onclick: () => spiXfer('05 00') }, 'Status'), h('button', { class: 'btn sm', onclick: () => spiXfer('03 00 00 00' + ' 00'.repeat(16)) }, 'Read 16 B @0')),
-    h('div', { class: 'row' }, h('label', {}, 'Toggle SCK'), spiSck, h('button', { class: 'btn sm', onclick: async () => { try { await post('/api/interfaces/spi/toggle_sck', { cycles: +spiSck.value }); toast('SCK toggled', 'ok'); } catch (e) { toast(errMsg(e), 'err'); } } }, 'Toggle')),
+    h('div', { class: 'row' }, h('button', { class: 'btn primary sm', onclick: () => spiEnable(true) }, 'Enable'), spiOff, spiState),
+    h('div', { class: 'row' }, h('label', {}, 'Transfer'), spiData, spiSend),
+    h('div', { class: 'row' }, h('label', {}, 'Flash'), spiJedec, spiStat, spiRead),
+    h('div', { class: 'row' }, h('label', {}, 'Toggle SCK'), spiSck, spiToggle),
     h('details', { open: true }, h('summary', {}, 'MOSI / MISO'), spiOut),
     h('div', { class: 'help' }, 'nRST is held high while SPI is on. Chip select is driven low for each transfer. The simulator answers as a W25Q128 SPI flash (JEDEC ID EF 40 18).'));
 
@@ -323,9 +339,17 @@ export function initInterfaces(ctx, el) {
   async function trigApply() {
     try { const r = await put('/api/interfaces/trigger', trigParams()); trigSummary(r); toast('Trigger applied; captures use it now', 'ok'); } catch (e) { toast(errMsg(e), 'err', 7000); }
   }
-  kindSel.addEventListener('change', () => trigFormFor(kindSel.value));
+  const trigApplyBtn = h('button', { class: 'btn primary sm', onclick: trigApply }, 'Apply trigger');
+  /** The SAD reference is cut from the newest trace: Apply waits for one. */
+  function gateTrigApply() {
+    if (!caps.connected || !caps.model) return;
+    const needTrace = kindSel.value === 'sad' && !((ctx.status && ctx.status.traces && ctx.status.traces.count) > 0);
+    gateEl(trigApplyBtn, !needTrace, 'capture a trace first: the SAD reference is cut from the newest trace');
+  }
+  ctx.on('status', gateTrigApply);
+  kindSel.addEventListener('change', () => { trigFormFor(kindSel.value); gateTrigApply(); });
   trig.body.append(h('div', { class: 'row' }, h('label', {}, 'Type'), kindSel), trigForm,
-    h('div', { class: 'row' }, h('button', { class: 'btn primary sm', onclick: trigApply }, 'Apply trigger'), h('button', { class: 'link', onclick: () => ctx.showTab('scope') }, 'all trigger settings in the Scope tab')), trigNow);
+    h('div', { class: 'row' }, trigApplyBtn, h('button', { class: 'link', onclick: () => ctx.showTab('scope') }, 'all trigger settings in the Scope tab')), trigNow);
 
   // ---------- bit-banger and 1-Wire ----------
   const bb = section('Bit-banger and 1-Wire', 'Husky synchronous bit patterns');
@@ -482,7 +506,9 @@ export function initInterfaces(ctx, el) {
       });
       overview.append(h('span', { class: 'badge', title: 'I2C, CAN and LIN have no ChipWhisperer hardware support' }, 'I2C / CAN: none'));
     } else modelLine.textContent = state.mpsse ? 'The scope is in MPSSE mode for OpenOCD; restore normal mode in the JTAG and SWD section.' : 'Connect a scope (or the simulator) to see which interfaces it offers.';
-    if (uart.set(e('uart'))) {
+    const uartOk = uart.set(e('uart'));
+    term.gate();
+    if (uartOk) {
       const u = c.uart;
       [...rxSel.options].forEach((o) => gateEl(o, u.rx_pins.includes(o.value), u.remap ? 'TIO4 can only transmit' : 'the CW-Nano receives on TIO1 only'));
       [...txSel.options].forEach((o) => gateEl(o, u.tx_pins.includes(o.value), 'the CW-Nano transmits on TIO2 only'));
@@ -495,11 +521,13 @@ export function initInterfaces(ctx, el) {
       if (ssBtns.cdc.disabled && ssVer === 'cdc') { ssVer = '2.1'; paintSeg(); }
       const sst = state.simpleserial || {};
       ssState.textContent = sst.target ? `target: ${sst.target}${sst.version ? ', SimpleSerial ' + sst.version : ''}` : 'no target connected';
+      gateEl(ssSendBtn, !!sst.target, 'connect a target first (Connect target above)');
     }
     if (spi.set(e('spi'))) {
       [...spiCs.options].forEach((o) => gateEl(o, c.spi.pins.cs.includes(o.value)));
       const s = state.spi || {};
       spiState.className = 'badge ' + (s.enabled ? 'ok' : ''); spiState.textContent = s.enabled ? `on, ${s.speed / 1e6} MHz, CS ${pinLabel(s.cs)}` : 'off';
+      spiOnly.forEach((b) => gateEl(b, !!s.enabled, 'enable the SPI master first'));
     }
     if (gpio.set(e('gpio'), c && !c.gpio.read.available ? 'drive only' : null)) gpioRead(); else gpioTable.innerHTML = '';
     if (uio.set(e('userio'))) uioRead(); else uioGrid.innerHTML = '';
@@ -508,6 +536,7 @@ export function initInterfaces(ctx, el) {
       [...kindSel.options].forEach((o) => { const x = (c.triggers || {})[o.value] || {}; gateEl(o, !!x.available, x.reason); });
       if (kindSel.selectedOptions[0] && kindSel.selectedOptions[0].disabled) kindSel.value = 'basic';
       trigFormFor(kindSel.value);
+      gateTrigApply();
       trigSummary(state.triggerNow);
     }
     if (bb.set(e('bitbanger'))) {
@@ -548,7 +577,11 @@ export function initInterfaces(ctx, el) {
   ctx.on('target-disconnected', refresh);
   ctx.on('openocd', (ev) => { if (ev.kind === 'log') { if (ev.seq > ocdSeq) logLine(ev); } else refreshOcd(); });
   ctx.on('toolchain', (ev) => { if (ev && (ev.id === 'openocd' || (ev.toolchain && ev.toolchain.id === 'openocd'))) refreshOcd(); });
-  ctx.on('setting', (ev) => { if (active && ev.target === 'scope' && /^(io|trigger|adc\.basic_mode)/.test(ev.path || '')) refresh(); });
+  ctx.on('setting', (ev) => {
+    if (ev.target !== 'scope' || !/^(io|trigger|adc\.basic_mode)/.test(ev.path || '')) return;
+    if (active) refresh();
+    else if (/^(trigger|adc\.basic_mode)/.test(ev.path || '')) get('/api/interfaces/trigger').then((t) => { state.triggerNow = t; trigSummary(t); }).catch(() => {});  // keep the Capture tab's trigger line current when the trigger changes from the Scope tab
+  });
   refresh();
   return { refresh };
 }

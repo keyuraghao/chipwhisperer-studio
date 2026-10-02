@@ -357,3 +357,188 @@ def test_closed_notebooks_release_their_namespace(client):
         assert client.post("/api/kernels/shutdown", json={}).json() == {"kernel": "default", "shutdown": False, "restarted": True}
     finally:
         m.release_grace = grace
+
+
+# ----- regressions found in the 0.5 notebook review ------------------------------------
+def test_magics_only_where_a_statement_starts(client):
+    # a line starting with % or ! inside brackets, a multi-line string or after a backslash is Python, not a magic
+    r = run(client, 's = ("abc %d"\n     % 5)\nt = """\n!not shell\n%not magic\n"""\nu = 7 \\\n    % 4\nd = {\n    "k": 1\n}\n!echo shell {u}\n(s, t, u)')
+    assert r["ok"], r["outputs"]
+    assert result(r) == "('abc 5', '\\n!not shell\\n%not magic\\n', 3)"
+    assert "shell 3" in text(r)
+    assert "__studio_magic__" not in notebook.transform("x = [1,\n%2]")
+    assert "__studio_shell__" in notebook.transform("if True:\n    !ls")
+
+
+def test_quiet_cell_output_is_sent_without_waiting_for_the_next_print(client, monkeypatch):
+    import time
+    bus = client.session.bus
+    seen = []
+    orig = bus.publish_event
+
+    def spy(ev):
+        if ev.kind == "nb" and ev.payload.get("kind") == "output":
+            seen.append((time.time(), ev.payload["output"].get("text", "")))
+        return orig(ev)
+    monkeypatch.setattr(bus, "publish_event", spy)
+    t0 = time.time()
+    run(client, "import time\nprint('a')\nprint('b')\ntime.sleep(1.5)\nprint('c')")
+    early = "".join(t for at, t in seen if at - t0 < 1.0)
+    assert early == "a\nb\n", seen  # 'b' used to wait for 'c', 1.5 s later
+
+
+def test_figures_and_svg_format(client):
+    r = run(client, "from matplotlib.figure import Figure\nf = Figure()\nf.add_subplot().plot([1, 2])\nf")
+    assert r["ok"] and "image/png" in r["outputs"][-1]["data"], r["outputs"]  # a Figure made without pyplot used to show nothing
+    r = run(client, "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2])\ndisplay(fig)\nplt.close(fig)")
+    assert [o["output_type"] for o in r["outputs"]] == ["display_data"] and "image/png" in r["outputs"][0]["data"]
+    r = run_in(client, "fig/svg.ipynb", "%config InlineBackend.figure_format = 'svg'\nimport matplotlib.pyplot as plt\nplt.plot([3, 1])\nplt.show()")
+    assert r["ok"] and r["outputs"][0]["data"]["image/svg+xml"].lstrip().startswith("<?xml"), r["outputs"]
+    r = run_in(client, "fig/svg.ipynb", "from IPython.display import set_matplotlib_formats\nset_matplotlib_formats('png')\nplt.plot([1]); plt.show()")
+    assert "image/png" in r["outputs"][0]["data"]
+    assert "image/png" in run(client, "plt.plot([1]); plt.show()")["outputs"][0]["data"]  # the format is per kernel
+
+
+def test_variables_never_touch_hardware_and_survive_a_disconnect(client):
+    s = client.session
+    run_in(client, "vars/a.ipynb", "import chipwhisperer as cw\nscope = cw.scope()\ntarget = cw.target(scope)\nbig = list(range(10**6))\nreal = studio.session.scope")
+    vs = {v["name"]: v for v in client.get("/api/kernel/variables", params={"kernel": "vars/a.ipynb"}).json()}
+    assert vs["scope"]["repr"].startswith("<Studio's scope") and vs["target"]["repr"].startswith("<Studio's target")
+    assert len(vs["big"]["repr"]) <= 120 and vs["big"]["repr"].endswith("...]")
+    assert vs["real"]["repr"] == f"<{type(s.scope).__module__}.{type(s.scope).__name__}>" or not type(s.scope).__module__.startswith("chipwhisperer")
+    s.worker.call(s.disconnect_target)
+    s.worker.call(s.disconnect_scope)
+    try:
+        r = client.get("/api/kernel/variables", params={"kernel": "vars/a.ipynb"})
+        assert r.status_code == 200, r.text  # used to fail: the scope stand-in raised from isinstance()
+        assert {v["name"]: v["repr"] for v in r.json()}["scope"] == "<Studio's scope: not connected>"
+        assert client.get("/api/kernels").status_code == 200
+    finally:
+        run(client, "import chipwhisperer as cw\nscope = cw.scope()\ntarget = cw.target(scope)")
+
+
+def test_waiting_run_returns_when_its_cell_is_cancelled(client):
+    import threading
+    import time
+    m = client.session.kernels
+    client.post("/api/kernel/execute", json={"kernel": "cx/a.ipynb", "cells": [{"id": "spin", "code": "import time\nwhile True:\n    time.sleep(0.01)"}]})
+    res = {}
+    th = threading.Thread(target=lambda: res.update(run_in(client, "cx/b.ipynb", "1", timeout=30)))
+    th.start()
+    for _ in range(200):
+        if m.status("cx/b.ipynb")["queued"]:
+            break
+        time.sleep(0.01)
+    t0 = time.time()
+    client.post("/api/kernel/interrupt", json={"kernel": "cx/b.ipynb"})
+    th.join(10)
+    assert not th.is_alive() and time.time() - t0 < 5, "the waiting call hung until its timeout"
+    assert res["ok"] is False and res.get("cancelled") and res["outputs"][0]["ename"] == "Cancelled"
+    client.post("/api/kernel/interrupt", json={"kernel": "cx/a.ipynb"})
+    wait_idle(m)
+
+
+def test_queued_event_comes_before_running(client, monkeypatch):
+    bus = client.session.bus
+    seen = []
+    orig = bus.publish_event
+
+    def spy(ev):
+        if ev.kind == "nb" and ev.payload.get("cell", "").startswith("ord"):
+            seen.append((ev.payload["cell"], ev.payload["kind"]))
+        return orig(ev)
+    monkeypatch.setattr(bus, "publish_event", spy)
+    for i in range(20):
+        client.post("/api/kernel/execute", json={"kernel": "ord.ipynb", "cells": [{"id": f"ord{i}", "code": "pass"}]})
+    wait_idle(client.session.kernels)
+    for i in range(20):
+        kinds = [k for c, k in seen if c == f"ord{i}"]
+        assert kinds[:2] == ["queued", "running"] and kinds[-1] == "done", (i, kinds)
+
+
+def test_cd_lasts_until_restart(client, tmp_path):
+    (tmp_path / "sub").mkdir()
+    run_in(client, "cd/a.ipynb", f"%cd {tmp_path / 'sub'}")
+    assert result(run_in(client, "cd/a.ipynb", "import os\nos.getcwd()")) == repr(str(tmp_path / "sub"))
+    assert result(run_in(client, "cd/b.ipynb", "import os\nos.getcwd()")) == repr(os.path.join(client.session.notebooks.root, "cd"))  # other notebooks keep their folder
+    client.post("/api/kernel/restart", json={"kernel": "cd/a.ipynb"})
+    assert result(run_in(client, "cd/a.ipynb", "import os\nos.getcwd()")) == repr(os.path.join(client.session.notebooks.root, "cd"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses sleep from a POSIX shell")
+def test_stop_kills_a_silent_shell_command(client):
+    import threading
+    import time
+    threading.Timer(0.8, lambda: client.post("/api/kernel/interrupt", json={"kernel": "sh.ipynb"})).start()
+    t0 = time.time()
+    r = run_in(client, "sh.ipynb", "!sleep 20")
+    assert not r["ok"] and r["outputs"][-1]["ename"] == "KeyboardInterrupt" and time.time() - t0 < 8
+
+
+def test_shutdown_does_not_wait_for_a_busy_hardware_thread(client):
+    import time
+    m = client.session.kernels
+    run_in(client, "sd/b.ipynb", "x = 1")
+    client.post("/api/kernel/execute", json={"kernel": "sd/a.ipynb", "cells": [{"id": "spin", "code": "import time\nwhile True:\n    time.sleep(0.01)"}]})
+    for _ in range(200):
+        if m.status("sd/a.ipynb")["busy"]:
+            break
+        time.sleep(0.01)
+    t0 = time.time()
+    assert client.post("/api/kernels/shutdown", json={"kernel": "sd/b.ipynb"}).json()["shutdown"]
+    assert time.time() - t0 < 3  # used to wait 10 s for the hardware thread
+    client.post("/api/kernel/interrupt", json={"kernel": "sd/a.ipynb"})
+    wait_idle(m)
+
+
+def test_saves_refuse_stale_or_deleted_files_and_announce_changes(client, monkeypatch):
+    bus = client.session.bus
+    seen = []
+    orig = bus.publish_event
+
+    def spy(ev):
+        if ev.kind == "nb" and ev.payload.get("kind") == "file":
+            seen.append(dict(ev.payload))
+        return orig(ev)
+    monkeypatch.setattr(bus, "publish_event", spy)
+    path = "sync/a.ipynb"
+    assert client.put("/api/notebooks/file", json={"path": path, "notebook": {"cells": [{"cell_type": "code", "source": "1"}]}}).status_code == 200  # no base_mtime: plain overwrite, as before
+    nb = client.get("/api/notebooks/file", params={"path": path}).json()
+    base = nb["mtime"]
+    assert base and seen[-1] == {"kind": "file", "action": "saved", "path": path, "mtime": base, "client": None}
+    r = client.put("/api/notebooks/file", json={"path": path, "notebook": nb, "base_mtime": base, "client": "w1"})
+    assert r.status_code == 200 and seen[-1]["client"] == "w1"
+    import time
+    time.sleep(0.01)
+    client.put("/api/notebooks/file", json={"path": path, "notebook": {"cells": [{"cell_type": "code", "source": "agent"}]}})
+    stale = client.put("/api/notebooks/file", json={"path": path, "notebook": nb, "base_mtime": r.json()["mtime"], "client": "w1"})
+    assert stale.status_code == 409 and stale.json()["detail"].startswith("NotebookConflict")
+    assert client.get("/api/notebooks/file", params={"path": path}).json()["cells"][0]["source"] == "agent"  # not overwritten
+    assert client.delete("/api/notebooks/file", params={"path": path}).json()["ok"]
+    assert seen[-1] == {"kind": "file", "action": "deleted", "path": path}
+    gone = client.put("/api/notebooks/file", json={"path": path, "notebook": nb, "base_mtime": base, "client": "w1"})
+    assert gone.status_code == 410 and gone.json()["detail"].startswith("NotebookDeleted")
+    assert not os.path.exists(client.session.notebooks.path(path))  # autosave never brings a deleted notebook back
+
+
+def test_notebook_run_keeps_edits_saved_meanwhile_and_does_not_recreate(client):
+    import threading
+    import time
+    store = client.session.notebooks
+    path = "sync/run.ipynb"
+    store.save(path, {"cells": [{"id": "c1", "cell_type": "code", "source": "import time\ntime.sleep(0.8)\nprint('ran')"}, {"id": "m1", "cell_type": "markdown", "source": "old"}]})
+    th = threading.Thread(target=lambda: client.post("/api/notebooks/run", json={"path": path}))
+    th.start()
+    time.sleep(0.3)
+    nb = store.load(path)
+    nb["cells"][1]["source"] = "edited while running"
+    store.save(path, nb)
+    th.join(30)
+    out = store.load(path)
+    assert out["cells"][1]["source"] == "edited while running" and "ran" in out["cells"][0]["outputs"][0]["text"]
+    th = threading.Thread(target=lambda: client.post("/api/notebooks/run", json={"path": path}))
+    th.start()
+    time.sleep(0.3)
+    client.delete("/api/notebooks/file", params={"path": path})
+    th.join(30)
+    assert not os.path.exists(store.path(path))

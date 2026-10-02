@@ -8,6 +8,7 @@ Downloads open a save dialog, links to other sites open in the default browser, 
 """
 import argparse
 import os
+import signal
 import sys
 from urllib.parse import urlparse
 
@@ -25,8 +26,29 @@ def load_gi():
             last = e
     else:
         raise last
-    from gi.repository import Gio, GLib, Gtk, WebKit2
+    from gi.repository import GLib
+    # Before GTK is imported (which opens the display): the X11 WM_CLASS and the Wayland app id come from the program name, and they must match the desktop entry so the dock and taskbar show Studio's name and icon
+    GLib.set_prgname(PRGNAME)
+    from gi.repository import Gio, Gtk, WebKit2
     return Gio, GLib, Gtk, WebKit2
+
+
+PRGNAME = "chipwhisperer-studio"
+
+
+def page_language(environ=None):
+    """The language tag for navigator.language, from the locale. WebKit passes the locale through unchecked, and a value that is not a valid BCP 47 tag (C, POSIX, or a malformed LANG) makes Intl throw, which stops the plots from loading: fall back to en-US then."""
+    import re
+    environ = os.environ if environ is None else environ
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        val = environ.get(var, "")
+        if not val:
+            continue  # an empty variable does not count (POSIX locale precedence)
+        tag = val.split(".")[0].split("@")[0].replace("_", "-")
+        if re.fullmatch(r"[A-Za-z]{2,3}(-[A-Za-z]{4})?(-(?:[A-Za-z]{2}|[0-9]{3}))?", tag):
+            return tag
+        return "en-US"  # C, POSIX or a malformed value: the first set variable decides, like the C library
+    return "en-US"
 
 
 def main():
@@ -49,26 +71,32 @@ def main():
 
     origin = urlparse(args.url)
     parent = os.getppid()
-    GLib.set_prgname("chipwhisperer-studio")  # matches the desktop entry, so the dock and taskbar show Studio's icon
     GLib.set_application_name(args.title)
 
     win = Gtk.Window(title=args.title)
-    win.set_default_size(args.width, args.height)
+    width, height = args.width, args.height
+    try:  # fit a small or scaled screen (a 1366x768 laptop, 200 % scaling): at most 92 % of the monitor's work area
+        from gi.repository import Gdk
+        display = Gdk.Display.get_default()
+        monitor = display.get_primary_monitor() or display.get_monitor(0)
+        area = monitor.get_workarea()
+        width, height = min(width, int(area.width * 0.92)), min(height, int(area.height * 0.92))
+    except Exception:  # noqa: BLE001 (no monitor information, for example some Wayland compositors)
+        pass
+    win.set_default_size(max(width, 640), max(height, 480))
     if args.icon and os.path.exists(args.icon):
+        # Several sizes rather than the 512 px file alone: X11 drops an icon larger than the server's request size (_NET_WM_ICON then stays empty and the taskbar shows a generic icon)
         try:
-            win.set_icon_from_file(args.icon)
-            Gtk.Window.set_default_icon_from_file(args.icon)
-        except GLib.Error:
-            pass
+            from gi.repository import GdkPixbuf
+            pix = GdkPixbuf.Pixbuf.new_from_file(args.icon)
+            icons = [pix.scale_simple(n, n, GdkPixbuf.InterpType.HYPER) for n in (16, 24, 32, 48, 64, 128, 256) if n < pix.get_width()]
+            win.set_icon_list(icons or [pix])
+            Gtk.Window.set_default_icon_list(icons or [pix])
+        except Exception as e:  # noqa: BLE001
+            print(f"cannot load the window icon {args.icon}: {e}", file=sys.stderr, flush=True)
 
     # navigator.language comes from the locale; with LANG=C it is "C", which is not a valid language tag and makes Intl (used by the plots) throw
-    lang = "en-US"
-    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
-        val = os.environ.get(var, "").split(".")[0].split("@")[0]
-        if val and val not in ("C", "POSIX"):
-            lang = val.replace("_", "-")
-            break
-    WebKit2.WebContext.get_default().set_preferred_languages([lang])
+    WebKit2.WebContext.get_default().set_preferred_languages([page_language()])
 
     view = WebKit2.WebView()
     settings = view.get_settings()
@@ -137,7 +165,24 @@ def main():
             return True
         download.connect("decide-destination", decide)
 
+    def on_create(_view, action):
+        # window.open() and target=_blank links that WebKit hands over as a request for a new view: Studio has one window, so they open in the default browser
+        uri = action.get_request().get_uri()
+        if uri and not uri.startswith(("data:", "blob:", "about:")):
+            open_outside(uri)
+        return None
+
+    upload = os.environ.get("CWSTUDIO_WINDOW_UPLOAD")  # automated tests: answer file choosers (input type=file) with this file instead of showing the GTK dialog
+    if upload:
+        def on_file_chooser(_view, request):
+            request.select_files([upload])
+            print(f"CHOSE {upload}", flush=True)
+            return True
+        view.connect("run-file-chooser", on_file_chooser)
+
     view.connect("decide-policy", on_policy)
+    view.connect("create", on_create)
+    view.connect("web-process-terminated", lambda v, _reason: v.reload())  # the page's web process crashed or was killed: show Studio again instead of a blank window
     view.get_context().connect("download-started", on_download)
 
     def watch_parent():
@@ -155,7 +200,10 @@ def main():
                 return
 
             def run_script():
-                view.run_javascript(script, None, None, None)
+                if hasattr(view, "evaluate_javascript"):  # WebKitGTK 2.40 and later
+                    view.evaluate_javascript(script, -1, None, None, None, None, None)
+                else:
+                    view.run_javascript(script, None, None, None)
                 return False
 
             def take():
@@ -169,6 +217,17 @@ def main():
             if snap:
                 GLib.timeout_add(5000, take)
         view.connect("load-changed", loaded)
+
+    def quit_on_signal():
+        Gtk.main_quit()
+        return GLib.SOURCE_REMOVE
+    try:
+        from gi.repository import GLibUnix  # PyGObject 3.52 and later
+        signal_add = GLibUnix.signal_add
+    except ImportError:
+        signal_add = GLib.unix_signal_add
+    for sig in (signal.SIGINT, signal.SIGTERM):  # Ctrl+C in the terminal or Studio closing the window (after /api/shutdown): quit cleanly, without a traceback
+        signal_add(GLib.PRIORITY_DEFAULT, sig, quit_on_signal)
 
     win.add(view)
     win.connect("destroy", Gtk.main_quit)

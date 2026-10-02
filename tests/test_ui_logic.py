@@ -135,3 +135,103 @@ def test_logic_tab(studio):
             assert not errors, errors
             page.close()
         browser.close()
+
+
+def test_logic_view_limits_forms_and_keys(studio, tmp_path):
+    """Viewer edge cases a user hits: a 1-sample capture, huge wheel steps (no NaN, no zoom past 10 samples or out past the capture), keys only on the active tab, a decoder form that survives captures arriving while it is open, and the deep-zoom footer telling times apart."""
+    from playwright.sync_api import Error, expect, sync_playwright
+    _api(studio, "POST", "/api/scope/connect", {"kind": "sim", "sim_model": "husky"})
+    _api(studio, "POST", "/api/target/connect", {"kind": "sim"})
+    one = tmp_path / "one.vcd"
+    one.write_text('$timescale 1 ns $end\n$scope module m $end\n$var wire 1 ! a $end\n$var wire 1 " b $end\n$upscope $end\n$enddefinitions $end\n#0\n1!\n0"\n')
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Error as e:
+            pytest.skip(f"Chromium for Playwright is not installed: {e}")
+        page = browser.new_page(viewport={"width": 1300, "height": 950})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(studio)
+        page.click("#tabs .tab[data-tab=logic]")
+        expect(page.locator("#la-source option[value=sim]")).to_have_count(1, timeout=10000)
+        footer = page.locator("#la-footer")
+        _api(studio, "POST", "/api/la/import", {"path": str(one)})
+        expect(footer).to_contain_text("1 sample (", timeout=10000)
+        plot = page.locator("#la-plot").bounding_box()
+        page.mouse.move(plot["x"] + plot["width"] / 2, plot["y"] + 10)
+        for d in (-1e9, 1e9, -5000, 5000):
+            page.mouse.wheel(0, d)
+        page.keyboard.press("+")
+        page.keyboard.press("End")
+        page.wait_for_timeout(300)
+        assert "NaN" not in footer.inner_text() and "view 0.0000 ns .. 1.0000 ns" in footer.inner_text()
+        # a 25 ms capture: zoom in as far as it goes, then out past the end
+        _api(studio, "POST", "/api/la/capture", {"source": "sim", "settings": {"samplerate": 4e6, "duration_ms": 25}, "wait": True})
+        expect(footer).to_contain_text("100,000", timeout=10000)
+        page.mouse.move(plot["x"] + plot["width"] / 2, plot["y"] + 10)
+        for _ in range(60):
+            page.mouse.wheel(0, -3000)
+        page.wait_for_timeout(400)
+        txt = footer.inner_text()
+        assert "NaN" not in txt and "Infinity" not in txt
+        a, b = txt.split("view ")[1].split(" .. ")
+        assert a.split()[0] != b.split()[0], txt  # ten samples apart, and the footer shows the difference
+        for _ in range(60):
+            page.mouse.wheel(0, 1e6)
+        page.wait_for_timeout(400)
+        assert "view -10.000 ms .. 15.000 ms" in footer.inner_text()
+        # keys go to the active tab only
+        page.keyboard.press("+")
+        page.wait_for_timeout(300)
+        zoomed = footer.inner_text()
+        assert zoomed != "view -10.000 ms .. 15.000 ms"
+        page.click("#tabs .tab[data-tab=capture]")
+        page.keyboard.press("f")
+        page.keyboard.press("-")
+        page.click("#tabs .tab[data-tab=logic]")
+        page.wait_for_timeout(300)
+        assert footer.inner_text() == zoomed
+        # an open decoder form keeps what is typed while new captures arrive
+        page.select_option("#la-dec-type", "uart")
+        form = page.locator(".la-decform")
+        form.locator("input[type=text]").first.fill("57600")
+        _api(studio, "POST", "/api/la/capture", {"source": "sim", "settings": {"samplerate": 4e6, "duration_ms": 25}, "wait": True})
+        _api(studio, "POST", "/api/la/capture", {"source": "sim", "settings": {"samplerate": 4e6, "duration_ms": 25}, "wait": True})
+        page.wait_for_timeout(800)
+        assert form.locator("input[type=text]").first.input_value() == "57600"
+        assert not errors, errors
+        browser.close()
+
+
+def test_logic_view_fits_phones_and_short_windows(studio):
+    """At phone width (and in short windows) the Logic view does not overflow: the toolbars wrap, the plot keeps a usable size and the main area scrolls instead; in a large window it still fills the area without scrolling."""
+    from playwright.sync_api import Error, sync_playwright
+    _api(studio, "POST", "/api/scope/connect", {"kind": "sim", "sim_model": "husky"})
+    _api(studio, "POST", "/api/target/connect", {"kind": "sim"})
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Error as e:
+            pytest.skip(f"Chromium for Playwright is not installed: {e}")
+        for width, height in ((390, 844), (700, 500), (1600, 1000)):
+            page = browser.new_page(viewport={"width": width, "height": height})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(studio)
+            page.evaluate("() => document.querySelector('#tabs .tab[data-tab=logic]').click()")
+            page.wait_for_selector("#la-source option[value=sim]", state="attached", timeout=10000)
+            page.select_option("#la-source", "sim")
+            page.click("#la-capture")
+            page.wait_for_function("() => document.getElementById('la-footer').textContent.includes('100,000')", timeout=15000)
+            page.wait_for_timeout(300)
+            g = page.evaluate("""() => { const r = (s) => document.querySelector(s).getBoundingClientRect(); const m = document.getElementById('main');
+                return { scroll: r('.la-scroll').height, plotW: r('#la-plot').width, main: r('#main').width, over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                         wide: [...document.querySelectorAll('#la-view *')].filter((e) => e.getBoundingClientRect().right > r('#main').right + 1 && e.getBoundingClientRect().width).length, mainScrolls: m.scrollHeight > m.clientHeight + 1 }; }""")
+            assert g["over"] <= 0 and g["wide"] == 0, (width, g)
+            assert g["scroll"] >= 150 and g["plotW"] >= 0.6 * g["main"], (width, g)
+            if width == 1600:
+                assert not g["mainScrolls"], g
+            assert not errors, errors
+            page.close()
+        browser.close()

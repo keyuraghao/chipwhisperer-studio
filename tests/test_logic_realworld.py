@@ -1,0 +1,506 @@
+"""Logic analyser against real-world inputs: files written the way PulseView, Saleae Logic 2, sigrok-cli and Verilog simulators write them, malformed files, decoders at real timing tolerances (clock error, glitches, clock stretching, overdrive, CAN FD), export round trips and the session behaviour around repeat captures."""
+import json
+import os
+import tempfile
+import time
+import zipfile
+
+import numpy as np
+import pytest
+from starlette.testclient import TestClient
+
+from cwstudio.app import create_app
+from cwstudio.logic import decoders as D
+from cwstudio.logic import formats, synth
+from cwstudio.logic.model import LogicCapture
+from cwstudio.session import Session
+
+
+def cap_of(sig, sr, t0, t1, **kw):
+    n = int((t1 - t0) * sr)
+    return LogicCapture.from_edges(synth.render(sig, sr, t0, n, **kw), n, sr, 0)
+
+
+def chans(cap):
+    return {c.name: (c.init, c.edges.tolist()) for c in cap.channels}
+
+
+# ----- files from other tools -----------------------------------------------------------------------------
+PULSEVIEW_VCD = """$date Tue Oct  1 12:00:00 2026 $end
+$version libsigrok 0.5.2 $end
+$comment
+  Acquisition with 3/8 channels at 1 MHz
+$end
+$timescale 1 us $end
+$scope module libsigrok $end
+$var wire 1 ! D0 $end
+$var wire 1 " D1 $end
+$var wire 1 # D2 $end
+$upscope $end
+$enddefinitions $end
+#0 1! 0" 1#
+#5 0!
+#12 1! 1"
+#20 0#
+#100
+"""
+
+ICARUS_VCD = """$date
+\tTue Oct  1 12:00:00 2026
+$end
+$version
+\tIcarus Verilog
+$end
+$timescale
+\t1ps
+$end
+$comment a header comment that mentions $var wire 1 @ not_a_signal $end
+$scope module tb $end
+$var wire 1 ! clk $end
+$var reg 8 " data [7:0] $end
+$var reg 4 $ nib [0:3] $end
+$var wire 1 % bus [3] $end
+$var wire 1 & bus [2] $end
+$var real 64 ' vref $end
+$var event 1 * done $end
+$scope module dut $end
+$var wire 1 ( clk $end
+$var wire 1 ! clk_alias $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+$comment generated for a test $end
+#0
+$dumpvars
+0!
+bxxxxxxxx "
+b0001 $
+z%
+x&
+r1.5 '
+1(
+$end
+#5000
+1!
+b1010 "
+b1000 $
+1%
+1&
+0(
+$comment 1! inside a comment is not a value change $end
+#10000
+0!
+b11111111 "
+#15000
+1!
+r2.5 '
+#20000
+"""
+
+
+def write(tmp_path, name, text, mode="w"):
+    p = tmp_path / name
+    if mode == "w":
+        p.write_text(text)
+    else:
+        p.write_bytes(text)
+    return str(p)
+
+
+def test_pulseview_vcd(tmp_path):
+    cap = formats.load(write(tmp_path, "pv.vcd", PULSEVIEW_VCD))
+    assert cap.samplerate == 1e6 and cap.n == 101 and cap.trigger == 0
+    assert chans(cap) == {"D0": (1, [5, 12]), "D1": (0, [12]), "D2": (1, [20])}
+
+
+def test_simulator_vcd_vectors_scopes_xz_and_skipped_types(tmp_path):
+    cap = formats.load(write(tmp_path, "sim.vcd", ICARUS_VCD))
+    # 1 ps timescale and changes every 5000 ps: 200 MHz, samples 0..4
+    assert cap.samplerate == pytest.approx(200e6) and cap.n == 5
+    names = [c.name for c in cap.channels]
+    # the same name in two scopes gets the scope path; aliases (same identifier) are one channel
+    assert names[0] == "tb.clk" and names[-1] == "tb.dut.clk" and "clk_alias" not in names
+    # vectors split MSB first by their declared range, ascending ranges kept in order, bit selects kept
+    assert names[1:9] == [f"data[{k}]" for k in range(7, -1, -1)]
+    assert names[9:13] == ["nib[0]", "nib[1]", "nib[2]", "nib[3]"] and names[13:15] == ["bus[3]", "bus[2]"]
+    assert len(names) == 16 and cap.meta["skipped"] == ["vref (real)", "done (event)"]
+    c = {ch.name: ch for ch in cap.channels}
+    assert c["tb.clk"].init == 0 and c["tb.clk"].edges.tolist() == [1, 2, 3]  # the 1! in the comment did not count
+    # b0001 on nib[0:3]: the rightmost character is nib[3]
+    assert c["nib[3]"].init == 1 and c["nib[0]"].init == 0 and c["nib[0]"].edges.tolist() == [1]
+    # x and z read as 0; b1010 is zero extended to 00001010
+    assert c["data[3]"].init == 0 and c["data[3]"].edges.tolist() == [1] and c["data[1]"].edges.tolist() == [1] and c["data[7]"].edges.tolist() == [2]
+    assert c["bus[3]"].init == 0 and c["bus[3]"].edges.tolist() == [1]
+    # decoders and buses find the qualified names
+    assert cap.ch_index("tb.dut.clk") == 15
+
+
+def test_vcd_timescales(tmp_path):
+    for ts, unit in (("10ns", 10e-9), ("1 ns", 1e-9), ("100 us", 100e-6), ("1 ps", 1e-12)):
+        text = f"$timescale {ts} $end\n$scope module m $end\n$var wire 1 ! a $end\n$upscope $end\n$enddefinitions $end\n#0\n1!\n#3\n0!\n#7\n1!\n#10\n"
+        cap = formats.load(write(tmp_path, "t.vcd", text))
+        assert cap.samplerate == pytest.approx(1 / unit) and cap.n == 11 and cap.channels[0].edges.tolist() == [3, 7], ts
+
+
+SALEAE_CSV = """Time [s],Channel 0,Channel 1
+-0.000010000,1,1
+0.000000000,0,1
+0.000008680,1,0
+0.000017360,0,0
+0.000026040,1,1
+0.000100000,1,1
+"""
+SALEAE_ISO = """Time [s],Channel 0,Channel 1
+2026-10-01T12:00:00.000000000+00:00,1,1
+2026-10-01T12:00:00.000010000+00:00,0,1
+2026-10-01T12:00:00.000018680+00:00,1,0
+2026-10-01T12:00:00.000027360+00:00,0,0
+2026-10-01T12:00:00.000100000+00:00,1,1
+"""
+SIGROK_CSV = """; CSV generated by libsigrok 0.5.2
+; from Demo device on Tue Oct  1 12:00:00 2026
+; Channels (2/8): D0, D1
+; Samplerate: 1 MHz
+D0,D1
+1,0
+1,0
+0,1
+0,1
+1,1
+"""
+
+
+def test_saleae_and_sigrok_csv(tmp_path):
+    cap = formats.load(write(tmp_path, "saleae.csv", SALEAE_CSV))
+    assert cap.samplerate == pytest.approx(25e6) and cap.trigger == 250
+    assert chans(cap) == {"Channel 0": (1, [250, 467, 684, 901]), "Channel 1": (1, [467, 901])}
+    assert cap.t(250) == 0.0
+    iso = formats.load(write(tmp_path, "iso.csv", SALEAE_ISO))
+    assert iso.samplerate == pytest.approx(25e6) and chans(iso)["Channel 0"] == (1, [250, 467, 684, 2500])
+    # a UTC offset is honoured: the same instants written in +02:00 give the same capture
+    shifted = SALEAE_ISO.replace("T12:", "T14:").replace("+00:00", "+02:00")
+    assert chans(formats.load(write(tmp_path, "iso2.csv", shifted))) == chans(iso)
+    sg = formats.load(write(tmp_path, "sigrok.csv", SIGROK_CSV))
+    assert sg.samplerate == 1e6 and sg.n == 5 and chans(sg) == {"D0": (1, [2, 4]), "D1": (0, [2])}
+    # an explicit rate wins over the comment
+    assert formats.load(str(tmp_path / "sigrok.csv"), samplerate=2e6).samplerate == 2e6
+
+
+def libsigrok_sr(path, unitsize=2, chunks=(3000, 5001, 1999)):
+    """A .sr the way libsigrok saves it: 16 probes with some disabled (no probeN line), unitsize 2, several logic-1-N chunks."""
+    n = sum(chunks)
+    k = np.arange(n)
+    words = ((k // 7) & 1) | (((k // 50) & 1) << 3) | (((k // 1000) & 1) << 15)
+    meta = "[global]\nsigrok version=0.5.2\n\n[device 1]\ncapturefile=logic-1\ntotal probes=16\nsamplerate=24 MHz\ntotal analog=0\nprobe1=D0\nprobe4=D3\nprobe16=D15\nunitsize=%d\n" % unitsize
+    raw = words.astype("<u2").tobytes()
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("version", "2")
+        z.writestr("metadata", meta)
+        off = 0
+        for i, c in enumerate(chunks):
+            # chunk boundaries at an odd byte count split a sample across files, which the reader must carry over
+            z.writestr(f"logic-1-{i + 1}", raw[off:off + c * unitsize + (1 if i == 0 else -1 if i == 1 else 0)])
+            off += c * unitsize + (1 if i == 0 else -1 if i == 1 else 0)
+    return words, n
+
+
+def test_libsigrok_sr_unitsize_2_and_chunks(tmp_path):
+    p = str(tmp_path / "pv.sr")
+    words, n = libsigrok_sr(p)
+    cap = formats.load(p)
+    assert cap.samplerate == 24e6 and cap.n == n and [c.name for c in cap.channels] == ["D0", "D3", "D15"]
+    for c, bit in zip(cap.channels, (0, 3, 15)):
+        assert np.array_equal(c.dense(0, n), (words >> bit) & 1), c.name
+
+
+@pytest.mark.parametrize("name,content,words", [
+    ("junk.vcd", b"garbage\x00\x01", "no $enddefinitions"),
+    ("novars.vcd", b"$timescale 1ns $end\n$var real 64 ! v $end\n$enddefinitions $end\n#0\n", "no wire or reg"),
+    ("junk.sr", b"not a zip", "not a zip archive"),
+    ("empty.csv", b"", "empty"),
+    ("header.csv", b"Time [s],D0\n", "header but no data"),
+    ("analyzer.csv", b"name,type,start_time,duration,data\nAsync Serial,data,0.0001,0.00008,0x41\n", "not a number"),
+    ("ragged.csv", b"Time [s],D0,D1\n0,1,1\n1e-6,0\n", "has 2 columns"),
+    ("binary.csv", b"\x00\x01\x02\x03,1\n", "binary"),
+])
+def test_malformed_files_give_clear_errors(tmp_path, name, content, words):
+    p = write(tmp_path, name, content, "wb")
+    with pytest.raises(ValueError, match=words.replace("$", r"\$")):
+        formats.load(p)
+
+
+def test_sr_without_logic_channels(tmp_path):
+    p = str(tmp_path / "analog.sr")
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("version", "2")
+        z.writestr("metadata", "[device 1]\ntotal probes=0\ntotal analog=1\nsamplerate=1 MHz\nanalog1=A0\n")
+    with pytest.raises(ValueError, match="no logic channels"):
+        formats.load(p)
+
+
+@pytest.mark.parametrize("fmt", ["vcd", "csv", "sr"])
+def test_exports_open_back_identically(tmp_path, fmt):
+    sig = {"UART TX": synth.Line(1), "a,b": synth.Line(0), "x$end y": synth.Line(0), "quiet": synth.Line(1)}
+    synth.uart(sig["UART TX"], 1e-6, b"Hi", 1e6)
+    sig["a,b"].set(3e-6, 1).set(4e-6, 0)
+    cases = [cap_of(sig, 10e6, -2e-6, 30e-6), LogicCapture.from_edges({"few": (0, [7]), "none": (1, [])}, 5000, 3e6, 12)]
+    cases[0].trigger = 20
+    for cap in cases:
+        p = formats.save(cap, str(tmp_path / "rt"), fmt)
+        back = formats.load(p)
+        assert back.n == cap.n and back.samplerate == pytest.approx(cap.samplerate, rel=1e-9) and back.trigger == cap.trigger, (fmt, back.n, back.samplerate, back.trigger)
+        assert chans(back) == chans(cap)
+    with pytest.raises(ValueError, match="no digital channels"):
+        formats.save(LogicCapture([], 10, 1e6), str(tmp_path / "none"), fmt)
+
+
+# ----- decoders at real-world tolerances ----------------------------------------------------------------------
+@pytest.mark.parametrize("err", [-0.02, 0.02])
+@pytest.mark.parametrize("baud", [9600, 115200, 1_000_000])
+def test_uart_with_two_percent_clock_error(err, baud):
+    msg = bytes(range(0x20, 0x80))
+    ln = synth.Line(1)
+    t = synth.uart(ln, 10 / baud, msg, baud * (1 + err))
+    cap = cap_of({"rx": ln}, 16e6 if baud > 2e5 else 2e6, 0, t + 20 / baud)
+    auto = D.decode(cap, "uart", {"rx": 0}, {"baud": "auto"})
+    assert auto.meta["baud"] == baud and bytes(auto.values("rx")) == msg and auto.meta["rx_errors"] == 0
+    nominal = D.decode(cap, "uart", {"rx": 0}, {"baud": baud})
+    assert bytes(nominal.values("rx")) == msg
+
+
+def test_spi_with_glitches_and_the_glitch_filter():
+    cs, sck, mosi, miso = synth.Line(1), synth.Line(0), synth.Line(0), synth.Line(0)
+    tx = list(range(40))
+    t = synth.spi(cs, sck, mosi, miso, 1e-6, tx, tx[::-1], 1e6)
+    cap = cap_of({"cs": cs, "sck": sck, "mosi": mosi, "miso": miso}, 50e6, 0, t + 1e-6, glitch_rate=2e4, seed=3)
+    m = {"cs": 0, "sck": 1, "mosi": 2, "miso": 3}
+    raw = D.decode(cap, "spi", m, {})
+    assert raw.values("mosi") != tx  # one-sample spikes on SCK add clock edges
+    clean = D.decode(cap, "spi", m, {"glitch_ns": 50})
+    assert clean.values("mosi") == tx and clean.values("miso") == tx[::-1]
+    assert any(o["id"] == "glitch_ns" for o in D.registry()["spi"]["options"])
+    with pytest.raises(D.DecodeError):
+        D.decode(cap, "spi", m, {"glitch_ns": "abc"})
+
+
+def test_deglitch_drops_short_pulses_only():
+    c = LogicCapture.from_edges({"a": (0, [10, 11, 50, 52, 100, 200, 201, 202, 203])}, 300, 1e6).channels[0]
+    # pulses 10-11 and 50-52 vanish, 100 stays, the 200..203 burst goes as two pairs; the level after each removed pair is unchanged
+    out = D.deglitch(c, 3)
+    assert out.edges.tolist() == [100] and out.init == 0
+    assert D.deglitch(c, 1) is c and D.deglitch(c, 2).edges.tolist() == [50, 52, 100]
+
+
+def test_i2c_clock_stretching_and_multi_byte_read():
+    scl, sda = synth.Line(1), synth.Line(1)
+    data = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60]
+    ops = [("start",), ("byte", 0xA0, True), ("byte", 0x00, True), ("start",), ("byte", 0xA1, True)] + [("byte", d, k < len(data) - 1) for k, d in enumerate(data)] + [("stop",)]
+    t = synth.i2c(scl, sda, 5e-6, ops, 400e3, stretch=35e-6)
+    cap = cap_of({"scl": scl, "sda": sda}, 8e6, 0, t + 5e-6)
+    r = D.decode(cap, "i2c", {"scl": 0, "sda": 1}, {})
+    assert r.texts("i2c", ["addr"]) == ["Write 0x50", "Read 0x50"]
+    assert r.values("i2c") == [0x00] + data
+    acks = r.texts("i2c", ["ack", "nack"])
+    assert acks == ["ACK"] * 8 + ["NACK"] and r.texts("i2c", ["start"]) == ["S", "Sr"] and r.texts("i2c", ["stop"]) == ["P"]
+
+
+def test_onewire_overdrive():
+    ln = synth.Line(1)
+    rom = synth.DEMO_ROM + bytes([D._crc8_maxim(synth.DEMO_ROM)])
+    ops = [("reset", True), ("write", b"\x3C"), ("overdrive", True), ("write", b"\x44"), ("reset", True), ("write", b"\x69"), ("write", rom), ("write", b"\xBE"), ("read", b"\x12\x34"), ("overdrive", False), ("reset", True), ("write", b"\xCC")]
+    t = synth.onewire(ln, 10e-6, ops)
+    cap = cap_of({"ow": ln}, 4e6, 0, t + 100e-6)
+    r = D.decode(cap, "onewire", {"owr": 0}, {})
+    txt = r.texts("onewire")
+    assert txt[:3] == ["Reset", "Presence", "Overdrive skip ROM (0x3C)"]
+    assert "Convert T (0x44)" in txt and "Reset (overdrive)" in txt and "Overdrive match ROM (0x69)" in txt
+    assert "Read scratchpad (0xBE)" in txt and txt[-2:] == ["Presence", "Skip ROM (0xCC)"] and txt[-3] == "Reset"
+    assert r.values("onewire")[-2:] == [0x12, 0x34]
+    assert any("CRC ok" in x for x in r.texts("rom")) and r.meta["overdrive"] is True and r.meta["presence"] == 3
+
+
+def can_fd_bits(ident, nbytes, rng):
+    """A CAN FD base frame at one bit rate (enough to check that a classic decoder recognises and skips it): SOF, ID, RRS, IDE, FDF=1, res, BRS, ESI, DLC, data, a stand-in CRC, delimiter, ACK, EOF."""
+    w = lambda v, n: [(v >> k) & 1 for k in range(n - 1, -1, -1)]  # noqa: E731
+    f = [0] + w(ident, 11) + [0, 0, 1, 0, 1, 0] + w(nbytes if nbytes <= 8 else 9, 4)
+    f += list(rng.integers(0, 2, 8 * nbytes)) + list(rng.integers(0, 2, 21))
+    out, run, last = [], 0, None
+    for b in f:
+        out.append(int(b))
+        run = run + 1 if b == last else 1
+        last = b
+        if run == 5:
+            out.append(1 - int(b))
+            last, run = 1 - int(b), 1
+    return out + [1, 0, 1] + [1] * 10
+
+
+def test_can_fd_frames_are_marked_not_misdecoded():
+    br = 500e3
+    ln = synth.Line(1)
+    t = 20e-6
+    for k, b in enumerate(can_fd_bits(0x2A5, 12, np.random.default_rng(5))):
+        ln.set(t + k / br, b)
+    t += (k + 1) / br + 10 / br
+    synth.can(ln, t, br, 0x123, b"\x01\x02")
+    cap = cap_of({"can": ln}, 8e6, 0, t + 200 / br)
+    r = D.decode(cap, "can", {"can": 0}, {"bitrate": br})
+    frames = r.texts("frames")
+    assert frames[0].startswith("CAN FD 0x2A5") and frames[1] == "0x123 [2] 01 02" and len(frames) == 2
+    assert r.meta["fd_frames"] == 1 and r.meta["errors"] == 0
+
+
+def test_jtag_long_dr_and_swd_reset_sequence():
+    tck, tms, tdi, tdo = synth.Line(0), synth.Line(0), synth.Line(0), synth.Line(0)
+    big = int.from_bytes(np.random.default_rng(1).bytes(125), "little")
+    t = synth.jtag(tck, tms, tdi, tdo, 1e-6, [("reset",), ("ir", 0x3, 5, 1), ("dr", big, 1000, big ^ 1), ("idle", 3)], 1e6)
+    r = D.decode(cap_of({"tck": tck, "tms": tms, "tdi": tdi, "tdo": tdo}, 10e6, 0, t + 1e-6), "jtag", {"tck": 0, "tms": 1, "tdi": 2, "tdo": 3}, {})
+    dr = r.values("dr", None)[0]
+    assert dr == {"tdi": big, "tdo": big ^ 1, "bits": 1000} and r.meta["final_state"] == "Run-Test/Idle"
+    clk, dio = synth.Line(0), synth.Line(1)
+    t = synth.swd(clk, dio, 1e-6, [("line_reset",), ("jtag_to_swd",), ("line_reset",), ("idle", 2), ("read", 0, 0, "ok", 0x2BA01477), ("write", 1, 4, "ok", 0x12345678), ("read", 1, 0xC, "ok", 0xFFFFFFFF), ("idle", 2)], 1e6)
+    r = D.decode(cap_of({"clk": clk, "dio": dio}, 10e6, 0, t + 1e-6), "swd", {"swclk": 0, "swdio": 1}, {})
+    assert r.texts("swd") == ["Line reset", "JTAG-to-SWD", "Line reset", "DP read DPIDR", "OK", "0x2BA01477", "AP write 0x4", "OK", "0x12345678", "AP read 0xC", "OK", "0xFFFFFFFF"]
+
+
+# ----- session behaviour ------------------------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def client():
+    session = Session(simulate=True, data_dir=tempfile.mkdtemp())
+    with TestClient(create_app(session)) as c:
+        c.session = session
+        assert c.post("/api/scope/connect", json={"kind": "sim", "sim_model": "husky"}).status_code == 200
+        assert c.post("/api/target/connect", json={"kind": "sim"}).status_code == 200
+        yield c
+
+
+def sim_capture(client, **settings):
+    r = client.post("/api/la/capture", json={"source": "sim", "settings": dict({"samplerate": 4e6, "duration_ms": 5}, **settings), "wait": True})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_repeat_capture_keeps_channel_names_colours_hidden_and_order(client):
+    first = sim_capture(client)
+    r = client.put("/api/la/channels", json={"channels": [{"index": "UART TX", "name": "target TX", "color": "#123456"}, {"index": "CAN", "hidden": True}], "order": [3, 0, 1, 2]})
+    assert r.status_code == 200
+    again = sim_capture(client)
+    assert again["id"] != first["id"]
+    ch = {c["index"]: c for c in again["channels"]}
+    assert ch[0]["name"] == "target TX" and ch[0]["color"] == "#123456" and ch[11]["hidden"] is True and again["order"][:4] == [3, 0, 1, 2]
+    # the original names still find the channels (scripts and MCP calls written before the rename keep working)
+    m = client.post("/api/la/measure", json={"channel": "UART TX"}).json()
+    assert m["channel"] == "target TX"
+    # a different channel set starts fresh
+    other = sim_capture(client, channels=["UART TX", "UART RX"])
+    assert [c["name"] for c in other["channels"]] == ["UART TX", "UART RX"]
+    # files are never renamed after a capture
+    p = formats.save(LogicCapture.from_edges({"UART TX": (1, [3])}, 10, 1e6), os.path.join(tempfile.mkdtemp(), "f"), "vcd")
+    assert client.post("/api/la/import", json={"path": p}).json()["channels"][0]["name"] == "UART TX"
+
+
+def test_search_backwards_without_a_start_point_searches_from_the_end(client):
+    cap = sim_capture(client)
+    last = client.post("/api/la/search", json={"kind": "edge", "channel": "TRIG", "direction": "prev"}).json()
+    assert last["found"] and last["t"] == pytest.approx(0.25e-3, abs=1e-6)
+    assert client.post("/api/la/search", json={"kind": "edge", "channel": "TRIG", "direction": "prev", "from": -1}).json()["index"] == last["index"]
+    assert cap["samples"] > last["index"]
+
+
+def test_import_upload_of_foreign_files(client, tmp_path):
+    for name, text in (("pv.vcd", PULSEVIEW_VCD), ("logic2.csv", SALEAE_ISO), ("sigrok.csv", SIGROK_CSV)):
+        r = client.post("/api/la/import/upload", files={"file": (name, text.encode())})
+        assert r.status_code == 200, r.text
+    r = client.post("/api/la/import/upload", files={"file": ("bad.csv", b"name,type\nAsync Serial,data\n")})
+    assert r.status_code == 400 and "not a number" in r.json()["detail"]
+
+
+# ----- the Husky LA path ---------------------------------------------------------------------------------------
+def test_native_rewrites_the_oversampling_after_a_clock_change_and_waits_for_the_fifo():
+    from tests.test_logic_sources import FakeScope, run
+
+    sc = FakeScope()
+    sc.LA.oversampling_factor = 4
+    sc.LA.calls.clear()
+    times = {}
+    orig_arm, orig_read = sc.LA.arm, sc.LA.read_capture_data
+
+    def arm():
+        times["arm"] = time.time()
+        return orig_arm()
+
+    def read():
+        times["read"] = time.time()
+        return orig_read()
+    object.__setattr__(sc.LA, "arm", arm)
+    object.__setattr__(sc.LA, "read_capture_data", read)
+    # the same factor but a new clock source: the MMCM must be programmed again for the new source frequency
+    job = run("native", {"clk_source": "target", "oversampling": 4, "downsample": 65536, "depth": 200, "trigger": "manual"}, sc)
+    sets = [c[1:] for c in sc.LA.calls if c[0] == "set"]
+    assert sets.index(("clk_source", "target")) < sets.index(("oversampling_factor", 4.0))
+    # 7.37 MHz x 4 / 65536 = 450 Hz: 200 samples take 0.44 s, read only after that
+    sr = 7.37e6 * 4 / 65536
+    assert job.capture.samplerate == pytest.approx(sr) and times["read"] - times["arm"] >= 200 / sr * 0.95
+
+
+def test_mcp_select_search_back_and_decode_while_big_capture_decodes(client, tmp_path):
+    from cwstudio.mcp_server import build_server
+    from tests.test_logic_sources import TestClientAdapter
+    m = build_server(TestClientAdapter(client))
+
+    def call(name, **args):
+        r = m._tools_call({"name": name, "arguments": args})
+        assert not r["isError"], r
+        return json.loads(r["content"][0]["text"])
+    tools = {t["name"]: t for t in m._tools_list({})["tools"]}
+    assert "la_select" in tools and tools["la_decode"]["annotations"]["readOnlyHint"] is False  # add_to_view changes the Logic tab
+    first = call("la_capture", source="sim", samplerate=4e6, duration_ms=5)
+    second = call("la_capture", source="sim", samplerate=2e6, duration_ms=5)
+    assert call("la_status")["current"] == second["id"]
+    assert call("la_select", capture=first["id"])["samplerate"] == 4e6 and call("la_status")["current"] == first["id"]
+    hit = call("la_search", kind="edge", channel="TRIG", edge="falling", direction="prev")
+    assert hit["found"] and hit["t"] == pytest.approx(0.25e-3, abs=1e-6)
+    bad = m._tools_call({"name": "la_decode", "arguments": {"decoder": "uart", "options": {"glitch_ns": -1}}})
+    assert bad["isError"] and "glitch filter" in bad["content"][0]["text"]
+
+
+def test_big_captures_decode_in_a_worker_process_and_the_api_stays_responsive(client):
+    svc = client.session.logic
+    # 6 lines of 20000 random bytes at 115200 baud: about 600k edges, above the in-request limit
+    rng = np.random.default_rng(7)
+    msg = bytes(rng.integers(0, 256, 20000, dtype=np.uint8))
+    ln = synth.Line(1)
+    t = synth.uart(ln, 20e-6, msg, 115200)
+    cap = cap_of({"rx": ln}, 10e6, 0, t + 100e-6)
+    reps = 6
+    cap = LogicCapture.from_edges({f"rx{k}": (cap.channels[0].init, cap.channels[0].edges) for k in range(reps)}, cap.n, cap.samplerate)
+    assert svc.big(cap)
+    svc.add_capture(cap)
+    for k in range(reps):
+        assert client.post("/api/la/decoders", json={"type": "uart", "channels": {"rx": k}, "options": {"baud": 115200}}).json()["pending"] is True
+    first = client.post("/api/la/view", json={"a": 0, "b": cap.n, "px": 1000}).json()
+    assert any(d.get("pending") for d in first["decoders"])
+    assert client.get("/api/la/annotations").json()["pending"]
+    worst = 0.0
+    t0 = time.time()
+    while time.time() - t0 < 120:
+        s0 = time.time()
+        r = client.post("/api/la/view", json={"a": 1000, "b": 50000, "px": 1200})
+        worst = max(worst, time.time() - s0)
+        if not any(d.get("pending") for d in r.json()["decoders"]):
+            break
+        time.sleep(0.05)
+    assert not any(d.get("pending") for d in r.json()["decoders"])
+    assert worst < 1.0, worst  # the decoders ran in the worker process, not on the request threads
+    ann = client.get("/api/la/annotations", params={"decoder": "all", "limit": 5}).json()
+    assert not ann["pending"] and ann["total"] == reps * len(msg)
+    for did in svc.decoders:
+        assert bytes(svc.result(did, cap).values("rx")) == msg
+    assert svc._procs  # a worker process pool was made
+    for did in list(svc.decoders):
+        client.delete(f"/api/la/decoders/{did}")
+
+
+def test_repeat_captures_kept_on_disk_do_not_overwrite_each_other(client):
+    paths = {sim_capture(client, persist=True)["meta"]["saved"] for _ in range(3)}
+    assert len(paths) == 3 and all(os.path.exists(p) for p in paths)

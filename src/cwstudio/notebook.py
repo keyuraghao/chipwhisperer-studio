@@ -16,6 +16,7 @@ import logging
 import os
 import queue
 import re
+import reprlib
 import shlex
 import shutil
 import subprocess
@@ -89,12 +90,33 @@ def new_notebook() -> Dict[str, Any]:
     ]})
 
 
+class NotebookConflict(Exception):
+    """The notebook changed on disk since the editor loaded it (a run from the API or an agent, another window)."""
+
+
+class NotebookDeleted(Exception):
+    """The notebook an editor saves was deleted (or renamed) meanwhile; saving must not create it again."""
+
+
 class NotebookStore:
-    """``.ipynb`` files under ``<data_dir>/notebooks`` (sub-folders allowed)."""
+    """``.ipynb`` files under ``<data_dir>/notebooks`` (sub-folders allowed). ``on_change`` (set by the session) hears every save and delete, so open notebook tabs in every window can follow them."""
 
     def __init__(self, root: str):
         self.root = root
+        self.on_change: Optional[Callable[[Dict[str, Any]], None]] = None
+        self._lock = threading.Lock()
         os.makedirs(root, exist_ok=True)
+
+    def _changed(self, ev: Dict[str, Any]):
+        if self.on_change is not None:
+            try:
+                self.on_change(ev)
+            except Exception:  # noqa: BLE001
+                log.debug("notebook change listener", exc_info=True)
+
+    def mtime(self, rel: str) -> Optional[float]:
+        p = self.path(rel if rel.endswith(".ipynb") else rel + ".ipynb")
+        return os.path.getmtime(p) if os.path.isfile(p) else None
 
     def path(self, rel: str) -> str:
         p = os.path.abspath(os.path.join(self.root, rel or ""))
@@ -116,17 +138,28 @@ class NotebookStore:
         with open(self.path(rel), "r", encoding="utf-8") as f:
             return normalize(json.load(f))
 
-    def save(self, rel: str, nb: Dict[str, Any]) -> Dict[str, Any]:
+    def save(self, rel: str, nb: Dict[str, Any], base_mtime: Optional[float] = None, client: Optional[str] = None) -> Dict[str, Any]:
+        """Write a notebook. With ``base_mtime`` (the modification time the editor loaded) the save is refused when the file changed since (``NotebookConflict``) or no longer exists (``NotebookDeleted``), so an editor never overwrites a run's results or brings back a deleted notebook."""
         if not rel.endswith(".ipynb"):
             rel += ".ipynb"
         p = self.path(rel)
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(to_ipynb(nb), f, indent=1, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp, p)
-        return {"path": os.path.relpath(p, self.root).replace(os.sep, "/"), "mtime": os.path.getmtime(p)}
+        data = to_ipynb(nb)
+        with self._lock:
+            if base_mtime is not None:
+                if not os.path.isfile(p):
+                    raise NotebookDeleted(f"{rel} was deleted or renamed")
+                cur = os.path.getmtime(p)
+                if abs(cur - float(base_mtime)) > 1e-3:
+                    raise NotebookConflict(f"{rel} changed on disk since it was loaded (mtime {cur})")
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=1, ensure_ascii=False)
+                f.write("\n")
+            os.replace(tmp, p)
+            res = {"path": os.path.relpath(p, self.root).replace(os.sep, "/"), "mtime": os.path.getmtime(p)}
+        self._changed({"kind": "file", "action": "saved", "path": res["path"], "mtime": res["mtime"], "client": client})
+        return res
 
     def create(self, name: str) -> Dict[str, Any]:
         name = (name or "Untitled").strip().replace("\\", "/")
@@ -166,7 +199,9 @@ class NotebookStore:
         return {"path": os.path.relpath(dst, self.root).replace(os.sep, "/"), "old": rel, "mtime": os.path.getmtime(dst)}
 
     def delete(self, rel: str) -> None:
-        os.remove(self.path(rel))
+        p = self.path(rel)
+        os.remove(p)
+        self._changed({"kind": "file", "action": "deleted", "path": os.path.relpath(p, self.root).replace(os.sep, "/")})
 
 
 # ----------------------------------------------------------------------------
@@ -224,8 +259,31 @@ def _install_routers():
             _ROUTERS[name] = r
 
 
-def rich_bundle(obj: Any) -> Dict[str, Any]:
-    """Jupyter-style mime bundle for an object (text/plain always, plus HTML, PNG, SVG, markdown when the object provides them)."""
+FIGURE_FORMATS = ("png", "svg")
+
+
+def figure_bundle(fig, fmt: str = "png", label: Optional[str] = None) -> Dict[str, Any]:
+    """Mime bundle of a matplotlib figure, as PNG or SVG (``%config InlineBackend.figure_format``)."""
+    buf = io.BytesIO()
+    label = label or f"<Figure size {int(fig.get_figwidth() * fig.dpi)}x{int(fig.get_figheight() * fig.dpi)}>"
+    if fmt == "svg":
+        fig.savefig(buf, format="svg", bbox_inches="tight")
+        return {"image/svg+xml": buf.getvalue().decode("utf-8"), "text/plain": label}
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=100)
+    return {"image/png": base64.b64encode(buf.getvalue()).decode(), "text/plain": label}
+
+
+def _is_mpl_figure(obj) -> bool:
+    return type(obj).__module__.startswith("matplotlib") and hasattr(obj, "savefig") and hasattr(obj, "get_figwidth")
+
+
+def rich_bundle(obj: Any, figure_format: str = "png") -> Dict[str, Any]:
+    """Jupyter-style mime bundle for an object (text/plain always, plus HTML, PNG, SVG, markdown when the object provides them; matplotlib figures as images)."""
+    if _is_mpl_figure(obj):
+        try:
+            return figure_bundle(obj, figure_format)
+        except Exception:  # noqa: BLE001
+            pass
     data: Dict[str, Any] = {}
     if hasattr(obj, "_repr_mimebundle_"):
         try:
@@ -263,14 +321,51 @@ def rich_bundle(obj: Any) -> Dict[str, Any]:
 _MAGIC_LINE = re.compile(r"^(\s*)(?:(\w+)\s*=\s*)?([%!])(.*)$")
 
 
+def _scan(line: str, depth: int, quote: str):
+    """Advance the bracket depth and open string delimiter over one line of Python and tell whether it ends with a backslash continuation, so ``transform`` only treats a line as a magic where a new statement starts (not inside brackets, multi-line strings or continued lines)."""
+    i, n = 0, len(line)
+    comment = False
+    while i < n:
+        ch = line[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if line.startswith(quote, i):
+                i += len(quote)
+                quote = ""
+                continue
+            i += 1
+            continue
+        if ch == "#":
+            comment = True
+            break
+        if ch in "\"'":
+            quote = line[i:i + 3] if line[i:i + 3] in ('"""', "'''") else ch
+            i += len(quote)
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        i += 1
+    if len(quote) == 1 and not line.endswith("\\"):
+        quote = ""  # an unterminated one-line string is a syntax error Python reports itself
+    return depth, quote, not quote and not comment and line.rstrip().endswith("\\")
+
+
 def transform(code: str) -> str:
     """Turn IPython line magics and shell escapes into calls to the kernel's helpers, keeping indentation so they work inside blocks."""
     out = []
     lines = code.split("\n")
     i = 0
+    depth, quote, cont = 0, "", False
     while i < len(lines):
         line = lines[i]
-        m = _MAGIC_LINE.match(line)
+        at_start = depth == 0 and not quote and not cont
+        m = _MAGIC_LINE.match(line) if at_start else None
+        if not m or line.strip().startswith("%%"):
+            depth, quote, cont = _scan(line, depth, quote)
         if m and not line.strip().startswith(("%%",)):
             indent, var, kind, rest = m.groups()
             while rest.endswith("\\") and i + 1 < len(lines):  # continued magic/shell line
@@ -282,7 +377,7 @@ def transform(code: str) -> str:
                 name, _, arg = rest.partition(" ")
                 call = f"__studio_magic__({name!r}, {arg!r})"
             out.append(f"{indent}{var} = {call}" if var else f"{indent}{call}")
-        elif line.rstrip().endswith("?") and not line.lstrip().startswith("#") and re.match(r"^\s*[\w.]+\?{1,2}\s*$", line):
+        elif at_start and line.rstrip().endswith("?") and not line.lstrip().startswith("#") and re.match(r"^\s*[\w.]+\?{1,2}\s*$", line):
             out.append(re.sub(r"^(\s*)([\w.]+)\?{1,2}\s*$", r"\1help(\2)", line))
         else:
             out.append(line)
@@ -321,8 +416,9 @@ class _Exec:
         self.count: Optional[int] = None
         self.ok = True
         self.running = False  # True only while the hardware thread is inside this cell, so an interrupt never hits other work
-        self._buf: Dict[str, str] = {}
+        self._buf: Dict[str, List[str]] = {}  # unsent stdout/stderr text, as chunks (joining once is much faster than growing a string per print)
         self._last_flush = 0.0
+        self.lock = threading.RLock()  # outputs and stream buffers: written by the hardware thread, flushed by the KernelManager's flusher
 
 
 DEFAULT_KERNEL = "default"
@@ -378,6 +474,8 @@ class KernelManager:
         self._thread.start()
         self._reaper = threading.Thread(target=self._reap_loop, name="notebook-kernel-reaper", daemon=True)
         self._reaper.start()
+        self._flusher = threading.Thread(target=self._flush_loop, name="notebook-output-flusher", daemon=True)
+        self._flusher.start()
 
     # --- registry --------------------------------------------------------------
     def find(self, key: Optional[str]) -> Optional["Kernel"]:
@@ -447,13 +545,13 @@ class KernelManager:
                 c["kernels"].discard(k)
         kern._dispose()
         del kern
-        if not self.session.worker.is_worker_thread:
-            try:
-                self.session.worker.call(lambda: None, timeout=10)  # the hardware thread keeps its last job's arguments (the notebook's last cell) until the next job
-            except Exception:  # noqa: BLE001
-                pass
         log.info("Shut down notebook kernel for %s", k)
         self.bus.publish("nb", {"kind": "shutdown", "kernel": k, "path": _path_of(k)})
+        if not self.session.worker.is_worker_thread:
+            try:  # the hardware thread keeps its last job's arguments (the notebook's last cell) until the next job; do not wait long when another notebook keeps it busy
+                self.session.worker.submit(lambda: None).result(timeout=1.0)
+            except Exception:  # noqa: BLE001
+                pass
         return {"kernel": k, "shutdown": True}
 
     def rename(self, old: Optional[str], new: Optional[str]) -> Dict[str, Any]:
@@ -528,6 +626,17 @@ class KernelManager:
             except Exception:  # noqa: BLE001
                 log.debug("kernel reaper", exc_info=True)
 
+    def _flush_loop(self):
+        """Send text a running cell printed and then went quiet (sleeping, waiting on hardware): output is otherwise only sent when the cell writes again or ends."""
+        while not self._closed.wait(0.1):
+            e = self.current
+            if e is not None and e._buf:
+                try:
+                    e.kernel._flush_streams(e)
+                except Exception:  # noqa: BLE001
+                    log.debug("output flusher", exc_info=True)
+            e = None
+
     def close(self):
         self._closed.set()
         self.q.put(None)
@@ -540,9 +649,9 @@ class KernelManager:
             e = _Exec(kern, c.get("id") or uuid.uuid4().hex[:8], c.get("code") or c.get("source") or "", cwd, batch)
             with self.lock:
                 self.pending.append(e)
+            kern._event("queued", e)  # before the dispatcher can see it, so "queued" never arrives after "running"
             self.q.put(e)
             ids.append({"cell": e.cell_id, "exec": e.id})
-            kern._event("queued", e)
         return {"queued": ids, "batch": batch, "kernel": kern.id}
 
     def _dispatch(self):
@@ -615,6 +724,8 @@ class Kernel:
         self._last_trace: Optional[tuple] = None
         self._proxy = None
         self.ns: Dict[str, Any] = {}
+        self.figure_format = "png"
+        self.cwd: Optional[str] = None  # set by %cd; like Jupyter it lasts until the kernel restarts
         self.restart(publish=False)
 
     @property
@@ -642,7 +753,7 @@ class Kernel:
         cid = "mcp-" + uuid.uuid4().hex[:6]
 
         def watch(ev):
-            if ev.get("cell") == cid and ev.get("kind") == "done":
+            if ev.get("cell") == cid and ev.get("kind") in ("done", "cancelled"):
                 res.update(ev)
                 done.set()
         watchers = self.manager._watchers
@@ -654,6 +765,8 @@ class Kernel:
                 raise TimeoutError("cell did not finish in time")
         finally:
             watchers.remove(watch)
+        if res.get("kind") == "cancelled":  # interrupted, restarted or shut down while it waited in the queue
+            return {"ok": False, "cancelled": True, "execution_count": None, "outputs": [{"output_type": "error", "ename": "Cancelled", "evalue": "the cell was cancelled before it ran (the kernel was interrupted, restarted or shut down)", "traceback": []}], "kernel": self.id}
         return {"ok": res.get("ok"), "execution_count": res.get("execution_count"), "outputs": res.get("outputs", []), "kernel": self.id}
 
     def interrupt(self) -> Dict[str, Any]:
@@ -682,6 +795,7 @@ class Kernel:
     def restart(self, publish: bool = True) -> Dict[str, Any]:
         self._stop_running()
         self.count = 0
+        self.figure_format, self.cwd = "png", None
         old, self.ns = self.ns, self._fresh_namespace()
         old.clear()  # break reference cycles (functions defined in a cell point back at the namespace) right away
         self._proxy = None
@@ -689,6 +803,11 @@ class Kernel:
             log.info("Notebook kernel restarted (%s)", self.id)
             self.bus.publish("nb", {"kind": "restarted", **self.status()})
         return self.status()
+
+    def set_figure_format(self, fmt: str):
+        fmt = {"retina": "png", "jpeg": "png", "jpg": "png", "pdf": "png"}.get(str(fmt).lower(), str(fmt).lower())
+        if fmt in FIGURE_FORMATS:
+            self.figure_format = fmt
 
     def _dispose(self):
         """Free everything the notebook created (called by KernelManager.shutdown)."""
@@ -705,13 +824,14 @@ class Kernel:
             yield k, v
 
     def variables(self) -> List[Dict[str, Any]]:
+        """Name, type, shape and a short repr of each variable. Called from web threads while cells may be running, so hardware objects are never asked for their repr (a ChipWhisperer scope reads its settings from the device for that) and big containers are summarised."""
         out = []
         for k, v in self._visible_names():
-            shape = getattr(v, "shape", None)
+            r = _safe_repr(v)
             try:
-                r = repr(v)
+                shape = None if isinstance(v, _Live) else getattr(v, "shape", None)
             except Exception:  # noqa: BLE001
-                r = "?"
+                shape = None
             try:
                 tname = v.__class__.__name__  # Studio's scope/target stand-ins report the real class
             except Exception:  # noqa: BLE001
@@ -796,6 +916,7 @@ class Kernel:
                 return d.decode() if isinstance(d, bytes) else d
 
         m.display = k._display
+        m.set_matplotlib_formats = lambda *formats, **kw: k.set_figure_format(formats[0]) if formats else None
         m.HTML, m.Markdown, m.Image, m.SVG = HTML, Markdown, Image, SVG
         m.clear_output = lambda wait=False: k._emit({"output_type": "clear_output"})
         m.Javascript = lambda *a, **kw: None
@@ -824,40 +945,63 @@ class Kernel:
         self.manager._notify(ev)
 
     def _emit_to(self, e: _Exec, out: Dict[str, Any]):
-        if out.get("output_type") == "clear_output":
-            e.outputs.clear()
-        elif out.get("output_type") == "stream" and e.outputs and e.outputs[-1].get("output_type") == "stream" and e.outputs[-1].get("name") == out["name"]:
-            e.outputs[-1]["text"] += out["text"]
-        else:
-            e.outputs.append(dict(out))
-        self.bus.publish("nb", {"kind": "output", "cell": e.cell_id, "exec": e.id, "kernel": self.id, "path": self.path, "output": out})
+        with e.lock:
+            if out.get("output_type") == "clear_output":
+                e.outputs.clear()
+            elif out.get("output_type") == "stream" and e.outputs and e.outputs[-1].get("output_type") == "stream" and e.outputs[-1].get("name") == out["name"]:
+                e.outputs[-1]["text"] += out["text"]
+            else:
+                e.outputs.append(dict(out))
+            self.bus.publish("nb", {"kind": "output", "cell": e.cell_id, "exec": e.id, "kernel": self.id, "path": self.path, "output": out})
 
     def _emit(self, out: Dict[str, Any]):
         e = self.current
         if e is not None:
-            self._flush_streams(e, force=True)
-            self._emit_to(e, out)
+            with e.lock:
+                self._flush_streams(e, force=True)
+                self._emit_to(e, out)
 
     def _stream(self, e: _Exec, name: str, text: str):
+        if not text:
+            return
         other = "stderr" if name == "stdout" else "stdout"
-        if e._buf.get(other):  # keep stdout/stderr interleaving in order
-            self._emit_to(e, {"output_type": "stream", "name": other, "text": e._buf.pop(other)})
-        e._buf[name] = e._buf.get(name, "") + text
-        self._flush_streams(e)
+        with e.lock:
+            if other in e._buf:  # keep stdout/stderr interleaving in order
+                self._emit_to(e, {"output_type": "stream", "name": other, "text": "".join(e._buf.pop(other))})
+            buf = e._buf.get(name)
+            if buf is None:
+                e._buf[name] = [text]
+            else:
+                buf.append(text)
+            if time.time() - e._last_flush >= 0.1:
+                self._flush_streams(e)
 
     def _flush_streams(self, e: _Exec, force: bool = False):
-        now = time.time()
-        if not force and now - e._last_flush < 0.1:
-            return
-        e._last_flush = now
-        for name in ("stdout", "stderr"):
-            t = e._buf.pop(name, "")
-            if t:
-                self._emit_to(e, {"output_type": "stream", "name": name, "text": t})
+        """Send buffered stdout/stderr text (at most every 0.1 s unless forced; the KernelManager's flusher sends what a quiet cell left in the buffer)."""
+        with e.lock:
+            now = time.time()
+            if not force and now - e._last_flush < 0.1:
+                return
+            e._last_flush = now
+            for name in ("stdout", "stderr"):
+                t = "".join(e._buf.pop(name, ()))
+                if t:
+                    self._emit_to(e, {"output_type": "stream", "name": name, "text": t})
 
     def _display(self, *objs, **kw):
         for o in objs:
-            self._emit({"output_type": "display_data", "data": rich_bundle(o), "metadata": {}})
+            self._emit({"output_type": "display_data", "data": rich_bundle(o, self.figure_format), "metadata": {}})
+
+    def _settle(self, e: _Exec, tid: int):
+        """Mark the cell as no longer running and drop an interrupt that arrived as it ended, so it cannot hit the next job. Retries if that very interrupt lands while doing so."""
+        while True:
+            try:
+                with self.manager.lock:
+                    e.running = False
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), None)
+                return
+            except KeyboardInterrupt:
+                continue
 
     def _run(self, e: _Exec):
         """Runs on the hardware thread."""
@@ -871,27 +1015,38 @@ class Kernel:
         self.count += 1
         e.count = self.count
         self.ns["In"].append(e.code)
-        with self.manager.lock:
-            e.running = True
+        err: Optional[BaseException] = None
         try:
-            os.makedirs(e.cwd, exist_ok=True)
-            os.chdir(e.cwd)
-            self._run_source(e.code, e)
-        except KeyboardInterrupt:
-            e.ok = False
-            self._flush_streams(e, force=True)
-            self._emit_to(e, {"output_type": "error", "ename": "KeyboardInterrupt", "evalue": "interrupted", "traceback": ["KeyboardInterrupt: interrupted"]})
-        except BaseException as ex:  # noqa: BLE001
-            e.ok = False
-            self._flush_streams(e, force=True)
-            tb = traceback.format_exception(type(ex), ex, ex.__traceback__)
-            tb = [t for t in tb if "cwstudio/notebook.py" not in t.replace("\\", "/") and "cwstudio/worker.py" not in t.replace("\\", "/")]
-            self._emit_to(e, {"output_type": "error", "ename": type(ex).__name__, "evalue": str(ex), "traceback": tb})
-        finally:
+            try:
+                with self.manager.lock:
+                    e.running = True  # from here on Stop may raise KeyboardInterrupt in this thread
+                cwd = self.cwd if self.cwd and os.path.isdir(self.cwd) else e.cwd
+                os.makedirs(cwd, exist_ok=True)
+                os.chdir(cwd)
+                self._run_source(e.code, e)
+            except BaseException as ex:  # noqa: BLE001
+                err = ex
+            finally:
+                self._settle(e, tid)
+        except KeyboardInterrupt as ex:  # a second Stop that arrived while the first one was being handled
+            err = err or ex
+        # no interrupt can reach this thread any more: report and clean up
+        try:
+            if err is not None:
+                e.ok = False
+                self._flush_streams(e, force=True)
+                if isinstance(err, KeyboardInterrupt):
+                    self._emit_to(e, {"output_type": "error", "ename": "KeyboardInterrupt", "evalue": "interrupted", "traceback": ["KeyboardInterrupt: interrupted"]})
+                else:
+                    tb = traceback.format_exception(type(err), err, err.__traceback__)
+                    tb = [t for t in tb if "cwstudio/notebook.py" not in t.replace("\\", "/") and "cwstudio/worker.py" not in t.replace("\\", "/")]
+                    self._emit_to(e, {"output_type": "error", "ename": type(err).__name__, "evalue": str(err), "traceback": tb})
             try:
                 self._flush_figures()
             except Exception:  # noqa: BLE001
                 pass
+        finally:
+            err = None  # noqa: F841 - the traceback references the cell's frames
             self._flush_streams(e, force=True)
             for r in _ROUTERS.values():
                 r.sinks.pop(tid, None)
@@ -899,9 +1054,6 @@ class Kernel:
                 os.chdir(old_cwd)
             except OSError:
                 pass
-            with self.manager.lock:
-                e.running = False
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), None)  # drop an interrupt that arrived as the cell ended, so it cannot hit the next job
 
     def _run_source(self, code: str, e: Optional[_Exec] = None, allow_result: bool = True):
         stripped = code.lstrip()
@@ -921,9 +1073,11 @@ class Kernel:
                 self.ns["_"] = val
                 self.ns["Out"][e.count] = val
                 if _is_figure(val):
-                    return
+                    if not (_is_mpl_figure(val) and getattr(getattr(val, "canvas", None), "manager", None) is None):
+                        return  # a pyplot figure: shown with the cell's other open figures when it ends
+                    # a Figure made without pyplot is shown like any other result
                 self._flush_streams(e, force=True)
-                self._emit_to(e, {"output_type": "execute_result", "execution_count": e.count, "data": rich_bundle(val), "metadata": {}})
+                self._emit_to(e, {"output_type": "execute_result", "execution_count": e.count, "data": rich_bundle(val, self.figure_format), "metadata": {}})
 
     def _patch_pyplot(self):
         """Make plt.show() display the current figures right away (it is a no-op with the Agg backend). Studio's own backend does this from the first cell; the patch covers code that switched to another backend. Both go through SHOW_HOOK, which the KernelManager points at the running cell's kernel."""
@@ -937,10 +1091,11 @@ class Kernel:
             return
         for num in plt.get_fignums():
             fig = plt.figure(num)
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight", dpi=100)
-            plt.close(fig)
-            self._emit({"output_type": "display_data", "data": {"image/png": base64.b64encode(buf.getvalue()).decode(), "text/plain": f"<Figure {num}>"}, "metadata": {}})
+            try:
+                data = figure_bundle(fig, self.figure_format, f"<Figure {num}>")
+            finally:
+                plt.close(fig)
+            self._emit({"output_type": "display_data", "data": data, "metadata": {}})
 
     # --- shell and magics ------------------------------------------------------------
     def _shell_env(self) -> Dict[str, str]:
@@ -969,18 +1124,8 @@ class Kernel:
         if os.name == "nt":
             kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         p = subprocess.Popen(cmd, shell=True, cwd=os.getcwd(), env=self._shell_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", executable=shell_exe, **kw)
-        lines = []
-        try:
-            assert p.stdout is not None
-            for line in p.stdout:
-                if capture:
-                    lines.append(line.rstrip("\n"))
-                else:
-                    sys.stdout.write(line)
-            p.wait()
-        except KeyboardInterrupt:
-            p.kill()
-            raise
+        lines: List[str] = []
+        _pump(p, (lambda line: lines.append(line.rstrip("\n"))) if capture else sys.stdout.write)
         if capture:
             return lines
         return None
@@ -1004,29 +1149,27 @@ class Kernel:
         assert p.stdin is not None and p.stdout is not None
         p.stdin.write(body.replace("\r\n", "\n"))
         p.stdin.close()
-        try:
-            for line in p.stdout:
-                sys.stdout.write(line)
-            p.wait()
-        except KeyboardInterrupt:
-            p.kill()
-            raise
+        _pump(p, sys.stdout.write)
         if p.returncode:
             print(f"(exit status {p.returncode})", file=sys.stderr)
         return None
 
     def _magic(self, name: str, arg: str):
         arg = arg.strip()
-        if name in ("matplotlib", "load_ext", "reload_ext", "config", "autoreload", "aimport", "precision", "xmode", "colors", "pylab", "gui"):
+        if name == "config":
+            m = re.search(r"figure_formats?\s*=\s*[\[{(]?\s*['\"](\w+)", arg)
+            if m and "InlineBackend" in arg:
+                self.set_figure_format(m.group(1))
+            return None
+        if name in ("matplotlib", "load_ext", "reload_ext", "autoreload", "aimport", "precision", "xmode", "colors", "pylab", "gui"):
             return None
         if name == "run":
             return self._magic_run(arg)
         if name == "cd":
             target = os.path.expanduser(expand(arg.strip("'\""), self.ns) or "~")
             os.chdir(target)
-            e = self.current
-            if e is not None:
-                e.cwd = os.getcwd()
+            self.cwd = os.getcwd()
+            print(self.cwd)
             return None
         if name == "pwd":
             return os.getcwd()
@@ -1156,6 +1299,55 @@ class Kernel:
                 self.session._push_status()
             except Exception:  # noqa: BLE001
                 pass
+
+
+_REPR = reprlib.Repr()
+_REPR.maxstring = _REPR.maxother = 120
+_REPR.maxlist = _REPR.maxtuple = _REPR.maxset = _REPR.maxdict = _REPR.maxdeque = _REPR.maxarray = 12
+
+
+def _safe_repr(v) -> str:
+    if isinstance(v, _Live):
+        attr = object.__getattribute__(v, "_attr")
+        kind = getattr(object.__getattribute__(v, "_k").session, attr + "_kind", None)
+        return f"<Studio's {attr}: {kind}>" if kind else f"<Studio's {attr}: not connected>"
+    if type(v).__module__.split(".")[0] == "chipwhisperer":
+        return f"<{type(v).__module__}.{type(v).__name__}>"
+    try:
+        if isinstance(v, np.ndarray):
+            with np.printoptions(threshold=50, edgeitems=3):
+                return repr(v)
+        return _REPR.repr(v)
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def _pump(p: subprocess.Popen, write: Callable[[str], Any]):
+    """Forward a child process's output line by line until it exits. The pipe is read on a helper thread so the cell keeps running Python code and Stop (an exception raised in the hardware thread) works even while the command prints nothing; Stop kills the command."""
+    q: "queue.Queue[Optional[str]]" = queue.Queue()
+
+    def reader():
+        try:
+            for line in p.stdout:
+                q.put(line)
+        except (OSError, ValueError):
+            pass
+        finally:
+            q.put(None)
+    threading.Thread(target=reader, name="notebook-shell-output", daemon=True).start()
+    try:
+        while True:
+            try:
+                line = q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if line is None:
+                break
+            write(line)
+        p.wait()
+    except BaseException:
+        p.kill()
+        raise
 
 
 def _is_figure(v) -> bool:
@@ -1308,7 +1500,10 @@ class _Live:
 
     @property
     def __class__(self):
-        return type(self._live())
+        try:
+            return type(self._live())
+        except Exception:  # noqa: BLE001 - not connected (any more): isinstance() checks must not raise
+            return type(self)
 
     def __getattr__(self, name):
         return getattr(self._live(), name)

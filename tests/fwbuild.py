@@ -1,5 +1,7 @@
 """Build ChipWhisperer firmware ELFs for the code map tests, cached across test runs.
 
+Projects that only the tests use (``tests/fw_projects``, e.g. ``cm-odd``: firmware that does unusual things) are copied into the private firmware folder next to ChipWhisperer's own.
+
 Toolchains and firmware sources come from a Studio data folder that already has them: ``$CWSTUDIO_FW_DATA``, the CI firmware job's ``build/fw-ci``, a ``.studio-dev/data`` folder next to the repository or the default ``~/ChipWhispererStudio``. The sources are copied (without build outputs) into a private folder so the original tree is never touched, and the toolchains folder is linked. Built ELFs are kept in ``<tmp>/cwstudio-codemap-elfs`` keyed by platform, compiler, crypto target and SimpleSerial version, so only the first run pays for the builds.
 """
 from __future__ import annotations
@@ -11,6 +13,7 @@ import threading
 from typing import Optional
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEST_PROJECTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fw_projects")
 CACHE = os.path.join(tempfile.gettempdir(), "cwstudio-codemap-elfs")
 _lock = threading.Lock()
 
@@ -44,6 +47,16 @@ def _work_dir(src_data: str) -> str:
             return [n for n in names if n.startswith("objdir") or os.path.splitext(n)[1] in (".elf", ".hex", ".bin", ".eep", ".lss", ".map", ".sym", ".o", ".d")]
         shutil.copytree(os.path.join(src_data, "firmware", "chipwhisperer"), tmp, ignore=ignore, symlinks=True)
         os.replace(tmp, fw)
+    if os.path.isdir(TEST_PROJECTS):  # the tests' own projects, refreshed when they change
+        for name in os.listdir(TEST_PROJECTS):
+            src, dst = os.path.join(TEST_PROJECTS, name), os.path.join(fw, name)
+            if not os.path.isdir(src):
+                continue
+            for f in os.listdir(src):
+                a, b = os.path.join(src, f), os.path.join(dst, f)
+                if not os.path.isfile(b) or open(a, "rb").read() != open(b, "rb").read():
+                    os.makedirs(dst, exist_ok=True)
+                    shutil.copy2(a, b)
     tc = os.path.join(work, "toolchains")
     if not os.path.exists(tc):
         try:
@@ -53,9 +66,17 @@ def _work_dir(src_data: str) -> str:
     return work
 
 
-def build_elf(platform: str, compiler: str = "gcc", crypto: str = "TINYAES128C", ss_ver: str = "SS_VER_2_1", opt: Optional[str] = None, project: str = "simpleserial-aes") -> str:
-    """Path of a cached ELF, building it first if needed. Raises RuntimeError (with the reason) when it cannot be built."""
-    name = f"{project}-{platform}-{compiler}-{crypto}-{ss_ver}" + (f"-O{opt}" if opt else "") + ".elf"
+def build_elf(platform: str, compiler: str = "gcc", crypto: Optional[str] = "TINYAES128C", ss_ver: Optional[str] = "SS_VER_2_1", opt: Optional[str] = None, project: str = "simpleserial-aes") -> str:
+    """Path of a cached ELF, building it first if needed (crypto or ss_ver None: the project's makefile decides). Raises RuntimeError (with the reason) when it cannot be built."""
+    name = f"{project}-{platform}-{compiler}-{crypto or 'default'}-{ss_ver or 'default'}" + (f"-O{opt}" if opt else "")
+    own = os.path.join(TEST_PROJECTS, project)
+    if os.path.isdir(own):  # the tests' own project: a new build when its sources change
+        import hashlib
+        h = hashlib.sha1()
+        for f in sorted(os.listdir(own)):
+            h.update(f.encode() + open(os.path.join(own, f), "rb").read())
+        name += "-" + h.hexdigest()[:8]
+    name += ".elf"
     out = os.path.join(CACHE, name)
     if os.path.isfile(out):
         return out
@@ -70,7 +91,11 @@ def build_elf(platform: str, compiler: str = "gcc", crypto: str = "TINYAES128C",
         work = _work_dir(src)
         tm = ToolchainManager(work if os.path.exists(os.path.join(work, "toolchains")) else src)
         fm = FirmwareManager(work, tm)
-        params = {"project": project, "platform": platform, "compiler": compiler, "crypto_target": crypto, "ss_ver": ss_ver, "jobs": 4}
+        params = {"project": project, "platform": platform, "compiler": compiler, "jobs": 4}
+        if crypto:
+            params["crypto_target"] = crypto
+        if ss_ver:
+            params["ss_ver"] = ss_ver
         if opt:
             params["make_args"] = f"OPT={opt}"
         try:

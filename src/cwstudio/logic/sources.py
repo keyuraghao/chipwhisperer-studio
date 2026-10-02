@@ -407,19 +407,27 @@ def native_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
     clk = s.get("clk_source") or "usb"
     if clk not in CLK_SOURCES:
         raise ValueError("clock source must be usb, target or pll")
-    if la.clk_source != clk:
+    clk_changed = la.clk_source != clk
+    if clk_changed:
         la.clk_source = clk
         if not sim:
-            yield from _wait(0.25, job)
+            yield from _wait(0.25, job)  # chipwhisperer 6.0.0 does not wait for the new source frequency itself (later versions sleep 0.25 s in the setter)
     osf = _num(s.get("oversampling"), 1.0)
-    if abs(float(la.oversampling_factor) - osf) > 1e-9:
+    if osf <= 0:
+        raise ValueError("the oversampling factor must be positive")
+    # the MMCM settings depend on the source frequency, so a new clock source needs the factor written again; the getter rounds down to a whole number, so a fractional factor is always written
+    if clk_changed or abs(float(la.oversampling_factor) - osf) > 1e-9:
         la.oversampling_factor = osf
+        if not sim:
+            end = time.time() + 1.0
+            while not la.locked and time.time() < end:
+                yield from _wait(0.02, job)
     ds = int(_num(s.get("downsample"), 1, int))
     if int(la.downsample) != ds:
         la.downsample = ds
     la.capture_group = group
     maxd = int(getattr(la, "max_capture_depth", 65535 if model_of(scope) == "huskyplus" else 16376))
-    depth = min(int(_num(s.get("depth"), maxd, int)), maxd)
+    depth = max(2, min(int(_num(s.get("depth"), maxd, int)), maxd))
     la.capture_depth = depth
     if trig != "manual":
         la.trigger_source = trig
@@ -460,8 +468,9 @@ def native_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
         time.sleep(0.002)
         yield
     sr = float(la.sampling_clock_frequency) / int(la.downsample)
-    # the FIFO fills while the capture runs: give it the capture time before reading
-    yield from _wait(min(2.0, depth / sr), job)
+    # the FIFO fills at the sample rate after the trigger: reading before the whole depth is in underflows it, so wait the full capture time (slow rates with a big downsample take seconds; Stop still works)
+    wait = depth / sr * 1.02 + 0.002
+    yield from _wait(min(wait, 0.5) if sim else wait, job)
     job.phase = "reading"
     raw = la.read_capture_data()
     try:

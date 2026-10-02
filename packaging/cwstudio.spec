@@ -24,7 +24,8 @@ with open(_marker, "w") as _f:
 
 datas = [(_marker, ".")]  # tells cwstudio.cli which build this is (the Web build opens the browser by default)
 # Frontend + resources
-datas += collect_data_files("cwstudio", includes=["static/**/*", "resources/*"])
+# include_py_files: resources/gtk_window.py is not a module of the bundle but a script run by the system Python for the Linux window; without it the app build always falls back to the browser
+datas += collect_data_files("cwstudio", includes=["static/**/*", "resources/*"], include_py_files=True)
 # ChipWhisperer package data (bitstreams, firmware for programmers, etc.)
 datas += collect_data_files("chipwhisperer")
 # CA bundle fallback for HTTPS when the OS trust store is unavailable
@@ -44,7 +45,10 @@ except Exception as e:  # noqa: BLE001
     print("WARNING: libusb-package not available, relying on system libusb:", e)
 binaries += collect_dynamic_libs("usb1")
 # Unicorn (code map emulation of Arm and RISC-V firmware): only its shared library, not the 33 MB static archive next to it
-binaries += collect_dynamic_libs("unicorn")
+# The default patterns (lib*.so) miss the versioned libunicorn.so.2 of the Linux wheel, which left the code map without its emulator.
+binaries += collect_dynamic_libs("unicorn", search_patterns=["*.dll", "*.dylib", "lib*.so", "lib*.so.*"])
+if not any("unicorn" in os.path.basename(b[0]).lower() for b in binaries):
+    raise SystemExit("the Unicorn library was not found: the code map would not emulate firmware")
 
 hiddenimports = []
 # ChipWhisperer's modules are listed from the filesystem: collect_submodules imports each package, and chipwhisperer.capture.trace fails to import without pkg_resources (Studio supplies a stand-in at run time).
@@ -58,6 +62,8 @@ for _dir, _subdirs, _files in os.walk(_cw_dir):
         if _f.endswith(".py"):
             hiddenimports.append(_pkg if _f == "__init__.py" else _pkg + "." + _f[:-3])
 hiddenimports += collect_submodules("cwstudio")
+# Unicorn imports its CPU architectures by name when an emulator is created (unicorn.unicorn_py3.arch.arm and others), which the import analysis does not see
+hiddenimports += collect_submodules("unicorn", filter=lambda name: "unicorn_py2" not in name)
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("websockets")
 if sys.platform in ("win32", "darwin") and VARIANT == "app":

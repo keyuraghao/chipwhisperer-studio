@@ -75,10 +75,28 @@ class Interfaces:
         self.spi = None
         self.spi_state: Dict[str, Any] = {"enabled": False, "speed": None, "cs": None}
         self.bb_cfg: Dict[str, Any] = {"data_pin": "USERIO_D0", "clock_pin": "USERIO_CK", "clk_div": None}
+        self.gpio_modes: Dict[str, str] = {}  # what Studio last drove on each pin, for scopes whose getters return constants (CW-Nano)
+        self._bound_scope = None
+        self._bound_target = None
         self.openocd = OpenOCD(session, publish=lambda kind, payload: session.bus.publish(kind, payload))
 
     # --- helpers -------------------------------------------------------------
+    def _sync(self) -> None:
+        """Forget per-scope and per-target state when the scope or target object changed (reconnect, another model in "Simulate as", MPSSE): the SPI master, the last trigger, UART settings and the SimpleSerial version belong to the old connection."""
+        scope, target = self.s.scope, self.s.target
+        if scope is not self._bound_scope:
+            self._bound_scope = scope
+            self.spi = None
+            self.spi_state = {"enabled": False, "speed": None, "cs": None}
+            self.trigger_state = {}
+            self.uart_cfg = {"baud": None, "parity": "none", "stop_bits": 1}
+            self.gpio_modes = {}
+        if target is not self._bound_target:
+            self._bound_target = target
+            self.ss_version = None
+
     def _scope(self):
+        self._sync()
         if self.s.scope is None:
             if self.openocd.mpsse:
                 raise Unsupported("the scope is in MPSSE (JTAG/SWD) mode; restore normal mode first")
@@ -112,6 +130,7 @@ class Interfaces:
 
     def status(self) -> Dict[str, Any]:
         """Everything the Interfaces tab shows in one call."""
+        self._sync()
         out: Dict[str, Any] = {"capabilities": self.caps(), "mpsse": self.openocd.mpsse, "simpleserial": {"version": self.ss_version, "target": self.s.target_kind},
                                "spi": dict(self.spi_state), "trigger": self.trigger_state, "openocd": {k: v for k, v in self.openocd.status().items() if k != "log"}}
         if self.s.scope is not None:
@@ -218,11 +237,13 @@ class Interfaces:
         info = self.s.connect_target(kind)
         if self._sim() and self.s.target is not None:
             self.s.target.protver = "2.1" if version == "cdc" else version
+        self._sync()
         self.ss_version = version
         return {**info, "version": version, "kind": kind}
 
     def simpleserial_send(self, cmd: str = "p", data: str = "", read_cmd: str = "r", read_len: Optional[int] = None, timeout: int = 500) -> Dict[str, Any]:
         """Send one SimpleSerial command and read the reply; v1.0 targets get no ack wait."""
+        self._sync()
         if self.s.target is None:
             raise Unsupported("connect a SimpleSerial target first")
         if not cmd or len(cmd) != 1:
@@ -346,9 +367,10 @@ class Interfaces:
                             levels[p] = int(bool(getattr(scope.io, f"{p}_state")))
                         except Exception:  # noqa: BLE001
                             levels[p] = None
+            const_getters = c["model"] == "nano" and not self._sim()  # the CW-Nano's pin getters return fixed values, so show what Studio last drove
             for p in g["pins"]:
                 try:
-                    mode = getattr(scope.io, p)
+                    mode = self.gpio_modes.get(p) if const_getters else getattr(scope.io, p)
                 except Exception:  # noqa: BLE001
                     mode = None
                 if mode is True:
@@ -375,6 +397,7 @@ class Interfaces:
             raise Unsupported(f"{pin} cannot be set to {state} on this ChipWhisperer")
         scope = self.s.scope
         self._call(setattr, scope.io, pin, value)
+        self.gpio_modes[pin] = value
         self.s.bus.publish("setting", {"target": "scope", "path": f"io.{pin}", "value": value})
         return self.gpio_read()
 
@@ -393,6 +416,7 @@ class Interfaces:
             time.sleep(ms / 1000.0)
             setattr(scope.io, pin, "high_z")
         self._call(_do, timeout=15)
+        self.gpio_modes[pin] = "high_z"
         log.info("Pulsed %s low for %g ms", pin.upper(), ms)
         return {"pin": pin, "ms": ms}
 
@@ -434,7 +458,7 @@ class Interfaces:
                     sp.userio_drive = int(drive)
                 return
             u = scope.userio
-            if mode is not None:
+            if mode is not None and u.mode != mode:  # writing the mode also resets trace routing and fails when TraceWhisperer did not start, so only write a change
                 u.mode = mode
             if (direction is not None or drive is not None) and u.mode != "normal":
                 raise Unsupported("USERIO pins can be driven only in normal mode")
@@ -481,16 +505,38 @@ class Interfaces:
                     raise Unsupported(f"{x} cannot be a trigger input on this ChipWhisperer" + (" (the CW-Nano triggers on TIO4 only)" if m == "nano" else ""))
             return ps
 
+        def check_pattern(pattern: List[Any], max_value: int = 255) -> List[Any]:
+            if not 1 <= len(pattern) <= 8:
+                raise ValueError("the pattern is 1 to 8 bytes")
+            for b in pattern:
+                if b == "XX" and kind == "uart_decode":
+                    continue
+                if isinstance(b, str) and len(b) == 1:
+                    b = ord(b)
+                if not isinstance(b, int) or isinstance(b, bool) or not 0 <= b <= max_value:
+                    raise ValueError(f"pattern values must be 0 to {max_value} (0x{max_value:x})" + (" or XX" if kind == "uart_decode" else ""))
+            return [ord(b) if isinstance(b, str) and len(b) == 1 else b for b in pattern]
+
         cfg: Dict[str, Any] = {"kind": kind}
         sets: List[tuple] = []  # (path, value) applied in order
         scope = self.s.scope
+        husky = m in ("husky", "huskyplus")
+        if husky and kind != "sequencer":
+            # with the sequencer on, the Husky library treats trigger.triggers and trigger.module as per-step lists, so leave sequencing first
+            sets.append(("trigger.sequencer_enabled", False))
+        if husky and kind != "uart_pattern" and (self.trigger_state or {}).get("kind") == "uart_pattern":
+            sets.append(("UARTTrigger.enabled", False))  # release the TraceWhisperer hardware the UART trigger borrowed
         if kind == "basic":
-            pins = pins_of(p.get("pins") or "tio4")
-            op = (p.get("op") or "OR").upper()
+            pins = pins_of(p["pins"] if p.get("pins") is not None else "tio4")
+            op = str(p.get("op") or "OR").upper()
+            if op not in ("OR", "AND", "NAND"):
+                raise ValueError("op must be OR, AND or NAND")
+            if not pins:
+                raise ValueError("choose at least one trigger pin")
             if len(pins) > 1:
                 require(t["combinations"], "combining trigger pins")
-                if op not in t["combinations"]["ops"]:
-                    raise ValueError("op must be OR, AND or NAND")
+                if len(set(pins)) != len(pins):
+                    raise ValueError("each trigger pin can appear once")
             edge = p.get("edge") or "rising_edge"
             if edge not in basic["edges"]:
                 raise Unsupported(f"{edge}: " + ("the CW-Nano triggers on a rising edge only" if m == "nano" else "unknown trigger mode"))
@@ -506,9 +552,7 @@ class Interfaces:
             lo, hi = t["uart_decode"]["baud"]
             if not lo < baud <= hi:
                 raise ValueError(f"baud must be up to {hi:g}")
-            pattern = parse_pattern(p.get("pattern") or "'r'", allow_dontcare=True)
-            if not 1 <= len(pattern) <= t["uart_decode"]["max_bytes"]:
-                raise ValueError(f"the pattern is 1 to {t['uart_decode']['max_bytes']} bytes")
+            pattern = check_pattern(parse_pattern(p.get("pattern") or "'r'", allow_dontcare=True))
             cfg.update(pin=pin, baud=baud, pattern=pattern)
             sets += [("trigger.triggers", pin), ("adc.basic_mode", "rising_edge"), ("trigger.module", "DECODEIO"), ("decode_IO.decode_type", "USART"), ("decode_IO.rx_baud", baud), ("decode_IO.trigger_pattern", pattern)]
         elif kind == "uart_pattern":
@@ -522,8 +566,10 @@ class Interfaces:
             parity = p.get("parity") or "none"
             if data_bits not in u["data_bits"] or stop_bits not in u["stop_bits"] or parity not in u["parity"]:
                 raise ValueError("data bits 5 to 9, stop bits 1 or 2, parity none, odd or even")
-            pattern = parse_pattern(p.get("pattern") or "'r'")
+            pattern = check_pattern(parse_pattern(p.get("pattern") or "'r'"), (1 << data_bits) - 1)
             baud = int(p.get("baud") or 38400)
+            if not 1 <= baud <= 20_000_000:
+                raise ValueError("baud must be 1 to 20000000")
             cfg.update(pin=pin, rule=rule, baud=baud, data_bits=data_bits, stop_bits=stop_bits, parity=parity, pattern=pattern)
             sets += [("trigger.triggers", pin), ("trigger.module", "UART"), ("UARTTrigger.enabled", True), ("UARTTrigger.baud", baud), ("UARTTrigger.data_bits", data_bits), ("UARTTrigger.stop_bits", stop_bits), ("UARTTrigger.parity", parity),
                      ("UARTTrigger.set_pattern_match()", (rule, pattern)), ("UARTTrigger.trigger_source", rule)]
@@ -533,6 +579,8 @@ class Interfaces:
             if not 1 <= edges <= 2 ** 16:
                 raise ValueError("edges must be 1 to 65536")
             edge = p.get("edge") or "rising_edge"
+            if edge not in basic["edges"]:
+                raise ValueError(f"edge must be one of {basic['edges']}")
             cfg.update(pin=pin, edges=edges, edge=edge)
             sets += [("trigger.triggers", pin), ("trigger.module", "edge_counter"), ("trigger.edges", edges), ("adc.basic_mode", edge)]
         elif kind == "adc_level":
@@ -558,6 +606,10 @@ class Interfaces:
         elif kind == "sad":
             threshold = int(p.get("threshold", 10))
             start = int(p.get("start", 0))
+            if not 1 <= threshold <= (100_000 if m == "pro" else 2 ** 31):
+                raise ValueError("threshold must be 1 to 100000 on the Pro" if m == "pro" else "threshold must be at least 1")
+            if start < 0:
+                raise ValueError("the reference start sample must be 0 or more")
             cfg.update(threshold=threshold, start=start)
             sets += [("trigger.module", "SAD"), ("SAD.reference()", start), ("SAD.threshold", threshold)]
 
@@ -575,7 +627,7 @@ class Interfaces:
                 if path == "SAD.reference()":
                     wave = self._reference_trace()
                     n = 128 if m == "pro" else int(getattr(scope.SAD, "sad_reference_length", 128))
-                    ref = wave[value:value + n]
+                    ref = wave[value:value + n] if m == "pro" else wave[value:]  # the Pro takes exactly 128 samples; the Husky takes what it needs (twice its length when emode is off)
                     if len(ref) < n:
                         raise ValueError(f"the SAD reference needs {n} samples from sample {value}; capture a longer trace or start earlier")
                     scope.SAD.reference = ref
@@ -642,6 +694,8 @@ class Interfaces:
             bb = scope.bitbanger
             if len(out) > bb.max_length:
                 raise ValueError(f"at most {bb.max_length} bits per pattern")
+            if sum(rec) > bb.max_record:
+                raise ValueError(f"at most {bb.max_record} recorded bits per pattern")
             bb.clock_pin = "disabled"
             bb.data_pin = data_pin
             bb.clock_pin = clock_pin
@@ -722,9 +776,27 @@ def register_routes(app, session) -> None:
 
     async def body(req: Request) -> Dict[str, Any]:
         try:
-            return (await req.json()) or {}
+            p = await req.json()
         except Exception:  # noqa: BLE001
             return {}
+        if p is None:
+            return {}
+        if not isinstance(p, dict):
+            raise HTTPException(status_code=400, detail="ValueError: the request body must be a JSON object")
+        return p
+
+    def flag(v: Any, default: bool) -> bool:
+        """A JSON boolean; also accepts the strings true/false, 1/0, yes/no, on/off."""
+        if v is None:
+            return default
+        if isinstance(v, str):
+            t = v.strip().lower()
+            if t in ("true", "1", "yes", "on"):
+                return True
+            if t in ("false", "0", "no", "off", ""):
+                return False
+            raise ValueError(f"expected true or false, got {v!r}")
+        return bool(v)
 
     def pick(p: Dict[str, Any], *keys: str) -> Dict[str, Any]:
         return {k: p[k] for k in keys if k in p and p[k] is not None}
@@ -770,12 +842,12 @@ def register_routes(app, session) -> None:
     async def spi_transfer(req: Request):
         """Body: data (hex bytes for MOSI), start, stop (chip select framing), writeonly. Returns the MISO bytes."""
         p = await body(req)
-        return await run(ifc.spi_transfer, p.get("data", ""), bool(p.get("start", True)), bool(p.get("stop", True)), bool(p.get("writeonly", False)))
+        return await run(lambda: ifc.spi_transfer(str(p.get("data", "")), flag(p.get("start"), True), flag(p.get("stop"), True), flag(p.get("writeonly"), False)))
 
     @app.post("/api/interfaces/spi/toggle_sck")
     async def spi_toggle(req: Request):
         p = await body(req)
-        return await run(ifc.spi_toggle_sck, int(p.get("cycles", 8)))
+        return await run(lambda: ifc.spi_toggle_sck(int(p.get("cycles", 8))))
 
     @app.get("/api/interfaces/gpio")
     async def gpio_get():
@@ -791,7 +863,7 @@ def register_routes(app, session) -> None:
     async def gpio_pulse(req: Request):
         """Body: pin (nrst or pdic), ms."""
         p = await body(req)
-        return await run(ifc.gpio_pulse, str(p.get("pin", "nrst")), float(p.get("ms", 50)))
+        return await run(lambda: ifc.gpio_pulse(str(p.get("pin", "nrst")), float(p.get("ms", 50))))
 
     @app.get("/api/interfaces/userio")
     async def userio_get():
@@ -845,9 +917,14 @@ def register_routes(app, session) -> None:
     async def openocd_mpsse(req: Request):
         """Body: enable (bool), transport (jtag, swd), header (target, userio). Enabling releases the scope; disabling restores normal mode and reconnects."""
         p = await body(req)
-        if p.get("enable", True):
+        try:
+            enable = flag(p.get("enable"), True)
+            reconnect = flag(p.get("reconnect"), True)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"ValueError: {e}")
+        if enable:
             return await run(oc.mpsse_enable, str(p.get("transport", "jtag")), str(p.get("header", "target")))
-        return await run(oc.mpsse_disable, bool(p.get("reconnect", True)))
+        return await run(oc.mpsse_disable, reconnect)
 
     @app.post("/api/interfaces/openocd/start")
     async def openocd_start(req: Request):
@@ -863,10 +940,10 @@ def register_routes(app, session) -> None:
     async def openocd_command(req: Request):
         """Body: command. Runs on OpenOCD's TCL port; returns ok and the output."""
         p = await body(req)
-        return await run(oc.command, str(p.get("command", "")), float(p.get("timeout", 30)))
+        return await run(lambda: oc.command(str(p.get("command", "")), float(p.get("timeout", 30))))
 
     @app.post("/api/interfaces/openocd/program")
     async def openocd_program(req: Request):
         """Body: path (.hex/.elf/.bin on the Studio machine), verify, reset, address (for .bin)."""
         p = await body(req)
-        return await run(oc.program, str(p.get("path", "")), bool(p.get("verify", True)), bool(p.get("reset", True)), p.get("address"))
+        return await run(lambda: oc.program(str(p.get("path", "")), flag(p.get("verify"), True), flag(p.get("reset"), True), p.get("address")))

@@ -2,9 +2,9 @@
 
 Mapping (cycles relative to the trigger to sample indices of a captured trace)::
 
-    sample = cycle * samples_per_cycle * scale - adc.offset + adc.presamples + shift
+    sample = cycle * samples_per_cycle * scale - adc.offset / decimate + adc.presamples + shift
 
-with ``samples_per_cycle = adc_freq / target_clock / decimate`` (4 for ChipWhisperer's default clkgen_x4 ADC clock). ``scale`` and ``shift`` start at 1 and 0; the alignment fits them, and the user can nudge them.
+with ``samples_per_cycle = adc_freq / target_clock / decimate`` (4 for ChipWhisperer's default clkgen_x4 ADC clock). The ADC offset counts ADC clock cycles before recording starts, so it is divided by the decimation like the cycles are; pre-trigger samples are recorded samples. ``scale`` and ``shift`` start at 1 and 0; the alignment fits them, and the user can nudge them.
 
 Power model: every executed instruction draws a base current for its class plus a data dependent part, the Hamming weight of the value it loaded, stored or computed and the Hamming distance to the previous such value (the usual CMOS leakage model), spread over the instruction's cycles. The same model makes the simulator's traces when it runs real firmware, so a CPA on simulated traces finds the key where the firmware handles the S-box outputs.
 """
@@ -26,7 +26,7 @@ BASE[[cy.BRANCH, cy.CALL, cy.RET, cy.JUMPREG, cy.TBB]] = 0.9
 HW_WEIGHT = 0.4
 HD_WEIGHT = 0.2
 IDLE = 1.0
-EDGE_PHASE = 0.18  # centre of a cycle's current pulse (synth_trace's shape) relative to the middle of the cycle
+EDGE_PHASE = 0.35  # phase of the model against the clock edges: lines up model_samples with synth_trace (current pulse right after the edge, the ADC sampling at instants), so traces of the simulator align at shift 0; on hardware the ADC clock phase is unknown and the alignment fits it
 
 
 @dataclass
@@ -46,7 +46,7 @@ class Mapping:
 
     @property
     def b(self) -> float:
-        return -self.adc_offset + self.presamples + self.shift
+        return -self.adc_offset / max(1, self.decimate) + self.presamples + self.shift
 
     def sample(self, cycle):
         return np.asarray(cycle, np.float64) * self.a + self.b
@@ -57,6 +57,7 @@ class Mapping:
     def to_json(self) -> Dict[str, Any]:
         d = asdict(self)
         d["samples_per_cycle"] = self.a
+        d["intercept"] = self.b  # sample index of cycle 0 (the trigger): sample = cycle * samples_per_cycle + intercept
         return d
 
     @classmethod
@@ -190,14 +191,17 @@ def _ncc(x: np.ndarray, m: np.ndarray) -> np.ndarray:
 
 
 def align(trace: np.ndarray, P: np.ndarray, t0: int, mapping: Mapping, max_shift: Optional[int] = None, scale_range: Tuple[float, float] = (0.9, 1.1), coarse: int = 41, fine: int = 21) -> Dict[str, Any]:
-    """Fit ``shift`` (samples) and ``scale`` of ``mapping`` so the power model best matches ``trace`` (the mean trace, or one trace). Returns the fit with its correlation and a confidence in 0..1."""
+    """Fit ``shift`` (samples) and ``scale`` of ``mapping`` so the power model best matches ``trace`` (the mean trace, or one trace). Returns the fit with its correlation and a confidence in 0..1.
+
+    The shift is searched within ``max_shift`` samples of the nominal mapping (default 200 target cycles, at least 256 samples): the trigger pins cycle 0 to within a few cycles on real hardware, and a wider search lets repetitive code (AES rounds, loops) match a whole round early or late. Confidence combines the correlation with how far the best peak stands above the best other local peak in the window (outside the main lobe of a couple of cycles), so a periodic match that could be off by a loop iteration reads as low.
+    """
     x = np.asarray(trace, np.float64)
     L = len(x)
     if L < 16 or not len(P):
         raise ValueError("need a trace and an emulated run to align")
     spc = mapping.spc
     if max_shift is None:
-        max_shift = int(min(max(L, 2000), 20000))
+        max_shift = int(min(max(256, round(200 * spc)), 20000))
     xp = _prep(x, spc)
     base = Mapping(**{**mapping.__dict__, "shift": 0.0})
 
@@ -232,9 +236,11 @@ def align(trace: np.ndarray, P: np.ndarray, t0: int, mapping: Mapping, max_shift
     # confidence: correlation strength and how much the best peak stands out from the best one elsewhere
     guard = max(4, int(round(spc * s * 2)))
     ac = np.abs(curve)
-    mask = np.ones(len(ac), bool)
-    mask[max(0, j0 - guard):j0 + guard + 1] = False
-    second = float(ac[mask].max()) if mask.any() else 0.0
+    peak = np.zeros(len(ac), bool)  # local maxima: the slopes of the main peak are not a rival match
+    if len(ac) > 2:
+        peak[1:-1] = (ac[1:-1] >= ac[:-2]) & (ac[1:-1] >= ac[2:])
+    peak[max(0, j0 - guard):j0 + guard + 1] = False
+    second = float(ac[peak].max()) if peak.any() else 0.0
     distinct = max(0.0, 1.0 - second / a) if a > 0 else 0.0
     conf = float(np.clip(a * 1.25, 0, 1) * np.clip(distinct * 3, 0, 1))
     return {"shift": float(shift), "scale": float(s), "r": float(r), "abs_r": float(a), "second": second, "distinct": round(distinct, 4), "confidence": round(conf, 4),

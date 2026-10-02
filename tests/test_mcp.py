@@ -229,3 +229,20 @@ def test_mcp_stdio_raw(tmp_path):
         p.stdin.close()
         p.terminate()
         p.wait(10)
+
+
+def test_embedded_studio_not_fooled_by_another_program(tmp_path, monkeypatch):
+    """When the port the embedded Studio picked is taken by another program before uvicorn binds it, start_embedded fails at once instead of handing out the other program's address."""
+    from cwstudio import cli, mcp_server
+    other = socket.socket()
+    other.bind(("127.0.0.1", 0))
+    other.listen(1)
+    port = other.getsockname()[1]
+    monkeypatch.setattr(cli, "_free_port", lambda host, preferred: port)
+    t0 = time.time()
+    try:
+        with pytest.raises(mcp_server.StudioError, match="did not start"):
+            mcp_server.start_embedded("127.0.0.1", port, True, str(tmp_path))
+        assert time.time() - t0 < 20
+    finally:
+        other.close()

@@ -124,7 +124,7 @@ def start_embedded(host: str, port: int, simulate: bool, data_dir: Optional[str]
     """Run a headless Studio (API + UI) in a background thread and return its URL."""
     import uvicorn
     from cwstudio.app import create_app
-    from cwstudio.cli import _free_port, _wait_ready
+    from cwstudio.cli import _free_port, _wait_started
     from cwstudio.session import Session
 
     session = Session(simulate=simulate, data_dir=data_dir)
@@ -133,9 +133,20 @@ def start_embedded(host: str, port: int, simulate: bool, data_dir: Optional[str]
     config = uvicorn.Config(app, host=host, port=port, log_level="warning", ws_max_size=64 * 1024 * 1024, timeout_graceful_shutdown=3, log_config=None)
     server = uvicorn.Server(config)
     app.state.server = server
-    threading.Thread(target=server.run, name="studio-embedded", daemon=True).start()
-    if not _wait_ready(host, port, 30):
-        raise StudioError("embedded Studio did not start")
+
+    def serve():
+        try:
+            server.run()
+        except SystemExit:  # uvicorn exits when it cannot open the port; it has logged why
+            pass
+
+    thread = threading.Thread(target=serve, name="studio-embedded", daemon=True)
+    thread.start()
+    # wait for this server's own socket (connecting to the port could reach another program that took it first), and give up as soon as the server thread ends
+    if not _wait_started(server, 30, alive=thread.is_alive):
+        server.should_exit = True
+        session.close()
+        raise StudioError(f"embedded Studio did not start (is port {port} on {host} in use?)")
     return f"http://{host}:{port}"
 
 

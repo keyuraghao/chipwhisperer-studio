@@ -172,7 +172,18 @@ export function themeColors() {
 }
 
 /** uPlot axis options in the current theme. */
+/** Numbers as the user's locale writes them (grouping, decimal mark) but always with Latin digits 0-9: in Arabic, Persian or Hindi locales the browser would otherwise show its native digits, which do not match the hex, code and hardware values next to them. */
+export const fmtNum = (() => {
+  try { return new Intl.NumberFormat(navigator.language, { numberingSystem: 'latn' }).format; } catch (e) { return new Intl.NumberFormat('en-US').format; }
+})();
+
+/** A clock time (hh:mm:ss) in the user's locale with Latin digits. */
+export function fmtClock(date, opts = {}) {
+  try { return date.toLocaleTimeString(navigator.language, Object.assign({ numberingSystem: 'latn' }, opts)); } catch (e) { return date.toLocaleTimeString('en-US', opts); }
+}
+
 export function axisStyle(extra = {}) {
   const c = themeColors();
-  return Object.assign({ stroke: c.axis, grid: { stroke: c.grid, width: 1 }, ticks: { stroke: c.tick, width: 1 } }, extra);
+  // uPlot formats tick labels with the browser locale, digits included; keep them Latin like every other number in Studio
+  return Object.assign({ stroke: c.axis, grid: { stroke: c.grid, width: 1 }, ticks: { stroke: c.tick, width: 1 }, values: (u, splits) => splits.map((v) => (v == null ? '' : fmtNum(v))) }, extra);
 }

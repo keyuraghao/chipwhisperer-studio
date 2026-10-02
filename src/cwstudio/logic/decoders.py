@@ -2,10 +2,11 @@
 
 Each decoder takes a channel mapping (``{"rx": 0, ...}`` by index or name) and options, and returns a :class:`Result`: rows of annotations (start and end sample, text, kind, optional value) that the viewer draws under the decoder's channels and the results table lists. Kinds pick the colour: data, addr, cmd, ack, nack, error, warn, start, stop, state, info.
 
-Decoders: UART (baud auto-detect, 5-9 data bits, parity, stop bits, inverted, bit order), SPI (CPOL/CPHA, bit order, word size, CS level), I2C (7 and 10-bit addresses, read/write, ACK/NACK, repeated start), 1-Wire (reset/presence, ROM commands, bytes), JTAG (TAP state tracking, IR/DR shifts), SWD (requests, ACK, data, parity), CAN (classic, standard and extended IDs, DLC, data, CRC, ACK, stuffing) and SimpleSerial v1/v2 on top of UART.
+Decoders: UART (baud auto-detect, 5-9 data bits, parity, stop bits, inverted, bit order), SPI (CPOL/CPHA, bit order, word size, CS level), I2C (7 and 10-bit addresses, read/write, ACK/NACK, repeated start), 1-Wire (reset/presence, ROM commands, bytes, standard and overdrive speed), JTAG (TAP state tracking, IR/DR shifts), SWD (requests, ACK, data, parity), CAN (classic, standard and extended IDs, DLC, data, CRC, ACK, stuffing; CAN FD frames are recognised and skipped) and SimpleSerial v1/v2 on top of UART. Every decoder has a glitch filter that drops pulses shorter than a set time on its channels.
 """
 from __future__ import annotations
 
+import copy
 from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -201,33 +202,44 @@ def uart_frames(cap: LogicCapture, ci: int, o: Dict[str, Any]) -> Tuple[List[Dic
     npar = 0 if parity == "none" else 1
     nv = _newvals(c)
     starts = c.edges[nv == (1 if inv else 0)].astype(np.int64)
-    frames = []
     nb = 1 + db + npar
-    offs = (np.arange(nb) + 0.5) * bl
-    i = 0
-    while i < starts.shape[0]:
-        s = int(starts[i])
-        pts = np.minimum((s + offs).astype(np.int64), cap.n - 1)
-        if s + (nb + stop) * bl > cap.n + bl:
-            break
-        v = c.value_at(pts) ^ inv
-        if v[0] != 0:  # glitch, not a start bit
+    nstop = max(1, int(np.ceil(stop)))
+    # a frame needs its stop bits inside the capture (allowing one bit of slack at the end)
+    starts = starts[starts + (nb + stop) * bl <= cap.n + bl]
+    if starts.shape[0] == 0:
+        return [], baud
+    # the start bit must still be low half a bit in, or the edge was a glitch
+    valid = (c.value_at(np.minimum((starts + 0.5 * bl).astype(np.int64), cap.n - 1)) ^ inv) == 0
+    # after a frame the next one starts at the first start edge after the middle of its last data/parity bit plus half a bit
+    nxt = ss(starts, starts + (nb + 0.5) * bl, side="right")
+    chosen = []
+    i, total = 0, starts.shape[0]
+    valid_l, nxt_l = valid.tolist(), np.asarray(nxt).tolist()
+    while i < total:
+        if not valid_l[i]:
             i += 1
             continue
-        bits = v[1:1 + db]
-        if msb:
-            bits = bits[::-1]
-        val = int(sum(int(b) << k for k, b in enumerate(bits)))
-        par_ok = True
-        if npar:
-            ones = int(bits.sum())
-            exp = {"odd": (ones + 1) & 1, "even": ones & 1, "mark": 1, "space": 0}.get(parity, 0)
-            par_ok = int(v[1 + db]) == exp
-        stop_pts = np.minimum((s + (nb + np.arange(max(1, int(np.ceil(stop)))) * 1.0 + 0.5) * bl).astype(np.int64), cap.n - 1)
-        frame_ok = bool(np.all((c.value_at(stop_pts) ^ inv) == 1))
-        end = s + (nb + stop) * bl
-        frames.append({"s": s, "e": end, "value": val, "parity_ok": par_ok, "frame_ok": frame_ok, "data_s": s + bl, "data_e": s + (1 + db) * bl})
-        i = int(ss(starts, s + (nb + 0.5) * bl, side="right"))
+        chosen.append(i)
+        i = nxt_l[i]
+    st = starts[np.asarray(chosen, np.int64)]
+    # every bit's middle sample at once: start bit, data bits, parity, stop bits
+    offs = (np.arange(nb + nstop) + 0.5) * bl
+    pts = np.minimum((st[:, None] + offs[None, :]).astype(np.int64), cap.n - 1)
+    v = (c.value_at(pts.ravel()).reshape(pts.shape).astype(np.int64)) ^ inv
+    bits = v[:, 1:1 + db]
+    if msb:
+        bits = bits[:, ::-1]
+    vals = bits @ (1 << np.arange(db, dtype=np.int64))
+    if npar:
+        ones = bits.sum(1)
+        exp = {"odd": (ones + 1) & 1, "even": ones & 1, "mark": np.ones_like(ones), "space": np.zeros_like(ones)}.get(parity, np.zeros_like(ones))
+        par_ok = v[:, 1 + db] == exp
+    else:
+        par_ok = np.ones(st.shape[0], bool)
+    frame_ok = np.all(v[:, nb:nb + nstop] == 1, axis=1)
+    stf = st.astype(np.float64)
+    frames = [{"s": int(s0), "e": float(s0 + (nb + stop) * bl), "value": int(val), "parity_ok": bool(p), "frame_ok": bool(f), "data_s": float(s0 + bl), "data_e": float(s0 + (1 + db) * bl)}
+              for s0, val, p, f in zip(stf.tolist(), vals.tolist(), par_ok.tolist(), frame_ok.tolist())]
     return frames, baud
 
 
@@ -453,6 +465,7 @@ def _crc8_maxim(data: bytes) -> int:
 
 
 def decode_onewire(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) -> Result:
+    """1-Wire at standard speed, switching to overdrive timing after an Overdrive Skip ROM (0x3C) or Overdrive Match ROM (0x69) until the next standard-length reset (480 us)."""
     res = Result("onewire")
     ci = _ch(cap, chans, "owr")
     c = cap.channels[ci]
@@ -463,17 +476,14 @@ def decode_onewire(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) 
     nv = _newvals(c)
     e = c.edges.astype(np.int64)
     pulses = []  # (fall, rise)
-    k = 0
-    if c.init == 0 and e.shape[0]:
-        k = 0
     for j in range(e.shape[0]):
         if nv[j] == 0:
             r = int(e[j + 1]) if j + 1 < e.shape[0] else cap.n
             pulses.append((int(e[j]), r))
     if us < 1:
         res.warnings.append(f"the sample rate {sr:g} Hz is too low for 1-Wire bit slots (at least 1 MHz is needed)")
-    state = "idle"
-    reset_end = None
+    od = False  # overdrive speed
+    od_seen = False
     bits: List[Tuple[int, int]] = []
     byte_no = 0
     rom_cmd = None
@@ -485,39 +495,45 @@ def decode_onewire(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) 
         if j == skip:
             continue
         w = (r - f) / us
-        if w >= 380:
-            res.add(rid, f, r, "Reset", "start", "reset")
+        if w >= 380 or (od and w >= 40):
+            if w >= 380:
+                od = False
+            res.add(rid, f, r, "Reset" + (" (overdrive)" if od else ""), "start", "reset")
             stats["resets"] += 1
-            state, reset_end, bits, byte_no, rom_cmd, rom_bytes, search_bits = "bits", r, [], 0, None, [], []
+            bits, byte_no, rom_cmd, rom_bytes, search_bits = [], 0, None, [], []
             nxt = pulses[j + 1] if j + 1 < len(pulses) else None
-            if nxt is not None and (nxt[0] - r) / us <= 80 and 40 <= (nxt[1] - nxt[0]) / us <= 300:
+            gap_max, pw = (15, (5, 40)) if od else (80, (40, 300))
+            if nxt is not None and (nxt[0] - r) / us <= gap_max and pw[0] <= (nxt[1] - nxt[0]) / us <= pw[1]:
                 res.add(rid, nxt[0], nxt[1], "Presence", "ack", True)
                 stats["presence"] += 1
                 skip = j + 1
             else:
-                res.add(rid, r, min(cap.n, r + 240 * us), "No presence", "nack", False)
+                res.add(rid, r, min(cap.n, r + (24 if od else 240) * us), "No presence", "nack", False)
             continue
-        if state == "idle":
-            state = "bits"
-        bit = 1 if w < 15 else 0
+        slot = (10 if od else 60) * us
+        bit = 1 if w < (2.5 if od else 15) else 0
         bits.append((f, bit))
         if rom_cmd in (0xF0, 0xEC) and byte_no == 1:
             search_bits.append(bit)
             if len(search_bits) == 192:
                 rom = sum((search_bits[3 * i + 2] << i) for i in range(64))
                 rb = rom.to_bytes(8, "little")
-                res.add(rom_row, bits[0][0] if bits else f, f + 60 * us, f"ROM {rb.hex(' ')} {'CRC ok' if _crc8_maxim(rb[:7]) == rb[7] else 'CRC error'}", "addr", rb.hex())
+                res.add(rom_row, bits[0][0] if bits else f, f + slot, f"ROM {rb.hex(' ')} {'CRC ok' if _crc8_maxim(rb[:7]) == rb[7] else 'CRC error'}", "addr", rb.hex())
                 byte_no, bits = 2, []
             continue
         if len(bits) < 8:
             continue
         val = sum(b << k for k, (_, b) in enumerate(bits))
-        s, e_ = bits[0][0], bits[-1][0] + 60 * us
+        s, e_ = bits[0][0], bits[-1][0] + slot
         bits = []
         stats["bytes"] += 1
         if byte_no == 0:
             rom_cmd = val
             res.add(rid, s, e_, f"{ONEWIRE_ROM_CMDS.get(val, 'Command')} (0x{val:02X})", "cmd", val)
+            if val in (0x3C, 0x69):
+                od = od_seen = True
+                if us < 2:
+                    res.warnings.append(f"overdrive needs at least 2 MHz sampling; the capture has {sr:g} Hz")
         elif rom_cmd in (0x33, 0x0F, 0x55, 0x69) and 1 <= byte_no <= 8:
             rom_bytes.append((s, e_, val))
             res.add(rid, s, e_, f"{val:02X}", "data", val)
@@ -530,6 +546,7 @@ def decode_onewire(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) 
         else:
             res.add(rid, s, e_, f"{val:02X}", "data", val)
         byte_no += 1
+    stats["overdrive"] = od_seen
     res.meta.update(stats)
     return res.finalize()
 
@@ -703,7 +720,12 @@ def _crc15(bits):
     return crc
 
 
+def to_int_(bb) -> int:
+    return int("".join(map(str, bb)), 2) if len(bb) else 0
+
+
 def decode_can(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) -> Result:
+    """Classic CAN (2.0A/B). A CAN FD frame (FDF bit recessive) is marked and skipped, not decoded; set the nominal bit rate for buses carrying CAN FD, since auto detection would find the faster data phase."""
     res = Result("can")
     ci = _ch(cap, chans, "can")
     c = cap.channels[ci]
@@ -785,6 +807,14 @@ def decode_can(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) -> R
             need = 39 if ext else 19
             while len(bits) < need and ok:
                 ok = destuffed() is not None and bit_start < cap.n
+        if ok and bits[33 if ext else 14] == 1:
+            # FDF (r0 in a standard frame, r1 in an extended one) recessive: a CAN FD frame, whose data phase this classic decoder does not read
+            ident = ((to_int_(bits[1:12]) << 18) | to_int_(bits[14:32])) if ext else to_int_(bits[1:12])
+            res.add(frow, sof, pos_of[-1] + bl, f"CAN FD frame, ID 0x{ident:0{8 if ext else 3}X}: not decoded (classic CAN only)", "warn", ident)
+            res.add(mrow, sof, pos_of[-1] + bl, f"CAN FD {'ext ' if ext else ''}0x{ident:0{8 if ext else 3}X} (not decoded)", "warn", {"id": ident, "extended": ext, "fd": True})
+            stats["fd_frames"] = stats.get("fd_frames", 0) + 1
+            pos = int(pos_of[-1] + bl)
+            continue
         dlc = nbytes = 0
         if ok:
             dlc_bits = bits[need - 4:need]
@@ -950,6 +980,9 @@ def decode_simpleserial(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, A
     return res.finalize()
 
 
+GLITCH_OPT = {"id": "glitch_ns", "label": "Glitch filter (ns)", "type": "number", "default": 0, "min": 0, "help": "ignore pulses shorter than this on the decoder's channels (0: off)"}
+
+
 # ----- registry ---------------------------------------------------------------------------------------------
 _UART_OPTS = [
     {"id": "baud", "label": "Baud", "type": "text", "default": "auto", "help": "a number or auto (detected from the shortest pulses)"},
@@ -973,10 +1006,14 @@ DECODERS: Dict[str, Dict[str, Any]] = {
              "options": [{"id": "initial_state", "label": "Start state", "type": "select", "values": list(TAP), "default": "Test-Logic-Reset", "help": "five clocks with TMS high always reach Test-Logic-Reset"}]},
     "swd": {"label": "SWD", "fn": decode_swd, "channels": [{"id": "swclk", "label": "SWCLK", "required": True, "hint": ["swclk", "swd clk", "ck"]}, {"id": "swdio", "label": "SWDIO", "required": True, "hint": ["swdio", "swd io", "d7"]}], "options": []},
     "can": {"label": "CAN", "fn": decode_can, "channels": [{"id": "can", "label": "CAN RX", "required": True, "hint": ["can"]}],
-            "options": [{"id": "bitrate", "label": "Bit rate", "type": "text", "default": "auto"}, {"id": "sample_point", "label": "Sample point %", "type": "number", "default": 70, "min": 30, "max": 95}]},
+            "options": [{"id": "bitrate", "label": "Bit rate", "type": "text", "default": "auto", "help": "a number or auto. Classic CAN only: CAN FD frames are marked, not decoded; with CAN FD on the bus set the nominal rate, since auto would find the faster data phase"}, {"id": "sample_point", "label": "Sample point %", "type": "number", "default": 70, "min": 30, "max": 95}]},
     "simpleserial": {"label": "SimpleSerial", "fn": decode_simpleserial, "channels": [{"id": "rx", "label": "Target RX", "required": False, "hint": ["uart rx", "rx", "io2"]}, {"id": "tx", "label": "Target TX", "required": False, "hint": ["uart tx", "tx", "io1"]}],
                      "options": [{"id": "version", "label": "Version", "type": "select", "values": ["auto", "1", "2"], "default": "auto"}] + _UART_OPTS},
 }
+
+
+for _spec in DECODERS.values():
+    _spec["options"].append(dict(GLITCH_OPT))
 
 
 def registry() -> Dict[str, Dict[str, Any]]:
@@ -1000,10 +1037,55 @@ def guess_channels(kind: str, cap: LogicCapture) -> Dict[str, int]:
     return out
 
 
+def deglitch(c: Channel, min_samples: int) -> Channel:
+    """A copy of a channel without pulses shorter than ``min_samples`` (both edges of each short pulse are dropped, so the levels around it are unchanged)."""
+    e = c.edges
+    if min_samples <= 1 or e.shape[0] < 2:
+        return c
+    short = np.flatnonzero(np.diff(e.astype(np.int64)) < min_samples)
+    if short.shape[0] == 0:
+        return c
+    keep = np.ones(e.shape[0], bool)
+    last = -1
+    for i in short.tolist():
+        if i <= last:
+            continue
+        keep[i] = keep[i + 1] = False
+        last = i + 1
+    return Channel(c.name, c.init, e[keep], c.color, c.hidden, c.group)
+
+
+def _filtered(cap: LogicCapture, chans: Dict[str, Any], glitch_ns: float) -> LogicCapture:
+    """The capture as the decoder sees it with the glitch filter: the mapped channels without pulses shorter than ``glitch_ns``."""
+    w = int(np.ceil(float(glitch_ns) * 1e-9 * cap.samplerate))
+    if w <= 1:
+        return cap
+    out = copy.copy(cap)
+    out.channels = list(cap.channels)
+    for v in chans.values():
+        if v is None or v == "" or v == -1:
+            continue
+        try:
+            ci = cap.ch_index(v)
+        except KeyError:
+            continue
+        out.channels[ci] = deglitch(cap.channels[ci], w)
+    return out
+
+
 def decode(cap: LogicCapture, kind: str, chans: Dict[str, Any], options: Optional[Dict[str, Any]] = None) -> Result:
     spec = DECODERS.get(kind)
     if spec is None:
         raise DecodeError(f"unknown decoder {kind!r}; choose one of {', '.join(DECODERS)}")
     o = {x["id"]: x["default"] for x in spec["options"]}
     o.update({k: v for k, v in (options or {}).items() if v is not None})
-    return spec["fn"](cap, dict(chans or {}), o)
+    chans = dict(chans or {})
+    try:
+        g = float(o.get("glitch_ns") or 0)
+    except (TypeError, ValueError):
+        raise DecodeError("the glitch filter is a time in ns") from None
+    if g < 0:
+        raise DecodeError("the glitch filter is a time in ns")
+    if g > 0:
+        cap = _filtered(cap, chans, g)
+    return spec["fn"](cap, chans, o)

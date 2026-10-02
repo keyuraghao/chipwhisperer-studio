@@ -56,7 +56,7 @@ def register_logic_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]) ->
         """Write the current capture as VCD, CSV (Saleae style) or a sigrok .sr session; path defaults to Studio's logic/exports folder. channels exports a subset (names or indices)."""
         return call("POST", "/api/la/export", clean(format=format, path=path, channels=channels))
 
-    @mcp.tool(annotations=RO)
+    @mcp.tool(annotations=HW)
     def la_decode(decoder: Decoder, channels: Optional[Dict[str, Any]] = None, options: Optional[Dict[str, Any]] = None, limit: int = 200, add_to_view: bool = False) -> Dict[str, Any]:
         """Decode the current capture and return the annotations (time from the trigger, row, channel, kind, text, value). channels maps roles to channel names or indices (uart/simpleserial: rx, tx; spi: cs, sck, mosi, miso; i2c: scl, sda; onewire: owr; jtag: tck, tms, tdi, tdo; swd: swclk, swdio; can: can); left out, they are guessed from the channel names. options: uart baud ('auto' or a number), data_bits 5-9, parity, stop_bits, bit_order, inverted; spi mode 0-3, bit_order, word_size, cs_active; i2c address_format; can bitrate, sample_point; simpleserial version auto/1/2 plus the UART options; sigrok spec (e.g. 'uart:rx=D0:baudrate=115200', channels named D0..Dn by position, needs sigrok-cli). add_to_view also shows it in the Logic tab."""
         body = clean(type=decoder, channels=channels, options=options)
@@ -97,3 +97,8 @@ def register_logic_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]) ->
     def la_status() -> Dict[str, Any]:
         """The logic analyser state: a running capture, the current capture's summary, the captures kept in memory, configured decoders and buses."""
         return call("GET", "/api/la")
+
+    @mcp.tool(annotations=HW)
+    def la_select(capture: str) -> Dict[str, Any]:
+        """Make another of the captures kept in memory (the newest eight, ids from la_status) the current one, which every other la_* tool works on. Returns its summary."""
+        return call("PUT", "/api/la/current", {"id": capture})

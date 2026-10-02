@@ -94,6 +94,11 @@ def test_code_on_the_waveform(studio):
                 page.wait_for_function("document.getElementById('btn-stop').disabled", timeout=30000)
             page.click("#tabs .tab[data-tab=code]")
             expect(page.locator("#cm-elf option", has_text="(programmed)")).to_have_count(1, timeout=10000)
+            if k == 0:
+                # before a code map exists, the actions that need one are disabled with the reason (the API would answer 404)
+                for sel in ("#cm-pctrace", "#cm-window", "#cm-align", "#cm-shift"):
+                    expect(page.locator(sel)).to_be_disabled()
+                    expect(page.locator(sel)).to_have_attribute("title", re.compile("build the code map first"))
             page.click("#cm-build")
             expect(page.locator("#cm-build-msg")).to_contain_text("Built", timeout=60000)
             expect(page.locator("#cm-info")).to_contain_text("correct AES")
@@ -163,4 +168,119 @@ def test_code_on_the_waveform(studio):
             assert 1200 < hover < 1400, hover
             assert not errors, errors
             page.close()
+        browser.close()
+
+
+SYNC_JS = """() => {
+  const cb = document.getElementById('code-band').codeBand; const u = cb.wave.u; const L = cb.layout();
+  if (!L) return null;
+  const over = u.over.getBoundingClientRect(), br = cb.el.getBoundingClientRect(), s = u.scales.x;
+  let worst = 0;
+  for (const f of [0, 0.13, 0.5, 0.77, 1]) { const v = s.min + f * (s.max - s.min); worst = Math.max(worst, Math.abs((L.toX(v) + br.left) - (u.valToPos(v, 'x') + over.left))); }
+  return {worst, min: s.min, max: s.max};
+}"""
+
+
+def test_band_sync_long_source_and_switching(studio, tmp_path):
+    """The band's x axis matches uPlot's exactly through drag zoom, wheel zoom over the band, the zoom keys, mean/min-max/time axis and resizes; ctrl and alt drags pick a region without zooming; a source file of 30000 lines opens and moves its marks quickly (only the rows in sight are rendered); building the code map of other firmware replaces the file tabs and source view."""
+    from playwright.sync_api import Error, expect, sync_playwright
+    try:
+        from tests import fwbuild
+    except ImportError:
+        import fwbuild
+    base, fw = studio
+    try:
+        xmega = fwbuild.build_elf("CWLITEXMEGA", "gcc", "TINYAES128C", "SS_VER_2_1")
+    except RuntimeError as e:
+        pytest.skip(f"firmware build not available: {str(e).splitlines()[0]}")
+    _api(base, "POST", "/api/scope/connect", {"kind": "sim", "sim_model": "husky"})
+    _api(base, "POST", "/api/target/connect", {"kind": "sim"})
+    _api(base, "POST", "/api/target/program", {"programmer": "STM32F", "path": fw})
+    _api(base, "POST", "/api/capture/start", {"count": 20, "clear": True})
+    for _ in range(300):
+        if not _api(base, "GET", "/api/status")["job"]["running"]:
+            break
+        time.sleep(0.05)
+    aes_c = _api(base, "POST", "/api/codemap/build", {})["band"]["files"]
+    src = next(f["path"] for f in aes_c if f["name"] == "aes.c")
+    long_dir = tmp_path / "long"
+    long_dir.mkdir()
+    (long_dir / "aes.c").write_text(open(src).read() + "".join(f"/* filler {i} */ int filler_{i} = {i};\n" for i in range(30000)))
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Error as e:
+            pytest.skip(f"Chromium for Playwright is not installed: {e}")
+        page = browser.new_page(viewport={"width": 1400, "height": 950})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base)
+        page.click("#tabs .tab[data-tab=code]")
+        page.wait_for_function("document.getElementById('code-band').codeBand && document.getElementById('code-band').codeBand.band", timeout=15000)
+        over = page.locator("#wave-plot .u-over").bounding_box()
+        y = over["y"] + over["height"] / 2
+        band = page.locator("#code-band canvas").bounding_box()
+
+        def sync():
+            page.wait_for_timeout(250)
+            r = page.evaluate(SYNC_JS)
+            assert r["worst"] < 0.5, r
+            return r
+        sync()
+        page.mouse.move(over["x"] + over["width"] * 0.2, y)
+        page.mouse.down()
+        page.mouse.move(over["x"] + over["width"] * 0.5, y, steps=6)
+        page.mouse.up()
+        z = sync()
+        assert z["max"] - z["min"] < 2000
+        page.mouse.move(band["x"] + band["width"] / 2, band["y"] + 20)
+        page.mouse.wheel(0, -200)
+        sync()
+        page.keyboard.press("+")
+        before = sync()
+        for mod in ("Control", "Alt"):
+            page.keyboard.down(mod)
+            page.mouse.move(over["x"] + over["width"] * 0.3, y)
+            page.mouse.down()
+            page.mouse.move(over["x"] + over["width"] * 0.6, y, steps=6)
+            page.mouse.up()
+            page.keyboard.up(mod)
+            expect(page.locator("#cm-region")).to_contain_text("instructions", timeout=10000)
+            after = sync()
+            assert after["min"] == pytest.approx(before["min"]) and after["max"] == pytest.approx(before["max"])  # a region, not a zoom
+        for label in ("mean", "min/max", "time axis"):
+            page.locator("#wave-toolbar label", has_text=label).locator("input").check()
+            sync()
+            page.locator("#wave-toolbar label", has_text=label).locator("input").uncheck()
+        page.set_viewport_size({"width": 1100, "height": 900})
+        sync()
+        # a 30000 line source file
+        page.fill("#cm-sources", str(long_dir))
+        page.click("#cm-build")
+        expect(page.locator("#cm-build-msg")).to_contain_text("Built", timeout=60000)
+        page.click("#cm-window")
+        expect(page.locator("#cm-funcs")).to_contain_text("SubBytes", timeout=10000)
+        t = time.time()
+        page.locator("#cm-files button").filter(has_text=re.compile(r"^aes\.c$")).click()
+        page.wait_for_function("document.querySelector('#cm-source .cm-src-rows') && parseFloat(document.querySelector('#cm-source .cm-src-rows').style.height) > 30000 * 12", timeout=10000)
+        assert time.time() - t < 3 and page.locator("#cm-source .ln").count() < 600
+        page.locator("#cm-lines .cm-item", has_text="getSBoxValue").first.click()
+        expect(page.locator("#cm-source .ln.cur")).to_contain_text("getSBoxValue")
+        page.evaluate("document.getElementById('cm-source').scrollTop = 1e9")
+        page.wait_for_timeout(300)
+        assert int(page.locator("#cm-source .ln").last.get_attribute("data-ln")) > 30000
+        # other firmware: the old file tabs and source go away
+        page.fill("#cm-sources", "")
+        page.select_option("#cm-elf", "__other")
+        page.fill("#cm-elf-path", xmega)
+        page.click("#cm-build")
+        expect(page.locator("#cm-info")).to_contain_text("AVR XMEGA", timeout=60000)
+        # the region is kept and shown in the new firmware's sources: not the long aes.c of the previous build
+        page.wait_for_function("!document.querySelector('#cm-source .cm-src-rows') || parseFloat(document.querySelector('#cm-source .cm-src-rows').style.height) < 30000 * 12", timeout=10000)
+        names = {f["name"] for f in _api(base, "GET", "/api/codemap/band")["band"]["files"]}
+        assert set(page.locator("#cm-files button").all_inner_texts()) <= names
+        page.click("#cm-window")
+        expect(page.locator("#cm-funcs")).to_contain_text("SubBytes", timeout=10000)
+        sync()
+        assert not errors, errors
         browser.close()

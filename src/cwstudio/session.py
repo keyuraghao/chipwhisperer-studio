@@ -78,6 +78,7 @@ class Session:
         self.toolchains = ToolchainManager(self.data_dir, publish=publish)
         self.firmware = FirmwareManager(self.data_dir, self.toolchains, publish=publish)
         self.notebooks = NotebookStore(os.path.join(self.data_dir, "notebooks"))
+        self.notebooks.on_change = lambda ev: self.bus.publish("nb", ev)  # open notebook tabs in every window follow saves and deletes
         self.tutorials = Tutorials(self.notebooks, self.firmware, publish)
         self.notes = NotesStore(os.path.join(self.data_dir, "notes"))
         self.calc_vars: Dict[str, Any] = {}
@@ -153,7 +154,15 @@ class Session:
     # --- scope ---------------------------------------------------------------
     def connect_scope(self, kind: str = "auto", sn: Optional[str] = None, force: bool = False,
                       default_setup: bool = True, sim_model: Optional[str] = None) -> Dict[str, Any]:
+        if kind == "sim" and sim_model:
+            from cwstudio.capabilities import SIM_MODELS
+            if sim_model not in SIM_MODELS:  # refuse before the connected scope is let go
+                raise ValueError(f"sim_model must be one of {', '.join(SIM_MODELS)}")
+        self._stop_job_before_reconnect()
+
         def _do():
+            from cwstudio.capabilities import invalidate_gates
+            invalidate_gates()  # what the settings tree offers follows the new scope
             if self.scope is not None:
                 self._disconnect_all()
             self.scope = hardware.connect_scope(kind, sn=sn, force=force, sim_model=sim_model)
@@ -169,8 +178,19 @@ class Session:
         self._push_status()
         return info
 
+    def _stop_job_before_reconnect(self, wait: float = 15.0) -> None:
+        """Stop a running capture, glitch sweep or logic capture before the scope it uses is replaced, so it ends as stopped instead of failing on a disconnected scope."""
+        job = self.worker.long_job
+        if job is not None and not job.finished.is_set():
+            log.info("Stopping %s: the scope is being disconnected", job.name)
+            self.worker.stop_long_job()
+            job.finished.wait(wait)
+
     def disconnect_scope(self):
+        self._stop_job_before_reconnect()
         self.worker.call(self._disconnect_all)
+        from cwstudio.capabilities import invalidate_gates
+        invalidate_gates()
         self.scope_kind = None
         self.target_kind = None
         self._push_status()
@@ -298,7 +318,18 @@ class Session:
                 failed = c["id"]
                 if stop_on_error:
                     break
-        self.notebooks.save(path, nb)
+        # merge the outputs into the file as it is now, so edits saved while the notebook ran (in its tab, by an agent) are kept
+        results = {c["id"]: (c.get("outputs"), c.get("execution_count")) for c in nb["cells"] if c["cell_type"] == "code"}
+        try:
+            current = self.notebooks.load(path)
+        except (OSError, ValueError):
+            current = None
+        if current is not None:
+            for c in current["cells"]:
+                if c["cell_type"] == "code" and c["id"] in results and c["source"] == next(x["source"] for x in nb["cells"] if x["id"] == c["id"]):
+                    c["outputs"], c["execution_count"] = results[c["id"]]
+            nb = current
+            self.notebooks.save(path, nb)  # not when the notebook was deleted meanwhile
         return {"path": path, "kernel": kern.id, "cells_run": ran, "failed_cell": failed, "ok": failed is None, "notebook": nb}
 
     def save_upload(self, filename: str, content: bytes) -> str:

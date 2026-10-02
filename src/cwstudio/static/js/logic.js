@@ -1,10 +1,10 @@
 // Logic tab: a logic analyser for any ChipWhisperer. Captures come from the Husky's built-in LA, a line on the analog input of any scope, the simulator, external analysers through sigrok-cli, or VCD/CSV/.sr files. The main area is a canvas viewer that asks the server only for what is visible (edges or per-pixel summaries), with cursors, buses, search, protocol decoders and a results table.
-import { h, get, post, put, del, upload, toast, downloadUrl, fmtHz } from './api.js';
+import { h, get, post, put, del, upload, toast, downloadUrl, fmtHz, fmtNum } from './api.js';
 
 const LS = (k, d) => { try { const v = localStorage.getItem('cw.la.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
 const SAVE = (k, v) => { try { localStorage.setItem('cw.la.' + k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } };
 const errMsg = (e) => String(e.message || e).replace(/^Unsupported: /, '');
-const LABEL_W = 176;
+const LABEL_W = 176;  // the label column (narrower on phones, see app.css): measured where it matters
 const ROW_H = { ch: 30, dec: 24, bus: 28, an: 76 };
 const I = {
   zin: '<svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5M8 11h6M11 8v6"/></svg>',
@@ -35,6 +35,13 @@ export function fmtSec(t, ref, digits) {
   const v = t / scale;
   const d = digits != null ? digits : Math.abs(v) >= 100 ? 2 : Math.abs(v) >= 10 ? 3 : 4;
   return `${v.toFixed(d)} ${name}`;
+}
+/** A time with enough digits to tell apart two times ``res`` seconds apart (the footer at deep zoom). */
+function fmtRes(t, res) {
+  if (t == null || !isFinite(t)) return '-';
+  const [scale] = unitFor(Math.abs(t) >= res ? t : res);
+  const d = Math.max(0, Math.min(9, Math.ceil(-Math.log10(Math.max(res, 1e-18) / scale)) + 1));
+  return fmtSec(t, Math.abs(t) >= res ? t : res, Math.max(d, Math.abs(t / scale) >= 100 ? 2 : Math.abs(t / scale) >= 10 ? 3 : 4));
 }
 const fmtF = (f) => (f == null || !isFinite(f) ? '-' : f >= 1e6 ? (f / 1e6).toFixed(4) + ' MHz' : f >= 1e3 ? (f / 1e3).toFixed(4) + ' kHz' : f.toFixed(3) + ' Hz');
 const KIND_TOKEN = { data: '--info', addr: '--warn', cmd: '--accent', ack: '--ok', nack: '--err', error: '--err', warn: '--warn', start: '--c-cursor-b', stop: '--c-cursor-b', state: '--muted', info: '--fg-2', agg: '--muted' };
@@ -266,9 +273,9 @@ export function initLogic(ctx, sideEl, viewEl) {
       t = `${fmtHz(sc.adc_rate)} (scope ADC clock) · ${n} samples = ${fmtSec(n / sc.adc_rate)}${+s.segments > 1 ? ' in ' + s.segments + ' triggers' : ''}`;
     } else if (id === 'sim') {
       const n = Math.round((+s.duration_ms / 1e3) * +s.samplerate);
-      t = `${fmtHz(+s.samplerate)} · ${n.toLocaleString()} samples, ${s.pretrigger}% before the trigger`;
+      t = `${fmtHz(+s.samplerate)} · ${fmtNum(n)} samples, ${s.pretrigger}% before the trigger`;
     } else if (id === 'sigrok' && +s.samplerate) {
-      t = `${fmtHz(+s.samplerate)} · ${(+s.samples || 0).toLocaleString()} samples = ${fmtSec((+s.samples || 0) / +s.samplerate)}`;
+      t = `${fmtHz(+s.samplerate)} · ${fmtNum(+s.samples || 0)} samples = ${fmtSec((+s.samples || 0) / +s.samplerate)}`;
     }
     srcInfoLine.textContent = t;
   }
@@ -368,7 +375,7 @@ export function initLogic(ctx, sideEl, viewEl) {
     const opts = cap ? cap.order.map((i) => h('option', { value: i }, cap.channels[i].name)) : [];
     for (const s of [sChan, measCh]) { const v = s.value; s.innerHTML = ''; opts.forEach((o) => s.append(o.cloneNode(true))); if (v && [...s.options].some((o) => o.value === v)) s.value = v; }
     const v2 = sEdgeCh.value; sEdgeCh.innerHTML = ''; sEdgeCh.append(h('option', { value: '' }, 'at any sample'), ...opts.map((o) => o.cloneNode(true))); sEdgeCh.value = v2 || '';
-    paintDecForm();
+    refreshDecForm();
     requestView();
     measure();
   }
@@ -437,7 +444,9 @@ export function initLogic(ctx, sideEl, viewEl) {
     }
     return out;
   }
+  let formGen = 0;
   function paintDecForm(existing) {
+    const gen = ++formGen;
     decForm.innerHTML = '';
     const kind = existing ? existing.type : decType.value;
     if (!kind) return;
@@ -450,7 +459,7 @@ export function initLogic(ctx, sideEl, viewEl) {
       const spec = srcInfo.decoders[kind];
       const g = existing ? Object.fromEntries(Object.entries(existing.channels).map(([k, v]) => [k, v.index])) : guess(kind);
       for (const ch of spec.channels) {
-        const s = h('select', { class: 'flex' }, h('option', { value: '' }, ch.required ? 'choose...' : '(none)'), ...(cap ? cap.order.map((i) => h('option', { value: i }, cap.channels[i].name)) : []));
+        const s = h('select', { class: 'flex la-decchan' }, h('option', { value: '' }, ch.required ? 'choose...' : '(none)'), ...(cap ? cap.order.map((i) => h('option', { value: i }, cap.channels[i].name)) : []));
         if (g[ch.id] != null) s.value = g[ch.id];
         chans[ch.id] = s;
         decForm.append(h('div', { class: 'row' }, h('label', {}, ch.label + (ch.required ? '' : ' (optional)')), s));
@@ -472,11 +481,22 @@ export function initLogic(ctx, sideEl, viewEl) {
       try {
         const r = existing ? await put(`/api/la/decoders/${existing.id}`, body) : await post('/api/la/decoders', body);
         if (r.error) toast(`${r.name}: ${r.error}`, 'warn', 6000);
-        decType.value = ''; decForm.innerHTML = '';
+        if (gen === formGen) { decType.value = ''; decForm.innerHTML = ''; } // unless another form was opened while this one was saved
         await refreshAfterEdit(); loadResults(true);
       } catch (e) { toast(errMsg(e), 'err', 6000); }
     } }, existing ? 'Apply' : 'Add decoder');
     decForm.append(h('div', { class: 'row' }, go, h('button', { class: 'btn sm ghost', onclick: () => { decType.value = ''; decForm.innerHTML = ''; } }, 'Cancel')));
+  }
+  // a new capture or a channel edit only refreshes the channel lists of an open decoder form: re-creating it would throw away what is being typed
+  function refreshDecForm() {
+    const sels = decForm.querySelectorAll('select.la-decchan');
+    if (!sels.length) { if (decType.value && !decForm.childElementCount) paintDecForm(); return; }
+    for (const s of sels) {
+      const v = s.value, first = s.options[0].cloneNode(true);
+      s.innerHTML = '';
+      s.append(first, ...(cap ? cap.order.map((i) => h('option', { value: i }, cap.channels[i].name)) : []));
+      s.value = [...s.options].some((o) => o.value === v) ? v : '';
+    }
   }
   function decSummary(d) {
     const dv = data && data.decoders ? data.decoders.find((x) => x.id === d.id) : null;
@@ -515,7 +535,7 @@ export function initLogic(ctx, sideEl, viewEl) {
     try {
       const r = await get(`/api/la/annotations?decoder=${encodeURIComponent(rDec.value || 'all')}&q=${encodeURIComponent(rFilter.value)}&offset=${rOffset}&limit=200`);
       rTotal = r.total;
-      rCount.textContent = `${r.total.toLocaleString()} ${r.total === 1 ? 'entry' : 'entries'}`;
+      rCount.textContent = `${fmtNum(r.total)} ${r.total === 1 ? 'entry' : 'entries'}` + (r.pending && r.pending.length ? ' (still decoding...)' : '');
       for (const it of r.items) {
         const tr = h('tr', { class: 'k-' + it.kind, onclick: () => goto(it.s, it.e) },
           h('td', { class: 'mono' }, axisSamples ? `#${it.s}` : fmtSec(it.t)), h('td', {}, it.decoder), h('td', {}, `${it.label}${it.channel_name ? ' (' + it.channel_name + ')' : ''}`), h('td', { class: 'mono' }, it.text));
@@ -558,8 +578,10 @@ export function initLogic(ctx, sideEl, viewEl) {
     const f = fileIn.files[0];
     let fields_ = {};
     if (/\.csv$/i.test(f.name)) {
-      const head = await f.slice(0, 200).text();
-      if (!/time/i.test(head.split('\n')[0])) { const sr = prompt('Sample rate in Hz for this CSV (it has no time column)', '1000000'); if (sr === null) { fileIn.value = ''; return; } fields_ = { samplerate: sr }; }
+      const head = await f.slice(0, 2000).text();
+      const first = head.split('\n').find((l) => l.trim() && !/^\s*[;#]/.test(l)) || '';
+      // a time column (Saleae), ISO timestamps (Saleae Logic 2) or a sigrok "; Samplerate:" comment carry the rate; anything else needs it
+      if (!/time/i.test(first) && !/^\s*\d{4}-\d\d-\d\dT/.test(first) && !/samplerate\s*[:=]/i.test(head)) { const sr = prompt('Sample rate in Hz for this CSV (it has no time column)', '1000000'); if (sr === null) { fileIn.value = ''; return; } fields_ = { samplerate: sr }; }
     }
     status.textContent = `importing ${f.name}...`;
     try { await upload('/api/la/import/upload', f, fields_); status.textContent = `imported ${f.name}`; await loadCapture(true); loadFiles(); } catch (e) { status.textContent = ''; toast(errMsg(e), 'err', 8000); }
@@ -576,21 +598,32 @@ export function initLogic(ctx, sideEl, viewEl) {
   }
 
   // ================= view geometry =================
-  const plotW = () => Math.max(50, plotWrap.clientWidth);
+  // the plot width is read once per frame: clientWidth forces a layout, and xOf runs for every edge drawn
+  let PW = 0;
+  const plotW = () => PW || (PW = Math.max(50, plotWrap.clientWidth));
   const xOf = (s) => ((s - view.a) / (view.b - view.a)) * plotW();
   const sOf = (x) => view.a + (x / plotW()) * (view.b - view.a);
   const tOf = (s) => (s - cap.trigger) / cap.samplerate;
   function clampView() {
     if (!cap) return;
-    const n = cap.samples;
+    const n = Math.max(1, cap.samples);
+    if (!isFinite(view.a) && !isFinite(view.b)) view = { a: 0, b: n }; // no usable range: show everything
+    else if (!isFinite(view.a) || !isFinite(view.b) || !(view.b > view.a)) { const c = isFinite(view.a) ? view.a : isFinite(view.b) ? view.b : n / 2; view = { a: c - 5, b: c + 5 }; }
     let span = Math.max(Math.min(view.b - view.a, n * 1.0), Math.min(10, n));
     let a = view.a;
     if (a < 0) a = 0;
     if (a + span > n) a = Math.max(0, n - span);
     view = { a, b: a + span };
   }
-  function setView(a, b) { view = { a, b }; clampView(); if (cap) SAVE('view.' + cap.source, { a: view.a, b: view.b, n: cap.samples }); draw(); requestView(); clearTimeout(setView.t); setView.t = setTimeout(() => { if (measRange.value !== 'all') measure(); }, 200); }
-  function zoom(f, center) { if (!cap) return; const c = center != null ? center : (view.a + view.b) / 2; setView(c - (c - view.a) * f, c + (view.b - c) * f); }
+  // pointer and wheel events come faster than frames: draw at most once per frame
+  let drawQ = false;
+  function scheduleDraw() { if (drawQ) return; drawQ = true; requestAnimationFrame(() => { drawQ = false; draw(); }); }
+  function setView(a, b) {
+    view = { a, b }; clampView(); scheduleDraw(); requestView();
+    clearTimeout(setView.t);
+    setView.t = setTimeout(() => { if (cap) SAVE('view.' + cap.source, { a: view.a, b: view.b, n: cap.samples }); if (measRange.value !== 'all') measure(); }, 200);
+  }
+  function zoom(f, center) { if (!cap) return; f = Math.min(1e6, Math.max(1e-6, isFinite(f) ? f : f > 0 ? 1e6 : 1)); const c = center != null && isFinite(center) ? center : (view.a + view.b) / 2; setView(c - (c - view.a) * f, c + (view.b - c) * f); }
   function fit() { if (cap) setView(0, cap.samples); }
   function zoomCursors() { if (cursors.A != null && cursors.B != null) { const a = Math.min(cursors.A, cursors.B), b = Math.max(cursors.A, cursors.B), m = (b - a) * 0.1 + 2; setView(a - m, b + m); } }
   function goto(s, e) {
@@ -620,7 +653,7 @@ export function initLogic(ctx, sideEl, viewEl) {
     inflight = true;
     try {
       const r = await post('/api/la/view', { a, b, px, seq: my, capture: cap.id });
-      if (my === seq || !data) { data = r; buildLayout(); draw(); paintDecoderMeta(); }
+      if (my === seq || !data) { data = r; buildLayout(); scheduleDraw(); paintDecoderMeta(); }
     } catch (e) { /* capture gone or server busy */ }
     inflight = false;
     if (pending) { pending = false; requestView(); }
@@ -707,7 +740,8 @@ export function initLogic(ctx, sideEl, viewEl) {
     if (axisSamples || !cap) {
       const st = nice((span / W) * 110);
       const out = [];
-      for (let s = Math.ceil(view.a / st) * st; s <= view.b; s += st) out.push({ s, label: Math.round(s).toLocaleString() });
+      if (!(st > 0)) return out;
+      for (let s = Math.ceil(view.a / st) * st; s <= view.b && out.length < 500; s += st) out.push({ s, label: fmtNum(Math.round(s)) });
       return out;
     }
     const spanT = span / cap.samplerate;
@@ -716,10 +750,12 @@ export function initLogic(ctx, sideEl, viewEl) {
     const [scale, uname] = unitFor(st);
     const dec = Math.max(0, Math.min(6, -Math.floor(Math.log10(st / scale) + 1e-9)));
     const out = [];
-    for (let k = Math.ceil(t0 / st); k * st <= t1 + st * 1e-9; k++) { const t = k * st; out.push({ s: t * cap.samplerate + cap.trigger, label: `${(t / scale).toFixed(dec)} ${uname}` }); }
+    if (!(st > 0)) return out;
+    for (let k = Math.ceil(t0 / st); k * st <= t1 + st * 1e-9 && out.length < 500; k++) { const t = k * st; out.push({ s: t * cap.samplerate + cap.trigger, label: `${(t / scale).toFixed(dec)} ${uname}` }); }
     return out;
   }
   function draw() {
+    PW = 0;
     const W = plotW();
     const totalH = Math.max(layout.reduce((m, r) => Math.max(m, r.y + r.h), 0), 10);
     plotWrap.style.height = totalH + 'px';
@@ -869,9 +905,9 @@ export function initLogic(ctx, sideEl, viewEl) {
   function paintScrollbar() {
     if (!cap) { thumb.style.display = 'none'; return; }
     thumb.style.display = '';
-    const W = hbar.clientWidth - LABEL_W;
+    const lw = labelsEl.offsetWidth || LABEL_W, W = hbar.clientWidth - lw;
     const l = (view.a / cap.samples) * W, w = Math.max(14, ((view.b - view.a) / cap.samples) * W);
-    thumb.style.left = LABEL_W + l + 'px'; thumb.style.width = w + 'px';
+    thumb.style.left = lw + l + 'px'; thumb.style.width = w + 'px';
   }
   function valueAt(c, s) {
     if (c.edges) { let lo = 0, hi = c.edges.length; while (lo < hi) { const m = (lo + hi) >> 1; if (c.edges[m] <= s) lo = m + 1; else hi = m; } return lo & 1 ? 1 - c.v0 : c.v0; }
@@ -880,17 +916,19 @@ export function initLogic(ctx, sideEl, viewEl) {
   function paintFooter() {
     footer.innerHTML = '';
     if (!cap) return;
-    const ft = (s) => (axisSamples ? `#${Math.round(s).toLocaleString()}` : fmtSec(tOf(s)));
-    footer.append(h('span', { html: `<b>${cap.channels.length}</b> ch · <b>${fmtHz(cap.samplerate)}</b> · <b>${cap.samples.toLocaleString()}</b> samples (${fmtSec(cap.duration)}) · view ${ft(view.a)} .. ${ft(view.b)}` }));
+    const res = Math.max(1, (view.b - view.a) / 1000) / cap.samplerate;
+    const ft = (s) => (axisSamples ? `#${fmtNum(Math.round(s))}` : fmtRes(tOf(s), res));
+    footer.append(h('span', { html: `<b>${cap.channels.length}</b> ch · <b>${fmtHz(cap.samplerate)}</b> · <b>${fmtNum(cap.samples)}</b> ${cap.samples === 1 ? 'sample' : 'samples'} (${fmtSec(cap.duration)}) · view ${ft(view.a)} .. ${ft(view.b)}` }));
     const { A, B } = cursors;
-    if (A != null) footer.append(h('span', { style: `color:${colors.A}`, html: `A <b>${fmtSec(tOf(A))}</b> #${Math.round(A)}` }));
-    if (B != null) footer.append(h('span', { style: `color:${colors.B}`, html: `B <b>${fmtSec(tOf(B))}</b> #${Math.round(B)}` }));
-    if (A != null && B != null) { const d = Math.abs(B - A) / cap.samplerate; footer.append(h('span', { html: `Δ <b>${fmtSec(d)}</b> (${Math.round(Math.abs(B - A)).toLocaleString()} samples) · 1/Δ <b>${d ? fmtF(1 / d) : '-'}</b>` })); }
+    const cres = 1 / cap.samplerate;
+    if (A != null) footer.append(h('span', { style: `color:${colors.A}`, html: `A <b>${fmtRes(tOf(A), cres)}</b> #${Math.round(A)}` }));
+    if (B != null) footer.append(h('span', { style: `color:${colors.B}`, html: `B <b>${fmtRes(tOf(B), cres)}</b> #${Math.round(B)}` }));
+    if (A != null && B != null) { const d = Math.abs(B - A) / cap.samplerate; footer.append(h('span', { html: `Δ <b>${fmtSec(d)}</b> (${fmtNum(Math.round(Math.abs(B - A)))} samples) · 1/Δ <b>${d ? fmtF(1 / d) : '-'}</b>` })); }
   }
   function showTip() {
     if (!hover || !cap || !data) { tip.style.display = 'none'; return; }
     const s = Math.round(hover.s);
-    const lines = [`<b>${fmtSec(tOf(s))}</b> · sample #${s.toLocaleString()}`];
+    const lines = [`<b>${fmtSec(tOf(s))}</b> · sample #${fmtNum(s)}`];
     const r = layout.find((x) => hover.y >= x.y && hover.y < x.y + x.h);
     const bits = [];
     for (const row of layout) if (row.t === 'ch') { const c = data.channels.find((x) => x.i === row.ci); if (c) { const v = valueAt(c, s); bits.push(`${cap.channels[row.ci].name}=${v == null ? '~' : v}`); } }
@@ -922,7 +960,7 @@ export function initLogic(ctx, sideEl, viewEl) {
     for (const e of c.edges) { const d = Math.abs(xOf(e) - xOf(s)); if (d < bd) { bd = d; best = e; } }
     return best != null ? best : s;
   }
-  function cursorsChanged(redraw = true) { if (redraw) draw(); measure(); }
+  function cursorsChanged(redraw = true) { if (redraw) scheduleDraw(); measure(); }
   function localXY(e) { const r = plot.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
   let drag = null;
   plot.addEventListener('pointerdown', (e) => {
@@ -969,7 +1007,7 @@ export function initLogic(ctx, sideEl, viewEl) {
   let sbDrag = null;
   hbar.addEventListener('pointerdown', (e) => {
     if (!cap) return;
-    const r = hbar.getBoundingClientRect(); const W = r.width - LABEL_W; const x = e.clientX - r.left - LABEL_W;
+    const lw = labelsEl.offsetWidth || LABEL_W; const r = hbar.getBoundingClientRect(); const W = r.width - lw; const x = e.clientX - r.left - lw;
     if (e.target === thumb) { hbar.setPointerCapture(e.pointerId); sbDrag = { x0: e.clientX, a: view.a, b: view.b, W }; return; }
     const span = view.b - view.a; const c = (x / W) * cap.samples; setView(c - span / 2, c + span / 2);
   });
@@ -1011,7 +1049,7 @@ export function initLogic(ctx, sideEl, viewEl) {
     } catch (e) { sInfo.textContent = errMsg(e); }
   }
 
-  new ResizeObserver(() => { if (viewEl.offsetParent) { draw(); requestView(); } }).observe(plotWrap.parentElement);
+  new ResizeObserver(() => { PW = 0; if (viewEl.offsetParent) { draw(); requestView(); } }).observe(plotWrap.parentElement);
   ctx.on('tab', (t) => { if (t === 'logic') { loadSources(); loadStatus(); loadFiles(); setTimeout(() => { draw(); requestView(); }, 30); } });
   ctx.on('scope-connected', () => loadSources());
   ctx.on('scope-disconnected', () => loadSources());

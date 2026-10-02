@@ -168,3 +168,159 @@ def test_two_notebooks_side_by_side(studio):
         page.screenshot(path=os.path.join(SHOTS, "tabs-dark.png"))
         assert not errors, errors
         browser.close()
+
+
+def test_notebook_ui_regressions(studio):
+    """Ctrl+S saves only the focused notebook, long outputs stay fast, cells are compact, and a finished tutorial download does not reload the list forever."""
+    from playwright.sync_api import Error, expect, sync_playwright
+    _api(studio, "PUT", "/api/notebooks/file", {"path": "reg/long.ipynb", "notebook": {"cells": [{"cell_type": "code", "source": "for i in range(150000):\n    print('line', i)"}, {"cell_type": "code", "source": "x = 1"}]}})
+    _api(studio, "PUT", "/api/notebooks/file", {"path": "reg/other.ipynb", "notebook": {"cells": [{"cell_type": "code", "source": "y = 2"}]}})
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Error as e:
+            pytest.skip(f"Chromium for Playwright is not installed: {e}")
+        page = browser.new_page(viewport={"width": 1500, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+        # the tutorials job keeps saying "installed" after a download; the list used to reload itself in a loop from then on
+        lists = []
+
+        def tutorials_installed(route):
+            lists.append(1)
+            r = route.fetch()
+            body = r.json()
+            body["tutorials"]["job"] = {"state": "installed", "done": 1, "total": 1, "error": None}
+            route.fulfill(response=r, json=body)
+        page.route("**/api/notebooks", tutorials_installed)
+        page.goto(studio)
+        page.evaluate("localStorage.clear()")
+        page.reload()
+        page.click("#tabs .tab[data-tab=notebook]")
+        page.wait_for_timeout(1500)
+        assert len(lists) <= 4, f"/api/notebooks was requested {len(lists)} times"
+        page.unroute("**/api/notebooks")
+
+        page.locator("details.nb-folder > summary", has_text="reg").click()
+        page.click(".nb-file[data-path='reg/long.ipynb']")
+        page.click(".nb-file[data-path='reg/other.ipynb']")
+        left, right = page.locator(".nb-pane[data-pane='0']"), page.locator(".nb-pane[data-pane='1']")
+        left.locator(".nb-split").click()
+        expect(right.locator(".nb-tab .nb-tab-name")).to_have_text(["other"])
+        # a one-line cell is not as tall as the cell buttons stacked up
+        assert right.locator(".nb-doc:visible .nb-cell.code").first.bounding_box()["height"] < 80
+
+        # Ctrl+S saves the focused notebook only
+        left.locator(".nb-doc:visible .nb-cell.code textarea").nth(1).click()
+        page.keyboard.type("  # left")
+        right.locator(".nb-doc:visible .nb-cell.code textarea").first.click()
+        page.keyboard.type("  # right")
+        page.keyboard.press("Control+s")
+        expect(right.locator(".nb-doc:visible .nb-dirty")).to_have_text("saved")
+        expect(left.locator(".nb-doc:visible .nb-dirty")).to_have_text("unsaved")
+        assert _api(studio, "GET", "/api/notebooks/file?path=reg/other.ipynb")["cells"][0]["source"] == "y = 2  # right"
+        assert _api(studio, "GET", "/api/notebooks/file?path=reg/long.ipynb")["cells"][1]["source"] == "x = 1"
+
+        # the waveform's single-key capture shortcuts do not fire in the Notebook tab (Esc leaves a cell, then r used to start a 1000 trace capture)
+        _api(studio, "POST", "/api/kernel/run", {"code": "import chipwhisperer as cw\nscope = cw.scope()\ntarget = cw.target(scope)"})
+        before = _api(studio, "GET", "/api/status")["traces"]["count"]
+        right.locator(".nb-doc:visible .nb-cell.code textarea").first.click()
+        page.keyboard.press("Escape")
+        assert page.evaluate("document.activeElement.tagName") == "BODY"
+        page.keyboard.press("r")
+        right.locator(".nb-doc:visible button", has_text="Clear outputs").focus()
+        page.keyboard.press("s")
+        page.wait_for_timeout(800)
+        st = _api(studio, "GET", "/api/status")
+        assert st["traces"]["count"] == before and not (st.get("job") or {}).get("running"), st.get("job")
+
+        # a cell printing 150k lines: the page shows the end of it and stays responsive (it used to re-render the whole text for every chunk)
+        left.locator(".nb-doc:visible .nb-cell.code textarea").first.click()
+        t0 = time.time()
+        page.keyboard.press("Control+Enter")
+        expect(left.locator(".nb-doc:visible .badge", has_text="Kernel idle")).to_be_visible(timeout=60000)
+        out = left.locator(".nb-doc:visible .nb-out.stream").first
+        expect(out).to_contain_text("line 149999")
+        assert time.time() - t0 < 20
+        text = out.inner_text()
+        assert len(text) < 120000 and text.startswith("[") and "earlier lines not shown" in text.splitlines()[0]
+        assert not errors, errors
+        browser.close()
+
+
+def test_tabs_follow_changes_from_other_windows_and_runs(studio):
+    """A notebook run from the API refreshes the open tab; a change made elsewhere while a tab has unsaved edits shows a conflict notice instead of being overwritten; deleting or renaming in one window closes or renames the tab in the others, and autosave never recreates a deleted notebook."""
+    from playwright.sync_api import Error, expect, sync_playwright
+    for name in ("run", "edit", "gone", "move"):
+        _api(studio, "PUT", "/api/notebooks/file", {"path": f"sync/{name}.ipynb", "notebook": {"cells": [{"cell_type": "code", "source": f"print('{name}')"}]}})
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Error as e:
+            pytest.skip(f"Chromium for Playwright is not installed: {e}")
+        errors = []
+        windows = []
+        for _ in range(2):
+            page = browser.new_context(viewport={"width": 1300, "height": 850}).new_page()
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(studio)
+            page.click("#tabs .tab[data-tab=notebook]")
+            page.locator("details.nb-folder > summary", has_text="sync").click()
+            for name in ("run", "edit", "gone", "move"):
+                page.click(f".nb-file[data-path='sync/{name}.ipynb']")
+            expect(page.locator(".nb-pane[data-pane='0'] .nb-tab")).to_have_count(4)
+            windows.append(page)
+        a, b = windows
+        tab = lambda page, name: page.locator(".nb-pane[data-pane='0'] .nb-tab", has_text=name)  # noqa: E731
+        doc = lambda page: page.locator(".nb-pane[data-pane='0'] .nb-doc:visible")  # noqa: E731
+
+        # a run from the API (notebook_run in MCP) shows its outputs in the open tab of every window
+        tab(a, "run").click()
+        _api(studio, "POST", "/api/notebooks/run", {"path": "sync/run.ipynb"})
+        expect(doc(a).locator(".nb-out.stream")).to_have_text("run")
+        expect(doc(a).locator(".nb-gutter").first).to_have_text("[1]")
+
+        # unsaved edits plus a change from elsewhere: a notice, and the agent's version stays on disk
+        tab(b, "edit").click()
+        doc(b).locator("textarea").first.click()
+        b.keyboard.type("  # mine")
+        _api(studio, "PUT", "/api/notebooks/file", {"path": "sync/edit.ipynb", "notebook": {"cells": [{"cell_type": "code", "source": "print('agent')"}]}})
+        notice = doc(b).locator(".nb-notice")
+        expect(notice).to_be_visible()
+        b.wait_for_timeout(3000)  # longer than the autosave delay
+        assert _api(studio, "GET", "/api/notebooks/file?path=sync/edit.ipynb")["cells"][0]["source"] == "print('agent')"
+        notice.locator("button", has_text="Reload from disk").click()
+        expect(doc(b).locator("textarea").first).to_have_value("print('agent')")
+        expect(notice).to_be_hidden()
+        # the other window had no edits: it just reloaded
+        tab(a, "edit").click()
+        expect(doc(a).locator("textarea").first).to_have_value("print('agent')")
+
+        # delete in a, the tab closes in b; a tab with unsaved edits keeps them but never recreates the file
+        tab(b, "gone").click()
+        doc(b).locator("textarea").first.click()
+        b.keyboard.type("  # unsaved")
+        a.once("dialog", lambda d: d.accept())
+        f = a.locator(".nb-file[data-path='sync/gone.ipynb']")
+        f.hover()
+        f.locator("button").click()
+        expect(tab(a, "gone")).to_have_count(0)
+        expect(doc(b).locator(".nb-notice")).to_contain_text("deleted")
+        b.wait_for_timeout(3000)
+        assert not any(n["path"] == "sync/gone.ipynb" for n in _api(studio, "GET", "/api/notebooks")["notebooks"])
+        doc(b).locator(".nb-notice button", has_text="Close").click()
+        expect(tab(b, "gone")).to_have_count(0)
+
+        # rename in a, the tab follows in b
+        a.once("dialog", lambda d: d.accept("sync/moved"))
+        tab(a, "move").dblclick()
+        expect(tab(a, "moved")).to_have_count(1)
+        expect(tab(b, "moved")).to_have_count(1)
+        expect(b.locator(".nb-pane[data-pane='0'] .nb-tab .nb-tab-name")).to_have_text(["run", "edit", "moved"])
+        # a deleted notebook without unsaved edits simply closes in the other window
+        _api(studio, "DELETE", "/api/notebooks/file?path=sync/run.ipynb")
+        expect(b.locator(".nb-pane[data-pane='0'] .nb-tab .nb-tab-name")).to_have_text(["edit", "moved"])
+        expect(a.locator(".nb-pane[data-pane='0'] .nb-tab .nb-tab-name")).to_have_text(["edit", "moved"])
+        assert not errors, errors
+        browser.close()

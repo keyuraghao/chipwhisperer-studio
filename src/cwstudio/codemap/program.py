@@ -520,6 +520,7 @@ class Program:
         self.source_roots = [os.path.abspath(os.path.expanduser(r)) for r in roots if r]
         self._sources.clear()
         self._resolved.clear()
+        self._by_name = None
 
     def resolve_source(self, i: int) -> Optional[str]:
         if i in self._resolved:
@@ -537,17 +538,28 @@ class Program:
                 break
         if found is None and os.path.isfile(path):
             found = path
-        if found is None:
-            base = parts[-1]
-            for root in self.source_roots:
-                for d, _dirs, files in os.walk(root):
-                    if base in files:
-                        found = os.path.join(d, base)
-                        break
-                if found:
-                    break
+        if found is None and self.source_roots:
+            found = self._name_index().get(parts[-1])
         self._resolved[i] = found
         return found
+
+    def _name_index(self) -> Dict[str, str]:
+        """File name to path for everything under the source folders, walked once (not once per missing file: a big folder such as the home directory would take seconds each time). Skips hidden and build folders and stops after 200000 files."""
+        if getattr(self, "_by_name", None) is None:
+            idx: Dict[str, str] = {}
+            n = 0
+            for root in self.source_roots:
+                for d, dirs, files in os.walk(root):
+                    dirs[:] = sorted(x for x in dirs if not x.startswith((".", "objdir", "__pycache__", "node_modules")))
+                    for f in files:
+                        idx.setdefault(f, os.path.join(d, f))
+                    n += len(files)
+                    if n > 200_000:
+                        break
+                if n > 200_000:
+                    break
+            self._by_name = idx
+        return self._by_name
 
     def source(self, i: int) -> Optional[str]:
         if i not in self._sources:

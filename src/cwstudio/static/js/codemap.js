@@ -1,5 +1,5 @@
 // Code tab: build the code map (emulate the firmware for a captured trace), align it with the traces, and see which functions and source lines a region of the waveform is.
-import { h, get, post, put, toast, fmtHz, upload } from './api.js';
+import { h, get, post, put, toast, fmtHz, upload, fmtNum } from './api.js';
 import { CodeBand, funcColor, refreshTheme } from './codeband.js';
 
 const KW = new Set('if else for while do return switch case default break continue goto sizeof static const volatile extern inline struct union enum typedef register asm __asm__ __attribute__'.split(' '));
@@ -59,6 +59,8 @@ export function initCodeMap(ctx, el) {
   const traceIn = h('input', { id: 'cm-trace', type: 'number', min: 0, placeholder: 'newest', style: 'width:90px' });
   const coreSel = h('select', { id: 'cm-core', class: 'flex', title: 'timing model; auto picks it from the ELF' }, h('option', { value: '' }, 'auto'));
   const protoSel = h('select', { id: 'cm-proto', title: 'SimpleSerial version; auto asks the firmware' }, ...[['', 'auto'], ['2.1', '2.1'], ['1.1', '1.1'], ['1.0', '1.0']].map(([v, t]) => h('option', { value: v }, t)));
+  const cmdIn = h('input', { id: 'cm-cmd', class: 'mono', maxlength: 1, placeholder: 'p', style: 'width:44px', title: 'SimpleSerial command to emulate (p: encrypt; g, c, ... for other firmware)' });
+  const dataIn = h('input', { id: 'cm-data', class: 'flex mono', placeholder: "data in hex (default: the trace's plaintext)", title: 'command data in hex; leave empty to use the plaintext of the trace' });
   const wsIn = h('input', { id: 'cm-ws', type: 'number', min: 0, max: 15, value: 0, style: 'width:64px', title: 'flash wait states (Arm and RISC-V timing)' });
   const buildBtn = h('button', { id: 'cm-build', class: 'btn primary', onclick: () => build() }, 'Build code map');
   const buildMsg = h('div', { class: 'help', id: 'cm-build-msg' }, 'Emulates the firmware for the inputs of a captured trace and maps its code onto the samples. Uses the firmware programmed in this session, else the newest build.');
@@ -68,7 +70,8 @@ export function initCodeMap(ctx, el) {
   const mapKv = h('div', { class: 'kv', id: 'cm-map' });
   const shiftIn = h('input', { id: 'cm-shift', type: 'number', step: 0.5, style: 'width:86px', onchange: () => setMapping({ shift: +shiftIn.value }) });
   const scaleIn = h('input', { id: 'cm-scale', type: 'number', step: 0.001, style: 'width:86px', onchange: () => setMapping({ scale: +scaleIn.value }) });
-  const nudge = (label, title, body) => h('button', { class: 'btn sm', title, onclick: () => setMapping(body) }, label);
+  const nudges = [];
+  const nudge = (label, title, body) => { const b = h('button', { class: 'btn sm', 'data-title': title, title, onclick: () => setMapping(body) }, label); nudges.push(b); return b; };
   const alignSrc = h('select', { id: 'cm-align-src' }, h('option', { value: 'mean' }, 'mean trace'), h('option', { value: 'trace' }, 'this trace'));
   const alignBtn = h('button', { id: 'cm-align', class: 'btn', onclick: () => align() }, 'Auto align');
   const meter = h('div', { class: 'cm-meter', id: 'cm-conf' }, h('i', { style: 'width:0%' }));
@@ -83,6 +86,8 @@ export function initCodeMap(ctx, el) {
   const fileTabs = h('div', { class: 'cm-tabs', id: 'cm-files' });
   const srcView = h('div', { class: 'cm-src', id: 'cm-source' }, h('div', { class: 'help', style: 'padding:10px' }, 'Pick a function or line to see its source.'));
   const disView = h('div', { class: 'cm-dis', id: 'cm-disasm', style: 'display:none' });
+
+  const windowBtn = h('button', { class: 'btn sm', id: 'cm-window', 'data-title': 'select the trigger window of the code map', onclick: () => triggerWindow() }, 'Trigger window');
 
   // ----- exact mode -----
   const pcBtn = h('button', { class: 'btn sm', id: 'cm-pctrace', onclick: () => pcTrace() }, 'Record PC samples');
@@ -99,6 +104,7 @@ export function initCodeMap(ctx, el) {
       h('div', { class: 'row' }, h('label', {}, 'Sources'), srcIn),
       h('div', { class: 'row' }, h('label', {}, 'Trace'), traceIn, h('label', {}, 'Core'), coreSel),
       h('div', { class: 'row' }, h('label', {}, 'SimpleSerial'), protoSel, h('label', {}, 'Wait states'), wsIn),
+      h('div', { class: 'row' }, h('label', {}, 'Command'), cmdIn, dataIn),
       h('div', { class: 'row' }, buildBtn),
       buildMsg, info),
     h('h2', {}, 'Cycles to samples'),
@@ -111,7 +117,7 @@ export function initCodeMap(ctx, el) {
     h('div', { class: 'card' }, regionTxt,
       h('div', { class: 'row', style: 'margin:8px 0' },
         h('button', { class: 'btn sm', id: 'cm-from-cursors', onclick: () => fromCursors() }, 'Cursors A to B'),
-        h('button', { class: 'btn sm', id: 'cm-window', onclick: () => triggerWindow() }, 'Trigger window'),
+        windowBtn,
         h('button', { class: 'btn sm ghost', onclick: () => { ctx.wave.setRegion(null); ctx.wave.setHighlights([]); band.select(null); } }, 'Clear')),
       h('div', { class: 'help', style: 'margin:2px 0 4px' }, 'Functions'), funcList,
       h('div', { class: 'help', style: 'margin:10px 0 4px' }, 'Source lines'), lineList),
@@ -119,12 +125,13 @@ export function initCodeMap(ctx, el) {
     h('div', { class: 'card' }, fileTabs, srcView, disView),
     exactCard,
   );
+  gateNeedsMap();
 
   // ----- helpers -----
   const kv = (box, rows) => { box.innerHTML = ''; rows.forEach(([k, v, cls]) => { if (v === undefined) return; box.append(h('span', { class: 'k' }, k), h('span', { class: cls || '' }, v)); }); };
   const mapping = () => (st && st.mapping) || null;
-  const sample = (c) => { const m = mapping(); return c * m.samples_per_cycle + (-(m.adc_offset || 0) + (m.presamples || 0) + (m.shift || 0)); };
-  const fmt = (v) => (v == null ? '?' : Math.round(v).toLocaleString());
+  const sample = (c) => { const m = mapping(); return c * m.samples_per_cycle + (m.intercept != null ? m.intercept : -(m.adc_offset || 0) / Math.max(1, m.decimate || 1) + (m.presamples || 0) + (m.shift || 0)); };
+  const fmt = (v) => (v == null ? '?' : fmtNum(Math.round(v) || 0));
 
   async function loadElfs() {
     try {
@@ -150,7 +157,8 @@ export function initCodeMap(ctx, el) {
       const sim = st.sim_emulates == null ? undefined : (st.sim_emulates ? 'runs this firmware' : 'built-in AES model (program this ELF to the simulator for matching traces)');
       kv(info, [
         ['Firmware', st.name], ['Core', `${fw.core_label || fw.core || '?'}${prog.has_dwarf ? '' : ' (no debug info: functions only)'}`], ['Protocol', `SimpleSerial ${fw.protocol || '?'} · trigger by ${fw.trigger || '?'}`],
-        ['Inputs', st.trace != null ? `trace #${st.trace}` : 'given key and plaintext'], ['Response', aes, st.aes_ok === false ? 'err' : (st.aes_ok ? 'ok' : '')],
+        ['Inputs', `${st.cmd && st.cmd !== 'p' ? `command '${st.cmd}' · ` : ''}${st.trace != null ? `trace #${st.trace}` : 'given key and data'}`], ['Response', aes, st.aes_ok === false ? 'err' : (st.aes_ok ? 'ok' : '')],
+        ['Stopped', st.halted ? `in an endless loop at ${st.halted}` : undefined, 'warn'],
         ['Stored trace', st.matches_stored == null ? undefined : (st.matches_stored ? 'same ciphertext ✓' : 'different ciphertext'), st.matches_stored === false ? 'warn' : 'ok'],
         ['Run', `${fmt(st.instructions)} instructions · ${fmt(st.cycles)} cycles · trigger window ${fmt(st.trigger_cycles)} cycles`], ['Simulator', sim, st.sim_emulates === false ? 'warn' : ''],
       ]);
@@ -165,12 +173,18 @@ export function initCodeMap(ctx, el) {
     if (al && !al.error) {
       meter.className = 'cm-meter ' + al.label;
       meter.firstChild.style.width = Math.round(al.confidence * 100) + '%';
-      confTxt.textContent = `${al.label} (${al.confidence.toFixed(2)}) · r ${al.r.toFixed(3)}${al.inverted ? ' (inverted, as on the shunt)' : ''} · shift ${al.shift.toFixed(1)} · scale ${al.scale.toFixed(4)} · on the ${al.source === 'trace' ? 'trace' : 'mean trace'}`;
+      confTxt.textContent = `${al.label} (${al.confidence.toFixed(2)}) · r ${al.r.toFixed(3)}${al.inverted ? ' (inverted, as on the shunt)' : ''} · shift ${al.shift.toFixed(1)} · scale ${al.scale.toFixed(4)} · on the ${al.source === 'trace' ? 'trace' : 'mean trace'}${al.applied === false ? ' · not applied: the nominal mapping is kept (wrong firmware or trace?)' : ''}`;
     } else {
       meter.className = 'cm-meter'; meter.firstChild.style.width = '0%';
       confTxt.textContent = al && al.error ? `alignment failed: ${al.error}` : 'not aligned yet (needs stored traces)';
     }
-    alignBtn.disabled = !st.ready;
+    gateNeedsMap();
+  }
+
+  /** Everything that works on a code map stays disabled, with the reason as its hint, until one is built (the API answers 404 before that). */
+  function gateNeedsMap() {
+    const ok = !!(st && st.ready);
+    [alignBtn, pcBtn, windowBtn, shiftIn, scaleIn, ...nudges].forEach((x) => { x.disabled = !ok; x.title = ok ? (x.dataset.title || '') : 'build the code map first (Firmware card above)'; });
   }
 
   async function refresh() {
@@ -185,6 +199,12 @@ export function initCodeMap(ctx, el) {
   async function loadBand() {
     try {
       const r = await get('/api/codemap/band');
+      if ((st && st.built) !== builtAt) {  // a new code map (maybe of other firmware): file indices and the shown source belong to the old one
+        curFile = null; curLine = null; regionFiles = {}; shown = null;
+        fileTabs.innerHTML = ''; disView.innerHTML = ''; disView.style.display = 'none';
+        srcView.innerHTML = ''; srcView.append(h('div', { class: 'help', style: 'padding:10px' }, 'Pick a function or line to see its source.'));
+        ctx.wave.setHighlights([]); band.select(null);
+      }
       bandData = r.band; builtAt = st && st.built;
       band.setData(r.band, r.mapping);
       if (ctx.wave.region) query(ctx.wave.region);
@@ -203,6 +223,8 @@ export function initCodeMap(ctx, el) {
     if (coreSel.value) p.core = coreSel.value;
     if (protoSel.value) p.protocol = protoSel.value;
     if (+wsIn.value) p.wait_states = +wsIn.value;
+    if (cmdIn.value.trim()) p.cmd = cmdIn.value.trim();
+    if (dataIn.value.trim()) p.text = dataIn.value.replace(/\s+/g, '');
     buildBtn.disabled = true; buildMsg.className = 'help'; buildMsg.textContent = 'Emulating…';
     try {
       st = await post('/api/codemap/build', p);
@@ -349,36 +371,70 @@ export function initCodeMap(ctx, el) {
     });
   }
 
+  // The source view renders only the rows in sight (plus a margin) and keeps the file's highlighted lines, so a source file of tens of thousands of lines opens and scrolls quickly, and picking another line only moves the marks.
+  let shown = null;
+  srcView.addEventListener('click', (e) => {
+    const row = e.target.closest('.ln.code');
+    if (row && shown) pickLine(shown.file, +row.dataset.ln, null);
+  });
+  srcView.addEventListener('scroll', () => { if (shown && !shown.raf) shown.raf = requestAnimationFrame(() => { shown.raf = 0; paintRows(); }); });
+
+  function rowFor(k) {
+    const n = k + 1, sh = shown;
+    const cls = ['ln'];
+    if (sh.code.has(n)) cls.push('code');
+    if (sh.exec[n]) cls.push('exec');
+    if (sh.reg.has(n)) cls.push('inreg');
+    if (n === sh.cur) cls.push('cur');
+    return h('div', { class: cls.join(' '), 'data-ln': n, title: sh.exec[n] ? `${Math.round(sh.exec[n])} cycles in this run` : '' }, h('span', { class: 'no' }, String(n)), h('span', { class: 'ht' }), h('span', { class: 'tx', html: sh.html[k] || ' ' }));
+  }
+
+  function paintRows(force) {
+    const sh = shown;
+    if (!sh) return;
+    if (!sh.rowH) {  // measure one row once
+      const probe = rowFor(0);
+      sh.box.replaceChildren(probe);
+      sh.rowH = probe.getBoundingClientRect().height || 17;
+      sh.box.style.height = `${sh.html.length * sh.rowH}px`;
+    }
+    const H = sh.rowH, n = sh.html.length, top = srcView.scrollTop, vh = srcView.clientHeight || 420;
+    const a = Math.max(0, Math.floor(top / H) - 60), b = Math.min(n, Math.ceil((top + vh) / H) + 60);
+    if (!force && sh.a === a && sh.b === b) return;
+    const frag = document.createDocumentFragment();
+    for (let k = a; k < b; k++) frag.append(rowFor(k));
+    sh.box.style.paddingTop = `${a * H}px`;
+    sh.box.replaceChildren(frag);
+    sh.a = a; sh.b = b;
+  }
+
   async function openSource(fileIndex, line, scroll = true) {
     curFile = fileIndex; curLine = line;
     renderTabs();
     let src = srcCache[fileIndex];
     if (!src || src.built !== builtAt) {
-      try { src = await get(`/api/codemap/source?file=${fileIndex}`); src.built = builtAt; srcCache[fileIndex] = src; } catch (e) { srcView.innerHTML = ''; srcView.append(h('div', { class: 'help err', style: 'padding:10px' }, e.message)); return; }
+      try { src = await get(`/api/codemap/source?file=${fileIndex}`); src.built = builtAt; srcCache[fileIndex] = src; } catch (e) { shown = null; srcView.innerHTML = ''; srcView.append(h('div', { class: 'help err', style: 'padding:10px' }, e.message)); return; }
     }
     if (curFile !== fileIndex) return;
-    srcView.innerHTML = '';
-    if (src.text == null) { srcView.append(h('div', { class: 'help', style: 'padding:10px' }, `${src.path}: ${src.reason}`)); return; }
-    const code = new Set(src.code_lines), exec = src.executed || {};
+    if (src.text == null) { shown = null; srcView.innerHTML = ''; srcView.append(h('div', { class: 'help', style: 'padding:10px' }, `${src.path}: ${src.reason}`)); return; }
     const inReg = regionFiles[fileIndex] || new Set();
-    const state = { c: false };
-    const frag = document.createDocumentFragment();
-    let target = null;
-    src.text.split('\n').forEach((t, k) => {
-      const n = k + 1;
-      const cls = ['ln'];
-      if (code.has(n)) cls.push('code');
-      if (exec[n]) cls.push('exec');
-      if (inReg.has(n)) cls.push('inreg');
-      if (n === line) cls.push('cur');
-      const row = h('div', { class: cls.join(' '), 'data-ln': n, title: exec[n] ? `${Math.round(exec[n])} cycles in this run` : '' }, h('span', { class: 'no' }, String(n)), h('span', { class: 'ht' }), h('span', { class: 'tx', html: hlLine(t, state) || ' ' }));
-      if (code.has(n)) row.addEventListener('click', () => pickLine(fileIndex, n, null));
-      if (n === line || (!line && !target && inReg.has(n))) target = row;
-      frag.append(row);
-    });
-    srcView.append(frag);
-    if (target && scroll !== false) srcView.scrollTop = Math.max(0, target.offsetTop - srcView.clientHeight / 3);
-    else if (target) srcView.scrollTop = Math.max(0, target.offsetTop - 20);
+    if (!shown || shown.src !== src) {
+      const state = { c: false };
+      const box = h('div', { class: 'cm-src-rows' });
+      srcView.innerHTML = '';
+      srcView.append(box);
+      srcView.scrollTop = 0;
+      shown = { src, file: fileIndex, box, html: src.text.split('\n').map((t) => hlLine(t, state)), code: new Set(src.code_lines), exec: src.executed || {}, reg: inReg, cur: null, rowH: 0, a: -1, b: -1, raf: 0 };
+    }
+    shown.reg = inReg;
+    shown.cur = line || null;
+    const target = line || (inReg.size ? Math.min(...inReg) : null);
+    paintRows(true);
+    if (target) {
+      const y = (target - 1) * shown.rowH;
+      srcView.scrollTop = Math.max(0, scroll !== false ? y - srcView.clientHeight / 3 : y - 20);
+      paintRows(true);
+    }
   }
 
   async function showDisasm(q) {
@@ -397,7 +453,7 @@ export function initCodeMap(ctx, el) {
       const r = await post('/api/codemap/pctrace', {});
       pcTxt.textContent = `${r.mode}: ${r.samples} PC samples every ${r.interval} cycles · ${(r.agreement * 100).toFixed(1)}% in the emulated function · cycle scale ${r.scale.toFixed(4)}`;
       ctx.wave.setHighlights((r.rows || []).filter((x) => !x.match).map((x) => ({ a: x.sample - 1, b: x.sample + 1 })));
-    } catch (e) { pcTxt.textContent = e.message; } finally { pcBtn.disabled = false; }
+    } catch (e) { pcTxt.textContent = e.message; } finally { pcBtn.disabled = !(st && st.ready); }
   }
 
   // ----- wiring -----
