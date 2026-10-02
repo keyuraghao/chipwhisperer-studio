@@ -129,7 +129,25 @@ def test_port_in_use_is_skipped(bind_host):
     port = busy.getsockname()[1]
     try:
         for host in ("127.0.0.1", "0.0.0.0"):
-            assert cli._free_port(host, port) != port
+            got = cli._free_port(host, port)
+            if got == port:
+                diag = []
+                for p in (port, port + 1):
+                    for h in ("127.0.0.1", "0.0.0.0"):
+                        for opt in ("none", "excl"):
+                            with socket.socket() as t:
+                                if opt == "excl" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                                    t.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                                try:
+                                    t.bind((h, p)); r = "ok"
+                                except OSError as e:
+                                    r = f"err{e.errno}"
+                            diag.append(f"{p}/{h}/{opt}:{r}")
+                    with socket.socket() as c:
+                        c.settimeout(1.0)
+                        diag.append(f"{p}/connect_ex:{c.connect_ex(('127.0.0.1', p))}")
+                    diag.append(f"{p}/port_free:{cli._port_free('127.0.0.1', p)}/listening:{cli._listening('127.0.0.1', p)}")
+                raise AssertionError(f"busy={bind_host}:{port} host={host} got={got} " + " ".join(diag))
     finally:
         busy.close()
 
