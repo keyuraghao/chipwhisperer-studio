@@ -448,6 +448,11 @@ def fake_sigrok(tmp_path, monkeypatch):
     exe = tmp_path / "sigrok-cli"
     exe.write_text(FAKE_SIGROK.replace("{python}", sys.executable))
     exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+    if os.name == "nt":  # Windows ignores the #! line: run the same script through a .cmd wrapper, as a real install would provide an .exe
+        script = tmp_path / "sigrok_fake.py"
+        script.write_text(exe.read_text())
+        exe = tmp_path / "sigrok-cli.cmd"
+        exe.write_text(f'@"{sys.executable}" "{script}" %*\r\n')
     monkeypatch.setenv("CWSTUDIO_SIGROK_CLI", str(exe))
     sigrok._cache.clear()
     yield tmp_path
