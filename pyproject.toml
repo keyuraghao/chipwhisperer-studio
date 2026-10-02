@@ -21,6 +21,11 @@ dependencies = [
     "certifi",
     "matplotlib>=3.7",
     "tqdm",
+    # Code map: ELF/DWARF parsing, and the CPU emulator for Arm Cortex-M and RISC-V firmware (AVR runs in Studio's own emulator)
+    "pyelftools>=0.30",
+    "unicorn>=2.0.1",
+    # Studio's own window: Edge WebView2 on Windows and WebKit on macOS through pywebview. Linux uses the distribution's WebKitGTK through the system Python, so it needs nothing here.
+    "pywebview>=5; sys_platform == 'win32' or sys_platform == 'darwin'",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -30,13 +35,14 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-window = ["pywebview>=5"]
+window = []  # the window is built in now; kept so "chipwhisperer-studio[window]" still installs
 test = ["pytest", "httpx"]
 # The official MCP SDK is only used by the interoperability test; Studio has its own MCP server.
 test-mcp = ["pytest", "httpx", "mcp>=2.2"]
 
 [project.scripts]
 cw-studio = "cwstudio.cli:main"
+cw-studio-web = "cwstudio.cli:main_web"
 
 [project.urls]
 Repository = "https://github.com/keyuraghao/chipwhisperer-studio"

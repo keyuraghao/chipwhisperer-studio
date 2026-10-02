@@ -6,7 +6,7 @@ ChipWhisperer Studio (`cwstudio`) is a standalone, cross-platform desktop applic
 
 1. **Zero-setup install.** A user downloads one archive for their OS, unzips it and double-clicks. No Python, no pip, no Jupyter. The bundle carries its own Python runtime, the `chipwhisperer` package and `libusb`.
 2. **See the waveform.** Every captured trace is streamed to the screen as it arrives, with overlay, averaging, zoom, cursors and per-trace inspection of plaintext, ciphertext and key.
-3. **Do the whole job.** Build firmware, connect, configure the scope, program the target, talk to it over serial, capture thousands of traces, run a CPA attack, run a glitch sweep and export, all from one window.
+3. **Do the whole job.** Build firmware, connect, configure the scope, program the target, talk to it over serial, SPI, GPIO and JTAG/SWD, capture thousands of traces, run a CPA attack, run a glitch sweep, capture and decode logic signals, see which code runs where in a trace and export, all from one window.
 4. **Do not fork the library.** All hardware access goes through the public `chipwhisperer` API (`cw.scope()`, `cw.target()`, `cw.capture_trace()`, `cw.program_target()` and settings properties). Studio is a thin, well-behaved client, so it keeps working as the library evolves.
 5. **Hardware optional.** A built-in simulator (`--simulate`) provides a scope and target pair that leaks like a real unprotected AES implementation. Every feature can be demonstrated and tested without hardware.
 6. **Agents are first-class users.** Everything the UI can do is available through a documented HTTP API and an MCP server.
@@ -15,11 +15,11 @@ ChipWhisperer Studio (`cwstudio`) is a standalone, cross-platform desktop applic
 
 ![ChipWhisperer Studio architecture](wiki/images/architecture.svg)
 
-Everything runs in one Python process. Clients (the browser UI, AI agents through the MCP server, and scripts) all use the same HTTP API and WebSocket. A single worker thread owns the hardware; CPA analysis, toolchain downloads and firmware builds run on their own threads and only reach the hardware through the worker.
+Everything runs in one Python process. Clients (the UI in Studio's window or a browser, AI agents through the MCP server, and scripts) all use the same HTTP API and WebSocket. A single worker thread owns the hardware; CPA analysis, logic decoding, firmware emulation, toolchain downloads and firmware builds run on their own threads (big logic decodes in a worker process) and only reach the hardware through the worker.
 
 ### Why a local web UI instead of Qt
 
-- One code path for Windows, macOS and Linux with no GUI toolkit system dependencies (no WebKitGTK, no Qt platform plugins).
+- One code path for Windows, macOS and Linux with no GUI toolkit bundled. Studio's own window is the operating system's web view (Edge WebView2, WebKit, or the distribution's WebKitGTK driven by the system Python on Linux), and the browser is always a fallback, so a missing web view never stops Studio from starting.
 - The bundle stays small and the build needs only Python and PyInstaller, no Node toolchain: the frontend is plain ES modules served as is.
 - Remote use for free: run Studio on the lab machine or a Raspberry Pi next to the target and open it from a laptop (`--host 0.0.0.0`).
 - uPlot draws traces of 100,000 samples and more on a canvas, fast enough to follow a live capture (measured frame rates are on the [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance) wiki page).
@@ -56,9 +56,25 @@ Every scope and target sub-object in `chipwhisperer` implements `_dict_repr()`. 
 
 A build runs ChipWhisperer's own makefiles. `plan()` computes the whole build (make command, `PATH`, environment, output file, programmer) without side effects, which the UI and MCP expose as a dry run. GCC builds pass the tool names explicitly and add compatibility flags that ChipWhisperer's older HALs need with current compilers (`-fcommon`, relaxed implicit declaration errors, RISC-V `-misa-spec=2.2`). Clang builds set `CC` to `ccwrap.py`, which compiles C with clang (using GCC's newlib or avr-libc headers), strips GCC-only options, spells out RISC-V extensions, and hands hand-written assembly to GCC; GCC links (`LINK_COMPILER`), so the firmware uses the same C library and linker scripts as a GCC build. In the frozen bundle the Studio executable itself acts as the wrapper (`ChipWhispererStudio --ccwrap`).
 
+### Application window
+
+`window.py` opens the UI: pywebview with WebView2 or WebKit on Windows and macOS (uvicorn on a thread, the window on the main thread), or on Linux `resources/gtk_window.py`, a WebKitGTK program run by the system Python with a clean environment, so the frozen bundle stays free of GTK. Closing the window stops the server and stopping the server closes the window. If no window can open, the reason is printed and the browser is used. Two bundle variants are built from one spec: the window build and the Web build.
+
+### Capabilities
+
+ChipWhisperer models differ in what their hardware can do (SPI pins, MPSSE, trigger modules, the Husky's logic analyser and bit-banger). `capabilities.py` derives a table of what the connected scope supports, each entry with a reason when not, from the model, firmware features and what the library provides; the facts come from the `chipwhisperer` library's source and are listed on the Protocols and Interfaces wiki page. The Interfaces, Logic, Target and Scope tabs, the API and the MCP tools all use it, so a feature is either offered or refused with the same reason everywhere. The simulator can pose as any model for this.
+
+### Logic analyser
+
+`logic/` stores a capture as each channel's initial level plus the sample indices of its edges, and answers the view with either the edges in a range or a per-pixel summary, so captures of tens of millions of samples stay interactive. Sources wrap the Husky's `scope.LA`, thresholded ADC traces, `sigrok-cli` and synthetic traffic; VCD, CSV and sigrok files are read and written; decoders (UART, SPI, I2C, 1-Wire, JTAG, SWD, CAN, SimpleSerial) are plain Python and run in a worker process for big captures so they never hold up the API.
+
+### Code map
+
+`codemap/` reads the firmware ELF and its DWARF line tables, runs the firmware for a trace's inputs (Unicorn for Arm Cortex-M and RISC-V, an own cycle-accurate AVR/XMEGA emulator) with the HAL's `getch`, `putch` and trigger functions hooked instead of emulated peripherals, assigns clock cycles from per-core timing tables, maps cycles to samples from the scope's clocks and fits shift and scale by correlating a data-dependent power model with the stored traces. The same emulation lets the simulator run programmed firmware.
+
 ### Notebooks
 
-`notebook.py` implements a small in-process kernel instead of Jupyter's, because a separate kernel process could not share the USB device Studio already owns. Cells are queued by a dispatcher thread and executed on the hardware worker, one at a time, in one persistent namespace; output written from that thread is routed to the running cell and streamed to the browser, and matplotlib figures are converted to PNG outputs when a cell finishes. Interrupt raises `KeyboardInterrupt` in the worker thread. IPython line magics, `!shell` escapes and cell magics are rewritten into calls to kernel helpers before the cell is compiled, so they also work inside loops and `if` blocks.
+`notebook.py` implements a small in-process kernel instead of Jupyter's, because a separate kernel process could not share the USB device Studio already owns. Every notebook gets its own kernel (namespace, execution count, working directory); cells of all kernels are queued by one dispatcher thread and executed on the hardware worker, one at a time; output written from that thread is routed to the running cell and streamed to the browser, and matplotlib figures are converted to PNG outputs when a cell finishes. Interrupt raises `KeyboardInterrupt` in the worker thread. IPython line magics, `!shell` escapes and cell magics are rewritten into calls to kernel helpers before the cell is compiled, so they also work inside loops and `if` blocks.
 
 Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real module. `cw.scope()` and `cw.target()` return stand-ins that forward every attribute to whatever Studio is connected to at that moment and report the real class (so the library's `isinstance` checks pass). The scope stand-in records every trace read with `get_last_trace()` into the trace store, paired with the plaintext and key last sent through the target stand-in and the response read afterwards; `cw.capture_trace()` records its result the same way. That is how tutorial capture loops fill Studio's Capture tab without any changes.
 
@@ -70,7 +86,8 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 
 | File | Responsibility |
 |------|----------------|
-| `cli.py` | Entry point: argument parsing, uvicorn, browser or native window, and the `mcp` / `--ccwrap` subcommands. |
+| `cli.py` | Entry points (`cw-studio`, `cw-studio-web`): argument parsing, uvicorn, window or browser, and the `mcp` / `--install-desktop` / `--ccwrap` subcommands. |
+| `window.py` | Studio's own window (pywebview, or the Linux GTK helper `resources/gtk_window.py`). |
 | `app.py` | Web app: REST endpoints, WebSocket, static files. |
 | `web.py` | Small routing layer on Starlette: `@app.get` / `@app.post` style route decorators, query and upload parameters, JSON errors, the `/api/docs` page and `/openapi.json`. |
 | `mcplite.py` | Compact MCP protocol server (tools, resources, prompts; stdio, streamable HTTP and SSE transports). |
@@ -78,7 +95,11 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 | `session.py` | The single application state: scope, target, jobs, trace store, toolchain and firmware managers. |
 | `worker.py` | The hardware thread, futures and long job scheduling. |
 | `hardware.py` | Connect, disconnect, detect and program on real hardware. |
-| `simulator.py` | `SimScope` and `SimTarget`: AES leakage and glitch behaviour without hardware. |
+| `simulator.py` | `SimScope` and `SimTarget`: AES leakage and glitch behaviour without hardware, any model, programmed firmware in the emulator. |
+| `capabilities.py` | What the connected scope supports, with reasons. |
+| `interfaces.py`, `openocd.py`, `sim_interfaces.py` | UART, SimpleSerial, SPI, GPIO, USERIO, triggers, bit-banger, 1-Wire; OpenOCD and MPSSE; their simulated counterparts. |
+| `logic/` | Logic analyser: model and view queries, sources, decoders, file formats, sigrok, synthetic traffic. |
+| `codemap/` | Code map: ELF and DWARF, emulators, cycle tables, power model and alignment, timeline, simulator firmware, SWO. |
 | `settings.py` | Generic settings tree introspection and typed assignment. |
 | `capture.py` | `CaptureJob`: key and text generation, capture loop, publication. |
 | `glitch.py` | `GlitchJob`: parameter sweep, target reset, result classification. |
@@ -88,8 +109,8 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 | `toolchains.py` | Pinned, checksummed, on-demand compiler downloads and custom toolchains. |
 | `firmware.py` | Firmware sources from GitHub, project and platform catalogue, builds. |
 | `ccwrap.py` | Compiler wrapper that lets GCC-oriented makefiles build with clang. |
-| `mcp_server.py` | MCP server exposing every feature to AI agents. |
-| `notebook.py` | Notebook kernel (cells on the hardware thread, IPython syntax, ChipWhisperer stand-ins), `.ipynb` storage, tutorial download. |
+| `mcp_server.py` | MCP server exposing every feature to AI agents (106 tools, with `mcp_interfaces.py`, `mcp_logic.py` and `mcp_codemap.py`). |
+| `notebook.py` | Notebook kernels, one per notebook (cells on the hardware thread, IPython syntax, ChipWhisperer stand-ins), `.ipynb` storage with conflict checks, tutorial download. |
 | `mplbackend.py` | Matplotlib backend for notebooks: `plt.show()` sends figures to the running cell. |
 | `tools.py` | Notes storage, the safe calculator and statistics. |
 | `net.py` | HTTPS with the operating system's trust store (certifi fallback) for every download. |
@@ -98,7 +119,7 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 
 ### Packaging
 
-`packaging/` holds a PyInstaller spec and a `build.py` driver that creates an isolated venv, installs the project, runs PyInstaller and zips a `ChipWhispererStudio-<os>-<arch>` folder. `.github/workflows/ci.yml` runs the tests on all three operating systems, builds real firmware with downloaded toolchains on each of them, builds and smoke tests the bundles, and publishes a GitHub release with notes from `CHANGELOG.md` when a version tag is pushed.
+`packaging/` holds a PyInstaller spec and a `build.py` driver that creates an isolated venv, installs the project, runs PyInstaller and zips a `ChipWhispererStudio-<os>-<arch>` folder (the window build) or `ChipWhispererStudio-Web-<os>-<arch>` (`--variant web`); on macOS each is a `.app`. `.github/workflows/ci.yml` runs the tests on all three operating systems, builds real firmware with downloaded toolchains on each of them, builds and smoke tests the bundles, and publishes a GitHub release with notes from `CHANGELOG.md` when a version tag is pushed.
 
 USB access on a machine without Python:
 
@@ -110,3 +131,4 @@ USB access on a machine without Python:
 
 - Replacing the Python analysis ecosystem for research: Studio's notebook covers everyday scripting, and traces export as ChipWhisperer projects or `.npz` files so advanced analysis can continue in Python or Jupyter.
 - A dedicated UI for FPGA targets (CW305, CW310); they work through the generic settings tree.
+- Emulating peripherals, interrupts or exact pipeline timing in the code map; it is exact about which code runs and close about when, and the Husky's SWO sampling measures the rest.

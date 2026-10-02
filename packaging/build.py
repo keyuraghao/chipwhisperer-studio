@@ -34,6 +34,7 @@ def main():
     ap.add_argument("--no-venv", action="store_true", help="use the current interpreter instead of a fresh venv")
     ap.add_argument("--out", default=os.path.join(ROOT, "dist"))
     ap.add_argument("--skip-zip", action="store_true")
+    ap.add_argument("--variant", choices=["app", "web"], default="app", help="app: Studio in its own window (default); web: Studio in the web browser")
     args = ap.parse_args()
 
     if args.no_venv:
@@ -47,31 +48,44 @@ def main():
         run([py, "-m", "pip", "install", "-e", ROOT, "pyinstaller>=6.0", "libusb-package"])
 
     workdir = os.path.join(ROOT, "build", "cwstudio-pyinstaller")
-    run([py, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", args.out, "--workpath", workdir,
-         os.path.join(HERE, "cwstudio.spec")], cwd=ROOT)
+    run([py, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", args.out, "--workpath", workdir + "-" + args.variant,
+         os.path.join(HERE, "cwstudio.spec")], cwd=ROOT, env=dict(os.environ, CWSTUDIO_VARIANT=args.variant))
 
-    bundle = os.path.join(args.out, APP)
-    shutil.copy(os.path.join(ROOT, "src", "cwstudio", "resources", "50-newae.rules"), bundle)
+    folder = APP if args.variant == "app" else APP + "-Web"
+    bundle = os.path.join(args.out, folder)
+    if sys.platform == "darwin":
+        # PyInstaller made the .app next to the plain folder; ship a folder with the app and the documents instead
+        app_name = "ChipWhisperer Studio.app" if args.variant == "app" else "ChipWhisperer Studio Web.app"
+        shutil.rmtree(bundle)
+        os.makedirs(bundle)
+        shutil.move(os.path.join(args.out, app_name), os.path.join(bundle, app_name))
+    else:
+        shutil.copy(os.path.join(ROOT, "src", "cwstudio", "resources", "50-newae.rules"), bundle)
     shutil.copy(os.path.join(HERE, "BUNDLE_README.md"), os.path.join(bundle, "README.md"))
     shutil.copy(os.path.join(ROOT, "LICENSE"), os.path.join(bundle, "LICENSE.txt"))
     shutil.copy(os.path.join(ROOT, "NOTICE"), os.path.join(bundle, "NOTICE.txt"))
-    shutil.copy(os.path.join(HERE, "icon.png"), os.path.join(bundle, "ChipWhispererStudio.png"))  # for desktop shortcuts and launchers
     if os.name == "nt":
         with open(os.path.join(bundle, "ChipWhispererStudio-simulator.bat"), "w") as f:
-            f.write("@echo off\r\n\"%~dp0ChipWhispererStudio.exe\" --simulate %*\r\n")
-    else:
+            f.write("@echo off\r\nstart \"\" \"%~dp0ChipWhispererStudio.exe\" --simulate %*\r\n")
+    elif sys.platform.startswith("linux"):
+        shutil.copy(os.path.join(HERE, "icon.png"), os.path.join(bundle, "ChipWhispererStudio.png"))  # for desktop shortcuts and launchers
         sh = os.path.join(bundle, "chipwhisperer-studio.sh")
         with open(sh, "w") as f:
             f.write("#!/bin/sh\ncd \"$(dirname \"$0\")\" && exec ./ChipWhispererStudio \"$@\"\n")
         os.chmod(sh, 0o755)
-    if sys.platform == "darwin":
-        make_app(bundle)
 
     if not args.skip_zip:
         osname = {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}.get(platform.system(), platform.system().lower())
         arch = platform.machine().lower().replace("amd64", "x86_64").replace("aarch64", "arm64")
-        zpath = os.path.join(args.out, f"{APP}-{osname}-{arch}.zip")
+        zpath = os.path.join(args.out, f"{folder}-{osname}-{arch}.zip")
         print("+ zip", zpath, flush=True)
+        if sys.platform == "darwin":  # ditto keeps the symlinks and metadata inside the .app, which its code signature depends on
+            if os.path.exists(zpath):
+                os.remove(zpath)
+            run(["ditto", "-c", "-k", "--keepParent", bundle, zpath])
+            print("built", zpath)
+            print("done:", bundle)
+            return
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
             for dp, _dn, fns in os.walk(bundle):
                 for fn in fns:
@@ -83,49 +97,6 @@ def main():
                         z.writestr(info, fh.read())
         print("built", zpath)
     print("done:", bundle)
-
-
-APP_SCRIPT = """#!/bin/sh
-# Opens ChipWhisperer Studio in Terminal (so its address and messages stay visible); the executable sits next to this app.
-HERE="$(cd "$(dirname "$0")/../../.." && pwd)"
-exec open -a Terminal "$HERE/ChipWhispererStudio"
-"""
-
-INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleName</key><string>ChipWhisperer Studio</string>
-  <key>CFBundleDisplayName</key><string>ChipWhisperer Studio</string>
-  <key>CFBundleIdentifier</key><string>io.github.keyuraghao.chipwhisperer-studio</string>
-  <key>CFBundleVersion</key><string>{version}</string>
-  <key>CFBundleShortVersionString</key><string>{version}</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>ChipWhisperer Studio</string>
-  <key>CFBundleIconFile</key><string>icon.icns</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <key>NSHighResolutionCapable</key><true/>
-</dict>
-</plist>
-"""
-
-
-def make_app(bundle: str) -> None:
-    """macOS shows icons only for .app bundles, not for plain executables: add a small "ChipWhisperer Studio.app" with the icon that starts the executable next to it."""
-    sys.path.insert(0, os.path.join(ROOT, "src"))
-    from cwstudio import __version__
-    app = os.path.join(bundle, "ChipWhisperer Studio.app", "Contents")
-    os.makedirs(os.path.join(app, "MacOS"), exist_ok=True)
-    os.makedirs(os.path.join(app, "Resources"), exist_ok=True)
-    with open(os.path.join(app, "Info.plist"), "w") as f:
-        f.write(INFO_PLIST.format(version=__version__))
-    exe = os.path.join(app, "MacOS", "ChipWhisperer Studio")
-    with open(exe, "w") as f:
-        f.write(APP_SCRIPT)
-    os.chmod(exe, 0o755)
-    shutil.copy(os.path.join(HERE, "icon.icns"), os.path.join(app, "Resources", "icon.icns"))
-    if shutil.which("codesign"):  # ad-hoc signature, as PyInstaller gives the executable
-        run(["codesign", "--force", "--sign", "-", os.path.dirname(app)])
 
 
 if __name__ == "__main__":

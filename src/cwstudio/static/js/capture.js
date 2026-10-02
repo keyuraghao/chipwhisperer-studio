@@ -1,4 +1,4 @@
-import { h, get, post, del, upload, toast, fmtBytes } from './api.js';
+import { h, get, post, del, upload, downloadUrl, toast, fmtBytes } from './api.js';
 
 export function initCapture(ctx, el) {
   const countIn = h('input', { type: 'number', value: 1000, min: 0, class: 'flex', title: '0 = continuous' });
@@ -15,6 +15,8 @@ export function initCapture(ctx, el) {
   const prog = h('progress', { value: 0, max: 1 });
   const progTxt = h('div', { class: 'help mono' }, 'idle');
   const summary = h('div', { class: 'kv' });
+  const trigLine = h('div', { class: 'help mono', title: 'set in the Interfaces tab (Triggers) or the Scope tab' });
+  ctx.on('trigger-summary', (txt) => { trigLine.textContent = txt || ''; });
   const fmtSel = h('select', {}, h('option', { value: 'npz' }, 'NumPy .npz'), h('option', { value: 'cwp' }, 'ChipWhisperer project .cwp'), h('option', { value: 'csv' }, 'CSV'), h('option', { value: 'npy' }, 'NumPy .npy set'));
   const pathIn = h('input', { class: 'flex mono', value: 'traces', placeholder: 'file name or absolute path' });
   const importPath = h('input', { class: 'flex mono', placeholder: 'path to .npz / .cwp on the Studio machine' });
@@ -38,7 +40,7 @@ export function initCapture(ctx, el) {
   async function exportTraces() {
     try { const r = await post('/api/traces/export', { path: pathIn.value, format: fmtSel.value }); toast(`Exported ${r.count} traces to ${r.path}`, 'ok', 7000); } catch (e) { toast(e.message, 'err', 7000); }
   }
-  function download() { window.open(`/api/traces/download/${fmtSel.value}`, '_blank'); }
+  function download() { downloadUrl(`/api/traces/download/${fmtSel.value}`); }
   async function importTraces() {
     try {
       let r;
@@ -63,7 +65,7 @@ export function initCapture(ctx, el) {
         h('button', { class: 'btn primary', onclick: () => start() }, 'Run'),
         h('button', { class: 'btn', onclick: () => start({ count: 0 }) }, 'Continuous'),
         h('button', { class: 'btn danger', onclick: stop }, 'Stop')),
-      prog, progTxt),
+      prog, progTxt, trigLine),
     h('h2', {}, 'Trace set'),
     h('div', { class: 'card' }, summary,
       h('div', { class: 'row', style: 'margin-top:8px' }, h('label', {}, 'Export'), fmtSel, pathIn),

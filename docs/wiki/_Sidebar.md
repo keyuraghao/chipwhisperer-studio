@@ -15,6 +15,9 @@
 - [Target and programming](Target-and-Programming)
 - [Capturing traces](Capturing-Traces)
 - [Waveform viewer](Waveform-Viewer)
+- [Protocols and interfaces](Protocols-and-Interfaces)
+- [Logic analyser](Logic-Analyser)
+- [Code on the waveform](Code-on-the-Waveform)
 
 **Building and coding**
 - [Firmware builds](Firmware-Builds)

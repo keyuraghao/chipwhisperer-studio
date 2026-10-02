@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the screenshots used by the README and the wiki (docs/wiki/images).
 
-Starts a Studio with the simulator in a temporary data folder, runs a realistic session through the HTTP API (400 captured traces, a CPA attack, a glitch sweep and a clang firmware build), then photographs every scene with Playwright twice: ``name.png`` in the dark theme and ``name-light.png`` in the light theme. The README and the wiki show whichever matches the reader's GitHub theme.
+Starts a Studio with the simulator in a temporary data folder, runs a realistic session through the HTTP API (400 captured traces, a CPA attack, a glitch sweep and a clang firmware build), then photographs every scene with Playwright twice: ``name.png`` in the dark theme and ``name-light.png`` in the light theme. The README and the wiki show whichever matches the reader's GitHub theme. Besides the classic tabs it shows the Interfaces tab (a simulated Husky, then a Nano with its gating), the UART terminal, the Logic tab with decoded UART, SPI and I2C traffic, the Code tab running the clang build in the simulator with a selected region, two notebooks side by side and the Simulate as choice.
 
     pip install -e ".[test]" playwright && playwright install chromium
     python tools/screenshots.py [--data-dir DIR] [--out docs/wiki/images]
@@ -65,6 +65,9 @@ def prepare(api: Api, with_firmware: bool):
     ]
     api("PUT", "/api/notebooks/file", {"path": "Studio tour.ipynb", "notebook": {"cells": tour}})
     api("POST", "/api/notebooks/run", {"path": "Studio tour.ipynb"})
+    # A second notebook, shown next to the first one: each notebook has its own kernel
+    api("PUT", "/api/notebooks/file", {"path": "Key check.ipynb", "notebook": {"cells": KEY_CHECK}})
+    api("POST", "/api/notebooks/run", {"path": "Key check.ipynb"})
     api("PUT", "/api/notes/Lab%20notes.md", {"text": "# Lab notes\n\nCPA key (sbox_hw, 400 traces): 2b7e151628aed2a6abf7158809cf4f3c\n\nGlitch window: ext_offset 21 24 27 30 33 36 39, width 6 9 12 15\n\n- [x] simpleserial-aes built with clang for CWLITEARM\n- [ ] try CW308_STM32F4 next\n"})
     if not with_firmware:
         return
@@ -80,6 +83,38 @@ def prepare(api: Api, with_firmware: bool):
 
 
 TUTORIAL = "chipwhisperer-jupyter/courses/sca101/Lab 3_3 - DPA on Firmware Implementation of AES (HARDWARE).ipynb"
+KEY = "2b7e151628aed2a6abf7158809cf4f3c"
+KEY_CHECK = [
+    {"cell_type": "markdown", "source": "# Key check\n\nThis notebook has **its own kernel**: its variables are separate from *Studio tour*, but both use the same scope and target."},
+    {"cell_type": "code", "source": "key = bytes.fromhex('" + KEY + "')\nwave, textin, textout, k = studio.traces[len(studio.traces) - 1]\nprint('plaintext ', bytes(textin).hex())\nprint('ciphertext', bytes(textout).hex())\nprint('key matches:', bytes(k) == key)"},
+    {"cell_type": "code", "source": "waves = studio.traces.waves\nsnr = waves.mean(axis=0).std() / waves.std(axis=0).mean()\nprint(f'{len(waves)} traces, signal to noise {snr:.2f}')"},
+]
+# The Logic tab: the simulator's demo traffic with these channels hidden, so UART, SPI and I2C fill the view
+LOGIC_HIDDEN = ["CLK", "1-Wire", "CAN", "JTAG TCK", "JTAG TMS", "JTAG TDI", "JTAG TDO", "SWCLK", "SWDIO"]
+
+
+def prepare_logic(api: Api):
+    """A simulated logic capture with the UART, SPI and I2C decoders (idempotent, so each theme starts from the same state)."""
+    for d in api("GET", "/api/la/decoders")["decoders"]:
+        api("DELETE", f"/api/la/decoders/{d['id']}")
+    api("POST", "/api/la/capture", {"source": "sim", "wait": True})
+    for kind in ("uart", "spi", "i2c"):
+        api("POST", "/api/la/decoders", {"type": kind})
+    api("PUT", "/api/la/channels", {"channels": [{"channel": n, "hidden": True} for n in LOGIC_HIDDEN]})
+    return api("GET", "/api/la/capture")
+
+
+def newest_build(api: Api):
+    """Path of the newest firmware build (its .elf is next to it), or None."""
+    builds = api("GET", "/api/firmware/builds")
+    builds = builds.get("builds", builds) if isinstance(builds, dict) else builds
+    return (builds[0].get("path") or builds[0].get("hex")) if builds else None
+
+
+def connect_sim(api: Api, model: str = "husky"):
+    """(Re)connect the simulator as a ChipWhisperer model, with its target. A fresh simulated scope also drops programmed firmware, so the built-in AES model is back."""
+    api("POST", "/api/scope/connect", {"kind": "sim", "sim_model": model})
+    api("POST", "/api/target/connect", {"kind": "sim"})
 
 
 def prepare_extras(api: Api, with_firmware: bool):
@@ -104,10 +139,13 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
     from playwright.async_api import async_playwright
 
     errors = []
+    api = Api(base)  # some scenes change the session (the simulated model, logic captures, programmed firmware)
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         for scheme in ("dark", "light"):
             page = await browser.new_page(viewport={"width": width, "height": height}, color_scheme=scheme)
+            # The code band switches itself on once a code map exists; keep it off except in the Code scenes
+            await page.add_init_script("try { localStorage.setItem('cw.codeband', '0') } catch (e) {}")
             page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.goto(base + "/")
@@ -143,6 +181,9 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
                 if await loc.count() and not await loc.evaluate("e => e.parentElement.open"):
                     await loc.click()
 
+            async def clear_toasts():
+                await page.evaluate("() => { const t = document.getElementById('toasts'); if (t) t.innerHTML = ''; }")
+
             async def run_capture(count=300):
                 await page.fill("#panel-capture input[type=number] >> nth=0", str(count))
                 await page.click("#btn-run")
@@ -156,6 +197,7 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
                 await scan.first.click()
                 await page.wait_for_timeout(1200)
             await snap("connect-panel.png", "#sidebar")
+            await snap("simulate-as.png", "#panel-connect .card >> nth=0")
             # Scope
             await tab("scope")
             for group in ("gain", "adc", "clock"):
@@ -179,6 +221,19 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             await page.locator("#panel-target h2", has_text="Serial console").scroll_into_view_if_needed()
             await page.wait_for_timeout(300)
             await snap("target-serial.png", "#sidebar")
+            # Interfaces: a simulated Husky (everything available), its UART terminal, then a Nano with what it lacks
+            await tab("interfaces")
+            await page.wait_for_timeout(600)
+            await snap("interfaces.png")
+            await snap("interfaces-terminal.png", "#panel-interfaces .card.iface >> nth=0")
+            connect_sim(api, "nano")
+            await page.wait_for_timeout(1500)
+            await page.locator("#panel-interfaces .card.iface", has=page.locator(".title", has_text="SPI")).first.scroll_into_view_if_needed()
+            await page.wait_for_timeout(400)
+            await snap("interfaces-nano.png", "#sidebar")
+            connect_sim(api, "husky")
+            await page.wait_for_timeout(1500)
+            await clear_toasts()
             # Firmware
             await tab("firmware")
             await page.wait_for_timeout(600)
@@ -265,9 +320,17 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
                     target = page.locator(".nb-cell", has_text="Capturing traces").first
                     if await target.count():
                         await target.scroll_into_view_if_needed()
-                        await page.locator(".nb-scroll").evaluate("e => e.scrollTop = Math.max(0, e.scrollTop - 250)")
+                        await page.locator(".nb-scroll:visible").first.evaluate("e => e.scrollTop = Math.max(0, e.scrollTop - 250)")
                     await page.wait_for_timeout(500)
                     await snap("notebook-tutorial.png")
+                    await page.locator(".nb-tab", has_text="Lab 3_3").locator(".nb-tab-close").first.click()  # back to the tour alone for the next scene
+                    await page.wait_for_timeout(800)
+            # A second notebook in a pane on the right (the split button moves the current notebook there)
+            await page.locator(".nb-file", has_text="Key check").first.click()
+            await page.wait_for_timeout(1500)
+            await page.locator(".nb-split").first.click()
+            await page.wait_for_timeout(1500)
+            await snap("notebook-split.png")
             # Notes, selection statistics, calculator
             await tab("notes")
             await page.evaluate("() => { const s = document.querySelector('#panel-notes select'); s.value = 'Lab notes.md'; s.dispatchEvent(new Event('change')); }")
@@ -290,6 +353,68 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             await page.select_option("#panel-calc select", "cursors")
             await page.wait_for_timeout(600)
             await snap("calc.png")
+            # Logic analyser: demo traffic decoded, zoomed to the trigger, where SPI, UART and I2C overlap
+            cap = prepare_logic(api)
+            await tab("logic")
+            await page.select_option("#la-source", "sim")
+            await page.wait_for_timeout(800)
+            for _ in range(20):  # the capture finished over the API; let the badge catch up
+                if (await page.locator("#la-run-badge").inner_text()).strip() == "idle":
+                    break
+                await page.wait_for_timeout(250)
+            res = page.locator("#main button", has_text="Results")
+            if await res.count() and "active" in (await res.first.get_attribute("class") or ""):
+                await res.first.click()  # the results table would push the I2C rows out of view
+            ax = await page.locator(".la-axis-canvas").bounding_box()
+            t0, t1 = cap["t_start"], cap["t_end"]
+            xt = lambda t: ax["x"] + (t - t0) / (t1 - t0) * ax["width"]  # noqa: E731
+            await page.mouse.move(xt(-0.0002), ax["y"] + ax["height"] / 2)
+            await page.mouse.down()
+            await page.mouse.move(xt(0.003), ax["y"] + ax["height"] / 2, steps=10)
+            await page.mouse.up()
+            await page.mouse.move(10, height - 10)
+            await page.wait_for_timeout(1200)
+            await snap("logic.png")
+            await page.locator("#panel-logic .card", has=page.locator(".title", has_text="Decoders")).first.scroll_into_view_if_needed()
+            await page.wait_for_timeout(400)
+            await snap("logic-panel.png", "#sidebar")
+            if with_firmware and newest_build(api):
+                # Code on the waveform: the clang build runs in the simulator, so its traces and the code map match
+                api("POST", "/api/target/program", {"programmer": "STM32F", "path": newest_build(api)})
+                api("POST", "/api/capture/start", {"count": 100, "clear": True, "key_mode": "fixed", "key": KEY})
+                api.wait("/api/status", lambda st: not (st.get("job") or {}).get("running"))
+                await tab("code")
+                await page.click("#cm-build")
+                api.wait("/api/codemap", lambda r: bool(r.get("built")), timeout=300)
+                await page.wait_for_timeout(1500)
+                if not await page.locator("#wave-code-toggle").is_checked():
+                    await page.check("#wave-code-toggle")
+                await page.wait_for_timeout(600)
+                box = await page.locator("#wave-plot").bounding_box()
+                await page.keyboard.down("Control")
+                await page.mouse.move(box["x"] + box["width"] * 0.30, box["y"] + box["height"] * 0.5)
+                await page.mouse.down()
+                await page.mouse.move(box["x"] + box["width"] * 0.38, box["y"] + box["height"] * 0.5, steps=8)
+                await page.mouse.up()
+                await page.keyboard.up("Control")
+                await page.wait_for_timeout(1500)
+                await page.locator("#cm-lines > *").first.click()  # the busiest source line: shades every sample where it ran
+                await page.wait_for_timeout(1500)
+                await page.locator("#panel-code h2", has_text="Selection").scroll_into_view_if_needed()
+                await page.mouse.move(10, height - 10)
+                await page.wait_for_timeout(500)
+                await clear_toasts()
+                await snap("code.png")
+                await page.locator("#panel-code h2", has_text="Source").last.evaluate("e => e.scrollIntoView({block: 'start'})")
+                await page.locator("#sidebar").evaluate("e => e.scrollTop -= 330")
+                await page.wait_for_timeout(500)
+                await snap("code-region.png", "#sidebar")
+                await page.locator("#panel-code button", has_text="Clear").first.click()  # no region or shaded lines left on the waveform for later scenes
+                await page.uncheck("#wave-code-toggle")
+                await page.dblclick("#wave-plot")
+                connect_sim(api, "husky")  # back to the built-in AES model for the scenes after this one
+                await page.wait_for_timeout(1500)
+                await clear_toasts()
             # Help
             await tab("help")
             await snap("help.png")

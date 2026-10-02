@@ -99,12 +99,13 @@ jobs:
           EOF
 
   bundle:
-    name: Bundle (${{ matrix.os }})
+    name: Bundle (${{ matrix.os }}, ${{ matrix.variant }})
     needs: test
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, windows-latest, macos-14]
+        variant: [app, web]  # app: Studio in its own window; web: Studio in the browser
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -114,19 +115,38 @@ jobs:
       - name: Install build dependencies
         run: pip install -e . "pyinstaller>=6.0" libusb-package
       - name: Build bundle
-        run: python packaging/build.py --no-venv
+        run: python packaging/build.py --no-venv --variant ${{ matrix.variant }}
         shell: bash
       - name: Smoke test bundle (simulator, MCP entry point, compiler wrapper)
         shell: bash
         run: |
           set -e
-          if [ "${{ runner.os }}" = "Windows" ]; then EXE=dist/ChipWhispererStudio/ChipWhispererStudio.exe; else EXE=dist/ChipWhispererStudio/ChipWhispererStudio; fi
+          # Windows app build: the console executable (the windowed one has no console output); macOS: the executable inside the .app
+          if [ "${{ matrix.variant }}" = "web" ]; then DIR=dist/ChipWhispererStudio-Web; APPNAME="ChipWhisperer Studio Web.app"; else DIR=dist/ChipWhispererStudio; APPNAME="ChipWhisperer Studio.app"; fi
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            if [ "${{ matrix.variant }}" = "app" ]; then EXE=$DIR/cw-studio.exe; test -f $DIR/ChipWhispererStudio.exe; else EXE=$DIR/ChipWhispererStudio.exe; test ! -e $DIR/cw-studio.exe; fi
+          elif [ "${{ runner.os }}" = "macOS" ]; then EXE="$DIR/$APPNAME/Contents/MacOS/ChipWhispererStudio"
+          else EXE=$DIR/ChipWhispererStudio; fi
           "$EXE" mcp --help | head -3
+          # Bundle contents: the Web build has no pywebview; the app build has pywebview's JavaScript (and WebView2 libraries on Windows), the Windows window icon and, on Linux, the GTK window helper
+          find "$DIR" -path "*cwstudio/resources/gtk_window.py" | grep -q . || { echo "gtk_window.py missing"; exit 1; }
+          find "$DIR" -iname "*unicorn*" \( -name "*.so*" -o -name "*.dll" -o -name "*.dylib" \) | grep -q . || { echo "the Unicorn library is missing"; exit 1; }
+          if [ "${{ matrix.variant }}" = "web" ]; then
+            if find "$DIR" -path "*webview*" | grep -q .; then echo "pywebview is in the Web build"; exit 1; fi
+          elif [ "${{ runner.os }}" != "Linux" ]; then
+            find "$DIR" -path "*webview/js/api.js" | grep -q . || { echo "pywebview's JavaScript is missing"; exit 1; }
+            find "$DIR" -path "*cwstudio/resources/icon.ico" | grep -q . || { echo "icon.ico missing"; exit 1; }
+            if [ "${{ runner.os }}" = "Windows" ]; then find "$DIR" -name "Microsoft.Web.WebView2.Core.dll" | grep -q . || { echo "WebView2 libraries missing"; exit 1; }; fi
+          fi
           if [ "${{ runner.os }}" = "macOS" ]; then
-            APP="dist/ChipWhispererStudio/ChipWhisperer Studio.app/Contents"
-            plutil -lint "$APP/Info.plist"
-            test -x "$APP/MacOS/ChipWhisperer Studio" && test -s "$APP/Resources/icon.icns"
-            codesign --verify --verbose "dist/ChipWhispererStudio/ChipWhisperer Studio.app"
+            APP="$DIR/$APPNAME"
+            plutil -lint "$APP/Contents/Info.plist"
+            test -s "$APP/Contents/Resources/icon.icns"
+            codesign --verify --deep --verbose "$APP"
+            python -c "import webview, webview.platforms.cocoa; print('pywebview cocoa backend ok')"
+          fi
+          if [ "${{ runner.os }}" = "Windows" ] && [ "${{ matrix.variant }}" = "app" ]; then
+            python -c "import webview, webview.platforms.edgechromium; print('pywebview edgechromium backend ok')"
           fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             XDG_DATA_HOME="$PWD/xdg" "$EXE" --install-desktop
@@ -148,10 +168,43 @@ jobs:
           curl -sf http://127.0.0.1:8799/api/toolchains | head -c 300; echo
           curl -sf -X POST -H 'Content-Type: application/json' -d '{"code":"import chipwhisperer as cw\nimport matplotlib.pyplot as plt\ns = cw.scope()\nplt.plot(studio.traces.waves[0])\nprint(len(studio.traces))"}' http://127.0.0.1:8799/api/kernel/run > nb.json
           python -c "import json; r = json.load(open('nb.json')); assert r['ok'], r; assert any('image/png' in o.get('data', {}) for o in r['outputs']), r; print('notebook ok')"
+          # The code map's emulator and ELF reader are in the bundle and load (the Unicorn shared library was once missing from the Linux build)
+          curl -sf -X POST -H 'Content-Type: application/json' -d '{"code":"import unicorn, elftools.elf.elffile\nunicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_THUMB)\nprint(unicorn.__version__)"}' http://127.0.0.1:8799/api/kernel/run > uc.json
+          python -c "import json; r = json.load(open('uc.json')); assert r['ok'], r; print('unicorn ok', r['outputs'])"
           kill $PID || true
+      - name: Window smoke test (Linux, WebKitGTK)
+        # Studio's own window from the frozen app: the page renders without JavaScript errors, and /api/shutdown from the page closes the window and quits Studio
+        if: runner.os == 'Linux' && matrix.variant == 'app'
+        shell: bash
+        run: |
+          set -e
+          sudo apt-get update -q && sudo apt-get install -y -q python3-gi gir1.2-webkit2-4.1 xvfb
+          export CWSTUDIO_WINDOW_SNAPSHOT=$PWD/window.png CWSTUDIO_WINDOW_SCRIPT="setTimeout(() => fetch('/api/shutdown', {method: 'POST'}), 6000)"
+          timeout 120 xvfb-run -a dist/ChipWhispererStudio/ChipWhispererStudio --simulate --port 8797 > window.log 2>&1 || { cat window.log; exit 1; }
+          grep -v "INFO:" window.log | head -40
+          grep -q "^OPENED" window.log && grep -q "^SNAPSHOT" window.log && test -s window.png
+          if grep -q "CONSOLE JS ERROR" window.log; then echo "JavaScript errors in the window"; exit 1; fi
+      - name: Window smoke test (Windows and macOS, pywebview)
+        # Opens the windowed app, then quits it through /api/shutdown, which must close the window; Studio logs to ~/ChipWhispererStudio/studio.log without a console
+        if: runner.os != 'Linux' && matrix.variant == 'app'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -e
+          if [ "${{ runner.os }}" = "Windows" ]; then EXE=dist/ChipWhispererStudio/ChipWhispererStudio.exe; else EXE="dist/ChipWhispererStudio/ChipWhisperer Studio.app/Contents/MacOS/ChipWhispererStudio"; fi
+          "$EXE" --simulate --port 8796 > app.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 60); do if curl -sf http://127.0.0.1:8796/api/status >/dev/null; then break; fi; sleep 1; done
+          sleep 10
+          kill -0 $PID
+          curl -sf -X POST http://127.0.0.1:8796/api/shutdown
+          for i in $(seq 1 30); do if ! kill -0 $PID 2>/dev/null; then break; fi; sleep 1; done
+          LOG="$HOME/ChipWhispererStudio/studio.log"; touch "$LOG"; cat app.log "$LOG" | grep -v "INFO:" | tail -30
+          if kill -0 $PID 2>/dev/null; then echo "Studio did not quit after /api/shutdown"; exit 1; fi
+          if cat app.log "$LOG" | grep -q "cannot open its own window"; then echo "the window did not open"; exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
-          name: ChipWhispererStudio-${{ matrix.os }}
+          name: ChipWhispererStudio-${{ matrix.os }}-${{ matrix.variant }}
           path: dist/*.zip
 
   release:

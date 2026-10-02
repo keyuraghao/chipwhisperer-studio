@@ -27,6 +27,13 @@ export const post = (p, b) => api('POST', p, b || {});
 export const put = (p, b) => api('PUT', p, b);
 export const del = (p) => api('DELETE', p);
 
+/** Download a file from Studio. A link with the download attribute works the same in a browser and in Studio's own window (window.open would open a browser tab there). */
+export function downloadUrl(url) {
+  const a = document.createElement('a');
+  a.href = url; a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
 export async function upload(path, file, fields = {}) {
   const fd = new FormData();
   fd.append('file', file, file.name);
@@ -160,11 +167,23 @@ export function themeColors() {
     overlay: (i, n) => `rgba(${ov},${Math.max(0.04, 0.32 * (1 - i / Math.max(1, n)))})`,
     cursorA: v('--c-cursor-a'), cursorB: v('--c-cursor-b'), corr: v('--c-corr'),
     info: v('--info'), ok: v('--ok'), err: v('--err'), warn: v('--warn'),
+    codeSel: v('--cm-sel'), codeSelEdge: v('--cm-sel-edge'), codeHl: v('--cm-hl'),
   };
 }
 
 /** uPlot axis options in the current theme. */
+/** Numbers as the user's locale writes them (grouping, decimal mark) but always with Latin digits 0-9: in Arabic, Persian or Hindi locales the browser would otherwise show its native digits, which do not match the hex, code and hardware values next to them. */
+export const fmtNum = (() => {
+  try { return new Intl.NumberFormat(navigator.language, { numberingSystem: 'latn' }).format; } catch (e) { return new Intl.NumberFormat('en-US').format; }
+})();
+
+/** A clock time (hh:mm:ss) in the user's locale with Latin digits. */
+export function fmtClock(date, opts = {}) {
+  try { return date.toLocaleTimeString(navigator.language, Object.assign({ numberingSystem: 'latn' }, opts)); } catch (e) { return date.toLocaleTimeString('en-US', opts); }
+}
+
 export function axisStyle(extra = {}) {
   const c = themeColors();
-  return Object.assign({ stroke: c.axis, grid: { stroke: c.grid, width: 1 }, ticks: { stroke: c.tick, width: 1 } }, extra);
+  // uPlot formats tick labels with the browser locale, digits included; keep them Latin like every other number in Studio
+  return Object.assign({ stroke: c.axis, grid: { stroke: c.grid, width: 1 }, ticks: { stroke: c.tick, width: 1 }, values: (u, splits) => splits.map((v) => (v == null ? '' : fmtNum(v))) }, extra);
 }

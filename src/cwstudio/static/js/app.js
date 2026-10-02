@@ -1,4 +1,4 @@
-import { get, put, post, getBinary, Socket, Emitter, toast, h } from './api.js';
+import { get, put, post, getBinary, Socket, Emitter, toast, h, fmtClock } from './api.js';
 import { Waveform } from './waveform.js';
 import { SettingsTree } from './settings.js';
 import { initConnect } from './connect.js';
@@ -10,6 +10,9 @@ import { initHelp } from './help.js';
 import { initFirmware } from './firmware.js';
 import { initNotebook } from './notebook.js';
 import { initNotes, initCalc, initSelectionStats } from './tools.js';
+import { initInterfaces } from './interfaces.js';
+import { initLogic } from './logic.js';
+import { initCodeMap } from './codemap.js';
 
 const ctx = new Emitter();
 ctx.status = null;
@@ -20,10 +23,13 @@ const PANELS = {
   connect: ['Connect', 'Pick a ChipWhisperer (or the simulator) and the target protocol.'],
   scope: ['Scope', 'Every setting of the connected scope, read back from the hardware.'],
   target: ['Target', 'Program firmware and talk to the target over serial or SimpleSerial.'],
+  interfaces: ['Interfaces', 'Protocols the connected hardware supports; the rest are shown disabled with the reason.'],
   firmware: ['Firmware', 'Build ChipWhisperer firmware with GCC or clang, no toolchain setup needed.'],
   capture: ['Capture', 'Record power traces while the waveform updates live.'],
+  code: ['Code', 'See which firmware code runs when: functions and source lines on the waveform, from an emulation of the firmware.'],
   analysis: ['Analysis', 'Recover the AES key with correlation power analysis.'],
   notebook: ['Notebook', 'Run Python cell by cell with the connected hardware; traces land in the Capture tab.'],
+  logic: ['Logic', 'Capture digital signals from the Husky, the analog input, the simulator, sigrok or a file, and decode them.'],
   glitch: ['Glitch', 'Sweep glitch parameters and map where the target misbehaves.'],
   notes: ['Notes', 'A text pad for keys, settings that worked and to-dos. Saved automatically.'],
   calc: ['Calculator', 'Quick maths plus statistics of whatever you select.'],
@@ -54,9 +60,13 @@ themeBtn.addEventListener('click', () => {
 ctx.showTab = (name) => {
   document.querySelectorAll('#tabs .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('#sidebar .panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + name));
-  const nbMode = name === 'notebook';
+  // The Notebook and Logic tabs replace the waveform in the main area.
   const main = document.getElementById('main');
-  if (main.classList.contains('nb-mode') !== nbMode) { main.classList.toggle('nb-mode', nbMode); if (!nbMode && ctx.wave) setTimeout(() => ctx.wave.resize(), 30); }
+  const wasWave = !main.classList.contains('nb-mode') && !main.classList.contains('la-mode');
+  main.classList.toggle('nb-mode', name === 'notebook');
+  main.classList.toggle('la-mode', name === 'logic');
+  if (!wasWave && name !== 'notebook' && name !== 'logic' && ctx.wave) setTimeout(() => ctx.wave.resize(), 30);
+  ctx.activeTab = name;
   try { localStorage.setItem('cw.tab', name); } catch (e) { /* ignore */ }
   ctx.emit('tab', name);
 };
@@ -68,7 +78,7 @@ const logFilter = document.getElementById('log-filter');
 const logLines = [];
 let logCount = 0;
 function addLog(ev, replay = false) {
-  const t = new Date((ev.ts || Date.now() / 1000) * 1000).toLocaleTimeString();
+  const t = fmtClock(new Date((ev.ts || Date.now() / 1000) * 1000));
   const line = h('div', { class: 'log-line ' + (ev.level || 'INFO') }, h('span', { class: 't' }, t), h('span', { class: 'lv' }, ev.level || ''), h('span', { class: 'muted' }, (ev.logger || '').replace('ChipWhisperer ', 'cw.') + ' '), ev.msg || '');
   logLines.push({ el: line, text: (ev.msg || '') + (ev.logger || '') });
   if (logLines.length > 1500) logLines.shift().el.remove();
@@ -102,9 +112,12 @@ ctx.wave.onNeedStats = async () => {
 // ---------- settings helpers ----------
 ctx.saveSetting = async (which, path, value) => {
   const r = await put(`/api/${which}/settings`, { path, value });
-  if (which === 'scope' && (path.includes('freq') || path.includes('adc_src') || path.includes('clk'))) setTimeout(updateSampleRate, 300);
   return r.value;
 };
+// the sample rate shown under the waveform (and its time axis) follows the clock settings, whoever changes them (this window, another one, a notebook or an agent)
+const CLOCK_PATH = /freq|adc_src|adc_mul|clk/;
+let rateTimer = null;
+function sampleRateSoon() { clearTimeout(rateTimer); rateTimer = setTimeout(updateSampleRate, 300); }
 async function updateSampleRate() {
   try {
     const nodes = await get('/api/scope/settings');
@@ -135,14 +148,14 @@ function initScope(el) {
   );
   ctx.on('scope-connected', () => { tree.refresh(); updateSampleRate(); });
   ctx.on('scope-disconnected', () => tree.refresh());
-  ctx.on('setting', (ev) => { if (ev.target === 'scope') tree.refreshValues(); });
+  ctx.on('setting', (ev) => { if (ev.target === 'scope') { tree.refreshValues(); if (CLOCK_PATH.test(ev.path || '')) sampleRateSoon(); } });
   ctx.on('tab', (t) => { if (t === 'scope' && ctx.status && ctx.status.scope.connected) tree.refreshValues(); });
   return tree;
 }
 
 // ---------- header / status ----------
 function setChip(id, cls, text) { const c = document.getElementById(id); c.className = 'chip ' + cls; c.querySelector('.txt').textContent = text; }
-let prevScope = false, prevTarget = false;
+let prevScope = false, prevTarget = false, prevScopeKey = null;
 function applyStatus(st) {
   ctx.status = st;
   const sc = st.scope, tg = st.target;
@@ -157,7 +170,10 @@ function applyStatus(st) {
   document.getElementById('btn-single').disabled = !sc.connected || (job && job.running);
   document.getElementById('trace-count').textContent = `${st.traces.count} traces`;
   ctx.wave.setTraceCount(st.traces.count);
-  if (sc.connected !== prevScope) { prevScope = sc.connected; ctx.emit(sc.connected ? 'scope-connected' : 'scope-disconnected'); }
+  // scope-connected also when another scope replaces the connected one (another model or serial number, or the simulator switched to another model): what is supported changes with it
+  const scopeKey = sc.connected ? [sc.type, sc.sim_model, sc.sn, sc.name].join('|') : null;
+  if (sc.connected !== prevScope) { prevScope = sc.connected; prevScopeKey = scopeKey; ctx.emit(sc.connected ? 'scope-connected' : 'scope-disconnected'); }
+  else if (scopeKey !== prevScopeKey) { prevScopeKey = scopeKey; ctx.emit('scope-connected'); }
   if (tg.connected !== prevTarget) { prevTarget = tg.connected; ctx.emit(tg.connected ? 'target-connected' : 'target-disconnected'); }
   ctx.emit('status', st);
 }
@@ -171,11 +187,14 @@ async function boot() {
   initConnect(ctx, document.getElementById('panel-connect'));
   ctx.scopeTree = initScope(document.getElementById('panel-scope'));
   ctx.target = initTarget(ctx, document.getElementById('panel-target'));
+  ctx.interfaces = initInterfaces(ctx, document.getElementById('panel-interfaces'));
   ctx.firmware = initFirmware(ctx, document.getElementById('panel-firmware'));
   ctx.capture = initCapture(ctx, document.getElementById('panel-capture'));
+  ctx.codemap = initCodeMap(ctx, document.getElementById('panel-code'));
   initAnalysis(ctx, document.getElementById('panel-analysis'));
   initGlitch(ctx, document.getElementById('panel-glitch'));
   ctx.notebook = initNotebook(ctx, document.getElementById('panel-notebook'), document.getElementById('nb-view'));
+  ctx.logic = initLogic(ctx, document.getElementById('panel-logic'), document.getElementById('la-view'));
   initNotes(ctx, document.getElementById('panel-notes'));
   initCalc(ctx, document.getElementById('panel-calc'));
   initSelectionStats(ctx, document.getElementById('sel-stats'));
@@ -186,12 +205,16 @@ async function boot() {
   document.getElementById('btn-stop').addEventListener('click', () => ctx.capture.stop());
   document.addEventListener('keydown', (e) => {
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // S and R work from every tab, like the Single and Run buttons, except while a notebook has the focus (notebook.js stops them there). The Logic tab has its own keys (zoom, pan, cursors, Esc to stop its capture); the waveform keys act only while the waveform is shown (not in the Notebook and Logic tabs).
     if (e.key === 's' || e.key === 'S') ctx.capture.single();
     else if (e.key === 'r' || e.key === 'R') ctx.capture.start();
+    else if (ctx.activeTab === 'logic') return;
     else if (e.key === 'Escape') ctx.capture.stop();
+    else if (ctx.activeTab === 'notebook') return;
     else if (e.key === ' ') { e.preventDefault(); ctx.wave.pauseBtn.click(); }
-    else if ((e.key === '+' || e.key === '=') && !e.ctrlKey && !e.metaKey) ctx.wave.zoom(0.5);
-    else if ((e.key === '-' || e.key === '_') && !e.ctrlKey && !e.metaKey) ctx.wave.zoom(2);
+    else if (e.key === '+' || e.key === '=') ctx.wave.zoom(0.5);
+    else if (e.key === '-' || e.key === '_') ctx.wave.zoom(2);
     else if (e.key === 'ArrowLeft' && ctx.wave.mode === 'browse') ctx.wave.gotoIndex(+ctx.wave.idxInput.value - 1);
     else if (e.key === 'ArrowRight' && ctx.wave.mode === 'browse') ctx.wave.gotoIndex(+ctx.wave.idxInput.value + 1);
   });
@@ -214,7 +237,7 @@ async function boot() {
   sock.on('cpa', (ev) => ctx.emit('cpa', ev));
   sock.on('glitch', (ev) => { ctx.emit('glitch', ev); if (ev.state === 'running') ensureRunning(); else ctx.refreshStatus(); });
   sock.on('glitch_result', (ev) => ctx.emit('glitch_result', ev));
-  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials']) sock.on(k, (ev) => ctx.emit(k, ev));
+  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials', 'openocd', 'spi', 'la', 'codemap', 'programmed']) sock.on(k, (ev) => ctx.emit(k, ev));
 
   // Restore last tab; fall back to Connect.
   let tab = 'connect';

@@ -180,3 +180,119 @@ def test_event_history_keeps_only_log_kinds():
     bus.publish("log", {"msg": "hello"})
     bus.publish("cpa", {"history": list(range(1000))})
     assert [e["type"] for e in bus.history] == ["log"]
+
+
+def test_sim_trigger_honours_configured_pins():
+    """The simulated target only drives TIO4: a trigger on other pins times out like real hardware, and the default stays unchanged."""
+    s = SimScope(seed=1)
+    t = SimTarget()
+    t.con(s)
+    s.adc.timeout = 0.05
+    cases = [("tio4", False), ("TIO4", False), ("tio1 OR tio4", False), ("tio4 AND tio1", False), ("tio1 NAND tio4", False),
+             ("tio1", True), ("nrst", True), ("sma", True), ("userio_d0", True), ("tio4 AND tio3", True), ("tio1 AND tio2", True)]
+    for trig, timeout in cases:
+        s.trigger.triggers = trig
+        s.arm()
+        t.simpleserial_write("p", bytes(16))
+        assert s.capture() is timeout, trig
+        t.simpleserial_read("r", 16)
+    # a timed-out capture leaves no stale trigger behind: the next capture on TIO4 waits for its own command
+    s.trigger.triggers = "tio1"
+    s.arm()
+    t.simpleserial_write("p", bytes(16))
+    assert s.capture() is True
+    t.simpleserial_read("r", 16)
+    s.trigger.triggers = "tio4"
+    s.arm()
+    assert s.capture() is True
+    s.default_setup()
+    assert s.trigger.triggers == "tio4" and s.trigger_driven()
+
+
+def test_sim_adc_clock_follows_adc_src_and_adc_mul():
+    """The simulated ADC rate is the target clock times the multiplier set by adc_src (CW-Lite, Pro) or adc_mul (Husky); the AES leakage moves with it, and the default stays 4 samples per cycle."""
+    import pytest
+    s = SimScope(seed=2)
+    t = SimTarget()
+    t.con(s)
+    s.default_setup()
+    assert (s.clock.adc_src, s.clock.adc_mul, s.clock.adc_freq) == ("clkgen_x4", 4, 29480000)
+
+    def leak_center():
+        s.adc.samples = 3000
+        s.noise = 0.0
+        waves = []
+        for pt in (bytes(16), bytes([0x55] * 16)):
+            s.arm()
+            t.simpleserial_write("p", pt)
+            s.capture()
+            t.simpleserial_read("r", 16)
+            waves.append(s.get_last_trace().copy())
+        return int(np.argmax(np.abs(waves[1] - waves[0])[:600]))  # first key-dependent bump: S-box byte 0
+
+    at4, trig4 = leak_center(), s.adc.trig_count
+    s.clock.adc_src = "clkgen_x1"
+    assert s.clock.adc_mul == 1 and s.clock.adc_freq == 7370000
+    at1, trig1 = leak_center(), s.adc.trig_count
+    assert abs(at1 - at4 / 4) <= 2 and trig1 * 4 == pytest.approx(trig4, rel=0.05)
+    s.clock.adc_mul = 2
+    assert s.clock.adc_freq == 14740000
+    s.clock.clkgen_freq = 10e6
+    assert s.clock.adc_freq == 20000000 and s.clock.freq_ctr == 10000000
+    s.clock.adc_mul = 4
+    assert s.clock.adc_src == "clkgen_x4" and s.clock.adc_freq == 40000000
+    s.clock.adc_src = "extclk_x1"
+    assert s.clock.adc_mul == 1 and s.clock.adc_freq == 10000000
+    for bad in (("adc_src", "pll"), ("adc_mul", 0), ("adc_mul", 17)):
+        with pytest.raises(ValueError):
+            setattr(s.clock, *bad)
+    s.default_setup()
+    assert s.clock.adc_mul == 4 and leak_center() == at4
+
+
+def test_ui_numbers_use_latin_digits():
+    """The UI formats numbers and clock times through api.js fmtNum/fmtClock (Latin digits in every locale), never with toLocaleString, toLocaleTimeString or Intl directly."""
+    import pathlib
+    import re
+    js = pathlib.Path(__file__).resolve().parents[1] / "src" / "cwstudio" / "static" / "js"
+    bad = [f"{p.name}:{i}" for p in sorted(js.glob("*.js")) if p.name != "api.js" for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if re.search(r"\.toLocale(String|TimeString|DateString)\(|\bIntl\.", line)]
+    assert not bad, bad
+
+
+def test_mcp_command_per_build(tmp_path, monkeypatch):
+    """The Help tab's MCP command: the console cw-studio.exe in the Windows window build, the executable itself in other bundles, cw-studio or python -m cwstudio for a pip install."""
+    import shutil as _shutil
+    import sys as _sys
+    from cwstudio import cli
+    windowed = tmp_path / "ChipWhispererStudio.exe"
+    windowed.write_bytes(b"")
+    monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(_sys, "executable", str(windowed))
+    monkeypatch.setattr(_sys, "platform", "win32")
+    assert cli.mcp_command() == {"command": str(windowed), "args": ["mcp"]}  # Web build: its main executable has a console
+    (tmp_path / "cw-studio.exe").write_bytes(b"")
+    assert cli.mcp_command() == {"command": str(tmp_path / "cw-studio.exe"), "args": ["mcp"]}
+    monkeypatch.setattr(_sys, "platform", "darwin")
+    assert cli.mcp_command()["command"] == str(windowed)
+    monkeypatch.setattr(_sys, "frozen", False)
+    monkeypatch.setattr(_shutil, "which", lambda name: "/bin/cw-studio" if name == "cw-studio" else None)
+    assert cli.mcp_command() == {"command": "cw-studio", "args": ["mcp"]}
+    monkeypatch.setattr(_shutil, "which", lambda name: None)
+    assert cli.mcp_command() == {"command": str(windowed), "args": ["-m", "cwstudio", "mcp"]}
+
+
+def test_old_firmware_reason_points_to_the_library_update():
+    """Studio has no firmware update of its own: the reason for features missing from old SAM firmware points to scope.upgrade_firmware()."""
+    from cwstudio.capabilities import capabilities
+
+    class OldHusky:
+        def _getCWType(self):
+            return "cwhusky"
+
+        def check_feature(self, name):
+            return name not in ("TARGET_SPI", "MPSSE", "HUSKY_PIN_CONTROL")
+
+    c = capabilities(OldHusky())
+    for k in ("spi", "jtag"):
+        assert not c[k]["available"]
+        assert "scope.upgrade_firmware()" in c[k]["reason"] and "Connect tab" not in c[k]["reason"], c[k]["reason"]

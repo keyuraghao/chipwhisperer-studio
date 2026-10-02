@@ -4,6 +4,11 @@ export function initConnect(ctx, el) {
   const meta = ctx.meta;
   const scopeSel = h('select', { class: 'flex' }, ...Object.entries(meta.scope_kinds).map(([k, v]) => h('option', { value: k }, v.label)));
   const snInput = h('input', { class: 'flex mono', placeholder: 'serial number (optional)' });
+  // Which ChipWhisperer the simulator stands in for: decides the protocols, triggers and programmers Studio offers.
+  const simSel = h('select', { class: 'flex', title: 'the simulator offers exactly what this model supports' }, ...Object.entries(meta.sim_models || { husky: 'ChipWhisperer-Husky' }).map(([k, v]) => h('option', { value: k }, v.replace('ChipWhisperer-', ''))));
+  try { simSel.value = localStorage.getItem('cw.simModel') || 'husky'; } catch (e) { /* storage unavailable */ }
+  simSel.addEventListener('change', () => { try { localStorage.setItem('cw.simModel', simSel.value); } catch (e) { /* ignore */ } });
+  const simRow = h('div', { class: 'row' }, h('label', {}, 'Simulate as'), simSel);
   const forceChk = h('input', { type: 'checkbox' });
   const setupChk = h('input', { type: 'checkbox', checked: true });
   const devList = h('div', { class: 'help' }, 'Click Scan to list connected NewAE devices.');
@@ -16,7 +21,9 @@ export function initConnect(ctx, el) {
   const btnScan = h('button', { class: 'btn', onclick: scan }, 'Scan USB');
 
   if (new URLSearchParams(location.search).get('simulate') === '1' || meta.simulate_default) { scopeSel.value = 'sim'; targetSel.value = 'sim'; }
-  scopeSel.addEventListener('change', () => { if (scopeSel.value === 'sim') targetSel.value = 'sim'; else if (targetSel.value === 'sim') targetSel.value = 'SimpleSerial2'; });
+  scopeSel.addEventListener('change', () => { if (scopeSel.value === 'sim') targetSel.value = 'sim'; else if (targetSel.value === 'sim') targetSel.value = 'SimpleSerial2'; paintSim(); });
+  function paintSim() { simRow.style.display = scopeSel.value === 'sim' ? '' : 'none'; }
+  paintSim();
 
   async function scan() {
     btnScan.disabled = true;
@@ -31,7 +38,7 @@ export function initConnect(ctx, el) {
   async function connect() {
     btnConnect.disabled = true; btnConnect.textContent = 'Connecting…';
     try {
-      const r = await post('/api/scope/connect', { kind: scopeSel.value, sn: snInput.value || null, force: forceChk.checked, default_setup: setupChk.checked });
+      const r = await post('/api/scope/connect', { kind: scopeSel.value, sn: snInput.value || null, force: forceChk.checked, default_setup: setupChk.checked, sim_model: scopeSel.value === 'sim' ? simSel.value : null });
       toast(`Connected: ${r.name || r.type}`, 'ok');
       await ctx.refreshStatus();
       if (scopeSel.value === 'sim' || targetSel.value === 'sim') await connectTarget();
@@ -60,6 +67,7 @@ export function initConnect(ctx, el) {
     h('h2', {}, 'Scope'),
     h('div', { class: 'card' },
       h('div', { class: 'row' }, h('label', {}, 'Device'), scopeSel),
+      simRow,
       h('div', { class: 'row' }, h('label', {}, 'Serial'), snInput, btnScan),
       devList,
       h('div', { class: 'row' }, h('label', {}, forceChk, ' force FPGA reprogram'), h('label', {}, setupChk, ' default_setup()')),

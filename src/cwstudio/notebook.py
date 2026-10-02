@@ -1,6 +1,6 @@
 """Jupyter-style notebooks inside Studio.
 
-Cells run in one persistent Python namespace on Studio's hardware thread, so notebook code shares the scope and target the UI is connected to instead of fighting over the USB device. Inside a notebook ``import chipwhisperer as cw`` returns a thin proxy of the real library: ``cw.scope()`` and ``cw.target()`` hand back Studio's connection (connecting first if needed), and ``cw.capture_trace()`` also stores each trace in Studio's trace store, so captures show up live in the waveform view and the Capture tab.
+Each notebook has its own persistent Python namespace (a kernel, see ``KernelManager``), and cells of every notebook run one at a time on Studio's hardware thread, so notebook code shares the scope and target the UI is connected to instead of fighting over the USB device. Inside a notebook ``import chipwhisperer as cw`` returns a thin proxy of the real library: ``cw.scope()`` and ``cw.target()`` hand back Studio's connection (connecting first if needed), and ``cw.capture_trace()`` also stores each trace in Studio's trace store, so captures show up live in the waveform view and the Capture tab.
 
 IPython conveniences used by ChipWhisperer's tutorials work too: ``%run other.ipynb``, ``!make ...`` with Studio's downloaded compilers on ``PATH`` and ``{var}`` expansion, ``%%bash``, ``%cd``, ``%env``, ``%time``, ``%%writefile`` and friends, ``display()``, ``IPython.display``, ``tqdm.notebook`` and inline matplotlib figures. Notebooks are stored as standard ``.ipynb`` files.
 """
@@ -10,12 +10,14 @@ import ast
 import base64
 import builtins
 import ctypes
+import hashlib
 import io
 import json
 import logging
 import os
 import queue
 import re
+import reprlib
 import shlex
 import shutil
 import subprocess
@@ -89,12 +91,33 @@ def new_notebook() -> Dict[str, Any]:
     ]})
 
 
+class NotebookConflict(Exception):
+    """The notebook changed on disk since the editor loaded it (a run from the API or an agent, another window)."""
+
+
+class NotebookDeleted(Exception):
+    """The notebook an editor saves was deleted (or renamed) meanwhile; saving must not create it again."""
+
+
 class NotebookStore:
-    """``.ipynb`` files under ``<data_dir>/notebooks`` (sub-folders allowed)."""
+    """``.ipynb`` files under ``<data_dir>/notebooks`` (sub-folders allowed). ``on_change`` (set by the session) hears every save and delete, so open notebook tabs in every window can follow them."""
 
     def __init__(self, root: str):
         self.root = root
+        self.on_change: Optional[Callable[[Dict[str, Any]], None]] = None
+        self._lock = threading.Lock()
         os.makedirs(root, exist_ok=True)
+
+    def _changed(self, ev: Dict[str, Any]):
+        if self.on_change is not None:
+            try:
+                self.on_change(ev)
+            except Exception:  # noqa: BLE001
+                log.debug("notebook change listener", exc_info=True)
+
+    def mtime(self, rel: str) -> Optional[float]:
+        p = self.path(rel if rel.endswith(".ipynb") else rel + ".ipynb")
+        return os.path.getmtime(p) if os.path.isfile(p) else None
 
     def path(self, rel: str) -> str:
         p = os.path.abspath(os.path.join(self.root, rel or ""))
@@ -116,17 +139,28 @@ class NotebookStore:
         with open(self.path(rel), "r", encoding="utf-8") as f:
             return normalize(json.load(f))
 
-    def save(self, rel: str, nb: Dict[str, Any]) -> Dict[str, Any]:
+    def save(self, rel: str, nb: Dict[str, Any], base_mtime: Optional[float] = None, client: Optional[str] = None) -> Dict[str, Any]:
+        """Write a notebook. With ``base_mtime`` (the modification time the editor loaded) the save is refused when the file changed since (``NotebookConflict``) or no longer exists (``NotebookDeleted``), so an editor never overwrites a run's results or brings back a deleted notebook."""
         if not rel.endswith(".ipynb"):
             rel += ".ipynb"
         p = self.path(rel)
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(to_ipynb(nb), f, indent=1, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp, p)
-        return {"path": os.path.relpath(p, self.root).replace(os.sep, "/"), "mtime": os.path.getmtime(p)}
+        data = to_ipynb(nb)
+        with self._lock:
+            if base_mtime is not None:
+                if not os.path.isfile(p):
+                    raise NotebookDeleted(f"{rel} was deleted or renamed")
+                cur = os.path.getmtime(p)
+                if abs(cur - float(base_mtime)) > 1e-3:
+                    raise NotebookConflict(f"{rel} changed on disk since it was loaded (mtime {cur})")
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=1, ensure_ascii=False)
+                f.write("\n")
+            os.replace(tmp, p)
+            res = {"path": os.path.relpath(p, self.root).replace(os.sep, "/"), "mtime": os.path.getmtime(p)}
+        self._changed({"kind": "file", "action": "saved", "path": res["path"], "mtime": res["mtime"], "client": client})
+        return res
 
     def create(self, name: str) -> Dict[str, Any]:
         name = (name or "Untitled").strip().replace("\\", "/")
@@ -149,14 +183,32 @@ class NotebookStore:
             rel = f"imported/{name[:-6]} {n}.ipynb"
         return self.save(rel, nb)
 
+    def rename(self, rel: str, to: str) -> Dict[str, Any]:
+        """Move a notebook to a new path (sub-folders allowed); refuses to overwrite another notebook."""
+        to = (to or "").strip().replace("\\", "/")
+        if not to:
+            raise ValueError("new name required")
+        if not to.endswith(".ipynb"):
+            to += ".ipynb"
+        src, dst = self.path(rel), self.path(to)
+        if not os.path.isfile(src):
+            raise FileNotFoundError(rel)
+        if os.path.exists(dst) and os.path.abspath(dst) != os.path.abspath(src):
+            raise FileExistsError(f"{to} already exists")
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.replace(src, dst)
+        return {"path": os.path.relpath(dst, self.root).replace(os.sep, "/"), "old": rel, "mtime": os.path.getmtime(dst)}
+
     def delete(self, rel: str) -> None:
-        os.remove(self.path(rel))
+        p = self.path(rel)
+        os.remove(p)
+        self._changed({"kind": "file", "action": "deleted", "path": os.path.relpath(p, self.root).replace(os.sep, "/")})
 
 
 # ----------------------------------------------------------------------------
 # output capture
 # ----------------------------------------------------------------------------
-# Called by cwstudio.mplbackend when a notebook cell runs plt.show(); set by the kernel.
+# Called by cwstudio.mplbackend when a notebook cell runs plt.show(); set by the KernelManager to show the figures in the running cell.
 SHOW_HOOK: Optional[Callable[[], None]] = None
 
 
@@ -208,8 +260,31 @@ def _install_routers():
             _ROUTERS[name] = r
 
 
-def rich_bundle(obj: Any) -> Dict[str, Any]:
-    """Jupyter-style mime bundle for an object (text/plain always, plus HTML, PNG, SVG, markdown when the object provides them)."""
+FIGURE_FORMATS = ("png", "svg")
+
+
+def figure_bundle(fig, fmt: str = "png", label: Optional[str] = None) -> Dict[str, Any]:
+    """Mime bundle of a matplotlib figure, as PNG or SVG (``%config InlineBackend.figure_format``)."""
+    buf = io.BytesIO()
+    label = label or f"<Figure size {int(fig.get_figwidth() * fig.dpi)}x{int(fig.get_figheight() * fig.dpi)}>"
+    if fmt == "svg":
+        fig.savefig(buf, format="svg", bbox_inches="tight")
+        return {"image/svg+xml": buf.getvalue().decode("utf-8"), "text/plain": label}
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=100)
+    return {"image/png": base64.b64encode(buf.getvalue()).decode(), "text/plain": label}
+
+
+def _is_mpl_figure(obj) -> bool:
+    return type(obj).__module__.startswith("matplotlib") and hasattr(obj, "savefig") and hasattr(obj, "get_figwidth")
+
+
+def rich_bundle(obj: Any, figure_format: str = "png") -> Dict[str, Any]:
+    """Jupyter-style mime bundle for an object (text/plain always, plus HTML, PNG, SVG, markdown when the object provides them; matplotlib figures as images)."""
+    if _is_mpl_figure(obj):
+        try:
+            return figure_bundle(obj, figure_format)
+        except Exception:  # noqa: BLE001
+            pass
     data: Dict[str, Any] = {}
     if hasattr(obj, "_repr_mimebundle_"):
         try:
@@ -247,14 +322,51 @@ def rich_bundle(obj: Any) -> Dict[str, Any]:
 _MAGIC_LINE = re.compile(r"^(\s*)(?:(\w+)\s*=\s*)?([%!])(.*)$")
 
 
+def _scan(line: str, depth: int, quote: str):
+    """Advance the bracket depth and open string delimiter over one line of Python and tell whether it ends with a backslash continuation, so ``transform`` only treats a line as a magic where a new statement starts (not inside brackets, multi-line strings or continued lines)."""
+    i, n = 0, len(line)
+    comment = False
+    while i < n:
+        ch = line[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if line.startswith(quote, i):
+                i += len(quote)
+                quote = ""
+                continue
+            i += 1
+            continue
+        if ch == "#":
+            comment = True
+            break
+        if ch in "\"'":
+            quote = line[i:i + 3] if line[i:i + 3] in ('"""', "'''") else ch
+            i += len(quote)
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        i += 1
+    if len(quote) == 1 and not line.endswith("\\"):
+        quote = ""  # an unterminated one-line string is a syntax error Python reports itself
+    return depth, quote, not quote and not comment and line.rstrip().endswith("\\")
+
+
 def transform(code: str) -> str:
     """Turn IPython line magics and shell escapes into calls to the kernel's helpers, keeping indentation so they work inside blocks."""
     out = []
     lines = code.split("\n")
     i = 0
+    depth, quote, cont = 0, "", False
     while i < len(lines):
         line = lines[i]
-        m = _MAGIC_LINE.match(line)
+        at_start = depth == 0 and not quote and not cont
+        m = _MAGIC_LINE.match(line) if at_start else None
+        if not m or line.strip().startswith("%%"):
+            depth, quote, cont = _scan(line, depth, quote)
         if m and not line.strip().startswith(("%%",)):
             indent, var, kind, rest = m.groups()
             while rest.endswith("\\") and i + 1 < len(lines):  # continued magic/shell line
@@ -266,7 +378,7 @@ def transform(code: str) -> str:
                 name, _, arg = rest.partition(" ")
                 call = f"__studio_magic__({name!r}, {arg!r})"
             out.append(f"{indent}{var} = {call}" if var else f"{indent}{call}")
-        elif line.rstrip().endswith("?") and not line.lstrip().startswith("#") and re.match(r"^\s*[\w.]+\?{1,2}\s*$", line):
+        elif at_start and line.rstrip().endswith("?") and not line.lstrip().startswith("#") and re.match(r"^\s*[\w.]+\?{1,2}\s*$", line):
             out.append(re.sub(r"^(\s*)([\w.]+)\?{1,2}\s*$", r"\1help(\2)", line))
         else:
             out.append(line)
@@ -297,25 +409,313 @@ def expand(cmd: str, ns: Dict[str, Any]) -> str:
 # kernel
 # ----------------------------------------------------------------------------
 class _Exec:
-    def __init__(self, cell_id: str, code: str, cwd: str, batch: str):
+    def __init__(self, kernel: "Kernel", cell_id: str, code: str, cwd: str, batch: str):
         self.id = uuid.uuid4().hex[:10]
+        self.kernel = kernel
         self.cell_id, self.code, self.cwd, self.batch = cell_id, code, cwd, batch
         self.outputs: List[Dict[str, Any]] = []
         self.count: Optional[int] = None
         self.ok = True
-        self._buf: Dict[str, str] = {}
+        self.running = False  # True only while the hardware thread is inside this cell, so an interrupt never hits other work
+        self._buf: Dict[str, List[str]] = {}  # unsent stdout/stderr text, as chunks (joining once is much faster than growing a string per print)
         self._last_flush = 0.0
+        self.lock = threading.RLock()  # outputs and stream buffers: written by the hardware thread, flushed by the KernelManager's flusher
 
 
-class Kernel:
-    def __init__(self, session, notebooks_root: str):
+DEFAULT_KERNEL = "default"
+
+
+def kernel_key(key: Optional[str]) -> str:
+    """Normalise a kernel id: a notebook path relative to the notebooks folder (``lab/a.ipynb``), a temporary id for an unsaved notebook, or ``default`` (also for None and "")."""
+    k = (key or "").strip().replace("\\", "/")
+    while k.startswith("./"):
+        k = k[2:]
+    k = k.lstrip("/")
+    return k or DEFAULT_KERNEL
+
+
+def _show_figures(*args, **kwargs):
+    """``plt.show()`` replacement installed by the kernels: shows the open figures in whichever cell is running."""
+    if SHOW_HOOK is not None:
+        SHOW_HOOK()
+
+
+_show_figures._studio = True
+
+
+class KernelManager:
+    """All notebook kernels of a Studio session.
+
+    Each notebook gets its own kernel (a separate Python namespace with its own execution count, variables, restart and interrupt), created lazily when it first runs a cell and keyed by its path; code without a notebook uses the ``default`` kernel. Every kernel shares Studio's hardware connection and trace store, and cells of all kernels go through one queue and run one at a time on Studio's hardware thread, so notebooks never collide with each other or with the rest of the UI.
+
+    Windows report which notebooks they have open (``attach``); when no window holds a notebook any more, its kernel is shut down after ``release_grace`` seconds (enough for a page reload) and its namespace is freed.
+    """
+
+    def __init__(self, session, notebooks_root: str, release_grace: float = 20.0, client_ttl: float = 180.0):
         self.session = session
         self.bus = session.bus
         self.root = notebooks_root
-        self.q: "queue.Queue[_Exec]" = queue.Queue()
-        self.lock = threading.Lock()
+        self.release_grace, self.client_ttl = release_grace, client_ttl
+        self.q: "queue.Queue[Optional[_Exec]]" = queue.Queue()
+        self.lock = threading.RLock()
         self.current: Optional[_Exec] = None
         self.pending: List[_Exec] = []
+        self.kernels: Dict[str, Kernel] = {}
+        self._watchers: List[Callable[[Dict[str, Any]], None]] = []
+        self._clients: Dict[str, Dict[str, Any]] = {}  # window id -> {"seen": time, "kernels": set of ids}
+        self._held: set = set()  # kernels a window has held at some point (only those are freed automatically)
+        self._released: Dict[str, float] = {}  # kernel id -> when the last window let go of it
+        self._closed = threading.Event()
+        global SHOW_HOOK
+        SHOW_HOOK = self._show
+        _install_routers()
+        os.environ.setdefault("MPLBACKEND", "module://cwstudio.mplbackend")  # Agg rendering with a plt.show() that displays figures
+        self.default = self.get(DEFAULT_KERNEL)
+        self._thread = threading.Thread(target=self._dispatch, name="notebook-kernel", daemon=True)
+        self._thread.start()
+        self._reaper = threading.Thread(target=self._reap_loop, name="notebook-kernel-reaper", daemon=True)
+        self._reaper.start()
+        self._flusher = threading.Thread(target=self._flush_loop, name="notebook-output-flusher", daemon=True)
+        self._flusher.start()
+
+    # --- registry --------------------------------------------------------------
+    def find(self, key: Optional[str]) -> Optional["Kernel"]:
+        with self.lock:
+            return self.kernels.get(kernel_key(key))
+
+    def get(self, key: Optional[str] = None) -> "Kernel":
+        """The kernel for a notebook path or id, created on first use."""
+        k = kernel_key(key)
+        with self.lock:
+            kern = self.kernels.get(k)
+            if kern is None:
+                kern = self.kernels[k] = Kernel(self, k)
+                self._released.pop(k, None)
+                if k != DEFAULT_KERNEL:
+                    log.info("Started notebook kernel for %s", k)
+            return kern
+
+    def list(self) -> List[Dict[str, Any]]:
+        with self.lock:
+            return [dict(k.status(), holders=self._holders(k.id), variables=sum(1 for _ in k._visible_names())) for k in self.kernels.values()]
+
+    def status(self, key: Optional[str] = None) -> Dict[str, Any]:
+        kern = self.find(key)
+        if kern is not None:
+            return kern.status()
+        k = kernel_key(key)
+        with self.lock:
+            cur = self.current
+            return {"kernel": k, "path": _path_of(k), "started": False, "busy": False, "cell": None, "queued": [], "execution_count": 0, "store_traces": True, "running_kernel": cur.kernel.id if cur else None, "queued_total": len(self.pending)}
+
+    def variables(self, key: Optional[str] = None) -> List[Dict[str, Any]]:
+        kern = self.find(key)
+        return kern.variables() if kern is not None else []
+
+    def interrupt(self, key: Optional[str] = None) -> Dict[str, Any]:
+        """Interrupt one kernel (its running cell and its queued cells); ``all`` interrupts every kernel."""
+        if key == "all":
+            with self.lock:
+                kernels = list(self.kernels.values())
+            for kern in kernels:
+                kern.interrupt()
+            return self.status(None)
+        kern = self.find(key)
+        return kern.interrupt() if kern is not None else self.status(key)
+
+    def restart(self, key: Optional[str] = None) -> Dict[str, Any]:
+        kern = self.find(key)
+        return kern.restart() if kern is not None else self.status(key)
+
+    def shutdown(self, key: Optional[str] = None) -> Dict[str, Any]:
+        """Stop a kernel and free its namespace. The default kernel is restarted instead (it always exists)."""
+        k = kernel_key(key)
+        kern = self.find(k)
+        if kern is None:
+            return {"kernel": k, "shutdown": False}
+        if k == DEFAULT_KERNEL:
+            kern.restart()
+            return {"kernel": k, "shutdown": False, "restarted": True}
+        kern._stop_running()
+        with self.lock:
+            if self.kernels.get(k) is kern:
+                del self.kernels[k]
+            self._released.pop(k, None)
+            self._held.discard(k)
+            for c in self._clients.values():
+                c["kernels"].discard(k)
+        kern._dispose()
+        del kern
+        log.info("Shut down notebook kernel for %s", k)
+        self.bus.publish("nb", {"kind": "shutdown", "kernel": k, "path": _path_of(k)})
+        if not self.session.worker.is_worker_thread:
+            try:  # the hardware thread keeps its last job's arguments (the notebook's last cell) until the next job; do not wait long when another notebook keeps it busy
+                self.session.worker.submit(lambda: None).result(timeout=1.0)
+            except Exception:  # noqa: BLE001
+                pass
+        return {"kernel": k, "shutdown": True}
+
+    def rename(self, old: Optional[str], new: Optional[str]) -> Dict[str, Any]:
+        """Re-key a kernel (a notebook was renamed, or an unsaved notebook got its path); variables and execution count are kept."""
+        o, n = kernel_key(old), kernel_key(new)
+        if o == n:
+            return self.status(n)
+        if DEFAULT_KERNEL in (o, n):
+            raise ValueError("the default kernel cannot be renamed")
+        with self.lock:
+            if n in self.kernels:
+                raise ValueError(f"a kernel for {n} is already running; shut it down first")
+            kern = self.kernels.pop(o, None)
+            if kern is not None:
+                kern.id, kern.path = n, _path_of(n)
+                self.kernels[n] = kern
+            for c in self._clients.values():
+                if o in c["kernels"]:
+                    c["kernels"].discard(o)
+                    c["kernels"].add(n)
+            if o in self._held:
+                self._held.discard(o)
+                self._held.add(n)
+            if o in self._released:
+                self._released[n] = self._released.pop(o)
+        self.bus.publish("nb", {"kind": "renamed", "kernel": n, "path": _path_of(n), "old": o})
+        return self.status(n)
+
+    # --- windows holding notebooks ------------------------------------------------
+    def attach(self, client: str, kernels: List[str]) -> Dict[str, Any]:
+        """A window reports the notebooks it has open (the whole list, each time); an empty list releases them all (sent when the window closes)."""
+        if not client:
+            raise ValueError("client id required")
+        keys = {kernel_key(k) for k in kernels or []} - {DEFAULT_KERNEL}
+        with self.lock:
+            if keys:
+                self._clients[client] = {"seen": time.time(), "kernels": keys}
+                self._held |= keys
+            else:
+                self._clients.pop(client, None)
+        self.reap()
+        return {"client": client, "kernels": sorted(keys)}
+
+    def _holders(self, k: str) -> int:
+        return sum(1 for c in self._clients.values() if k in c["kernels"])
+
+    def reap(self, now: Optional[float] = None) -> List[str]:
+        """Forget windows that stopped reporting, and shut down kernels no window has held for ``release_grace`` seconds (once they are idle). Returns the ids shut down."""
+        now = time.time() if now is None else now
+        free = []
+        with self.lock:
+            for cid in [c for c, v in self._clients.items() if now - v["seen"] > self.client_ttl]:
+                del self._clients[cid]
+            busy = {e.kernel.id for e in self.pending} | ({self.current.kernel.id} if self.current else set())
+            for k in list(self.kernels):
+                if k == DEFAULT_KERNEL or k not in self._held:
+                    continue
+                if self._holders(k):
+                    self._released.pop(k, None)
+                    continue
+                since = self._released.setdefault(k, now)
+                if now - since >= self.release_grace and k not in busy:
+                    free.append(k)
+        for k in free:
+            self.shutdown(k)
+        return free
+
+    def _reap_loop(self):
+        while not self._closed.wait(2.0):
+            try:
+                self.reap()
+            except Exception:  # noqa: BLE001
+                log.debug("kernel reaper", exc_info=True)
+
+    def _flush_loop(self):
+        """Send text a running cell printed and then went quiet (sleeping, waiting on hardware): output is otherwise only sent when the cell writes again or ends."""
+        while not self._closed.wait(0.1):
+            e = self.current
+            if e is not None and e._buf:
+                try:
+                    e.kernel._flush_streams(e)
+                except Exception:  # noqa: BLE001
+                    log.debug("output flusher", exc_info=True)
+            e = None
+
+    def close(self):
+        self._closed.set()
+        self.q.put(None)
+
+    # --- execution ---------------------------------------------------------------
+    def submit(self, kern: "Kernel", cells: List[Dict[str, Any]], cwd: str) -> Dict[str, Any]:
+        batch = uuid.uuid4().hex[:8]
+        ids = []
+        for c in cells:
+            e = _Exec(kern, c.get("id") or uuid.uuid4().hex[:8], c.get("code") or c.get("source") or "", cwd, batch)
+            with self.lock:
+                self.pending.append(e)
+            kern._event("queued", e)  # before the dispatcher can see it, so "queued" never arrives after "running"
+            self.q.put(e)
+            ids.append({"cell": e.cell_id, "exec": e.id})
+        return {"queued": ids, "batch": batch, "kernel": kern.id}
+
+    def _dispatch(self):
+        while True:
+            e = self.q.get()
+            if e is None:
+                return
+            with self.lock:
+                cancelled = e not in self.pending
+                if not cancelled:
+                    self.pending.remove(e)
+                    self.current = e
+            if cancelled:
+                e = None  # noqa: F841 - drop the reference while waiting for the next cell
+                continue
+            k = e.kernel
+            k._event("running", e)
+            try:
+                self.session.worker.call(k._run, e, timeout=None)
+            except BaseException as ex:  # noqa: BLE001
+                e.ok = False
+                k._emit_to(e, {"output_type": "error", "ename": type(ex).__name__, "evalue": str(ex), "traceback": [f"{type(ex).__name__}: {ex}"]})
+            finally:
+                with self.lock:
+                    self.current = None
+                if not e.ok:  # like Jupyter's run all: stop the rest of the batch after an error
+                    with self.lock:
+                        dropped = [p for p in self.pending if p.batch == e.batch]
+                        self.pending = [p for p in self.pending if p.batch != e.batch]
+                    for p in dropped:
+                        k._event("cancelled", p)
+                k._event("done", e)
+                k._finish_traces()
+                del e, k  # do not keep the last cell (and its kernel) alive while waiting for the next one
+
+    def _notify(self, ev: Dict[str, Any]):
+        self.bus.publish("nb", ev)
+        for w in list(self._watchers):
+            try:
+                w(ev)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _show(self):
+        e = self.current
+        if e is not None:
+            e.kernel._flush_figures()
+
+
+def _path_of(key: str) -> Optional[str]:
+    return key if key.lower().endswith(".ipynb") else None
+
+
+class Kernel:
+    """One notebook's Python namespace. Cells are queued through the ``KernelManager`` and run on Studio's hardware thread."""
+
+    def __init__(self, manager: KernelManager, kernel_id: str = DEFAULT_KERNEL):
+        self.manager = manager
+        self.session = manager.session
+        self.bus = manager.bus
+        self.root = manager.root
+        self.id = kernel_id
+        self.path = _path_of(kernel_id)
         self.count = 0
         self.store_traces = True
         self.pending_textout: Optional[int] = None
@@ -323,31 +723,29 @@ class Kernel:
         self.target_proxy = StudioTarget(self, "target")
         self._last_trace_pub = 0.0
         self._last_trace: Optional[tuple] = None
+        self._proxy = None
         self.ns: Dict[str, Any] = {}
-        _install_routers()
-        os.environ.setdefault("MPLBACKEND", "module://cwstudio.mplbackend")  # Agg rendering with a plt.show() that displays figures
+        self.figure_format = "png"
+        self.cwd: Optional[str] = None  # set by %cd; like Jupyter it lasts until the kernel restarts
         self.restart(publish=False)
-        self._thread = threading.Thread(target=self._dispatch, name="notebook-kernel", daemon=True)
-        self._thread.start()
+
+    @property
+    def current(self) -> Optional[_Exec]:
+        cur = self.manager.current
+        return cur if cur is not None and cur.kernel is self else None
 
     # --- public API ----------------------------------------------------------
     def status(self) -> Dict[str, Any]:
-        with self.lock:
+        m = self.manager
+        with m.lock:
             cur = self.current
-            return {"busy": cur is not None, "cell": cur.cell_id if cur else None, "queued": [e.cell_id for e in self.pending], "execution_count": self.count, "store_traces": self.store_traces}
+            return {"kernel": self.id, "path": self.path, "started": True, "busy": cur is not None, "cell": cur.cell_id if cur else None, "queued": [e.cell_id for e in m.pending if e.kernel is self], "execution_count": self.count, "store_traces": self.store_traces, "running_kernel": m.current.kernel.id if m.current else None, "queued_total": len(m.pending)}
 
     def execute(self, cells: List[Dict[str, Any]], path: Optional[str] = None) -> Dict[str, Any]:
+        """Queue cells; ``path`` (a notebook path) sets their working directory, by default this kernel's notebook folder."""
+        path = path or self.path
         cwd = os.path.dirname(os.path.join(self.root, path)) if path else self.root
-        batch = uuid.uuid4().hex[:8]
-        ids = []
-        for c in cells:
-            e = _Exec(c.get("id") or uuid.uuid4().hex[:8], c.get("code") or c.get("source") or "", cwd, batch)
-            with self.lock:
-                self.pending.append(e)
-            self.q.put(e)
-            ids.append({"cell": e.cell_id, "exec": e.id})
-            self._event("queued", e)
-        return {"queued": ids, "batch": batch}
+        return self.manager.submit(self, cells, cwd)
 
     def execute_wait(self, code: str, path: Optional[str] = None, timeout: float = 600) -> Dict[str, Any]:
         """Run one cell and wait for it (used by the MCP server and tests)."""
@@ -356,62 +754,85 @@ class Kernel:
         cid = "mcp-" + uuid.uuid4().hex[:6]
 
         def watch(ev):
-            if ev.get("cell") == cid and ev.get("kind") == "done":
+            if ev.get("cell") == cid and ev.get("kind") in ("done", "cancelled"):
                 res.update(ev)
                 done.set()
-        self._watchers.append(watch)
+        watchers = self.manager._watchers
+        watchers.append(watch)
         try:
             self.execute([{"id": cid, "code": code}], path)
             if not done.wait(timeout):
                 self.interrupt()
                 raise TimeoutError("cell did not finish in time")
         finally:
-            self._watchers.remove(watch)
-        return {"ok": res.get("ok"), "execution_count": res.get("execution_count"), "outputs": res.get("outputs", [])}
+            watchers.remove(watch)
+        if res.get("kind") == "cancelled":  # interrupted, restarted or shut down while it waited in the queue
+            return {"ok": False, "cancelled": True, "execution_count": None, "outputs": [{"output_type": "error", "ename": "Cancelled", "evalue": "the cell was cancelled before it ran (the kernel was interrupted, restarted or shut down)", "traceback": []}], "kernel": self.id}
+        return {"ok": res.get("ok"), "execution_count": res.get("execution_count"), "outputs": res.get("outputs", []), "kernel": self.id}
 
     def interrupt(self) -> Dict[str, Any]:
-        with self.lock:
-            dropped = list(self.pending)
-            self.pending.clear()
+        """Drop this kernel's queued cells and interrupt its running cell; other notebooks' cells are untouched."""
+        m = self.manager
+        with m.lock:
+            dropped = [e for e in m.pending if e.kernel is self]
+            m.pending = [e for e in m.pending if e.kernel is not self]
             cur = self.current
-        while True:
-            try:
-                self.q.get_nowait()
-            except queue.Empty:
-                break
+            if cur is not None and cur.running:
+                tid = self.session.worker._thread.ident
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), ctypes.py_object(KeyboardInterrupt))
+                log.info("Interrupting notebook cell (%s)", self.id)
         for e in dropped:
             self._event("cancelled", e)
-        if cur is not None:
-            tid = self.session.worker._thread.ident
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), ctypes.py_object(KeyboardInterrupt))
-            log.info("Interrupting notebook cell")
         return self.status()
 
-    def restart(self, publish: bool = True) -> Dict[str, Any]:
-        if self.current is not None:
+    def _stop_running(self):
+        if self.current is not None or any(e.kernel is self for e in self.manager.pending):
             self.interrupt()
             for _ in range(50):
                 if self.current is None:
                     break
                 time.sleep(0.05)
-        self._watchers: List[Callable[[Dict[str, Any]], None]] = getattr(self, "_watchers", [])
+
+    def restart(self, publish: bool = True) -> Dict[str, Any]:
+        self._stop_running()
         self.count = 0
-        self.ns = self._fresh_namespace()
+        self.figure_format, self.cwd = "png", None
+        old, self.ns = self.ns, self._fresh_namespace()
+        old.clear()  # break reference cycles (functions defined in a cell point back at the namespace) right away
+        self._proxy = None
         if publish:
-            log.info("Notebook kernel restarted")
+            log.info("Notebook kernel restarted (%s)", self.id)
             self.bus.publish("nb", {"kind": "restarted", **self.status()})
         return self.status()
 
-    def variables(self) -> List[Dict[str, Any]]:
-        out = []
-        for k, v in self.ns.items():
+    def set_figure_format(self, fmt: str):
+        fmt = {"retina": "png", "jpeg": "png", "jpg": "png", "pdf": "png"}.get(str(fmt).lower(), str(fmt).lower())
+        if fmt in FIGURE_FORMATS:
+            self.figure_format = fmt
+
+    def _dispose(self):
+        """Free everything the notebook created (called by KernelManager.shutdown)."""
+        self.ns.clear()
+        self.ns = {}
+        self._proxy = None
+        self._last_trace = None
+        self.count = 0
+
+    def _visible_names(self):
+        for k, v in list(self.ns.items()):
             if k.startswith("_") or isinstance(v, (types.ModuleType, type, types.FunctionType, types.BuiltinFunctionType)) or k in ("studio", "display", "get_ipython", "In", "Out", "exit", "quit"):
                 continue
-            shape = getattr(v, "shape", None)
+            yield k, v
+
+    def variables(self) -> List[Dict[str, Any]]:
+        """Name, type, shape and a short repr of each variable. Called from web threads while cells may be running, so hardware objects are never asked for their repr (a ChipWhisperer scope reads its settings from the device for that) and big containers are summarised."""
+        out = []
+        for k, v in self._visible_names():
+            r = _safe_repr(v)
             try:
-                r = repr(v)
+                shape = None if isinstance(v, _Live) else getattr(v, "shape", None)
             except Exception:  # noqa: BLE001
-                r = "?"
+                shape = None
             try:
                 tname = v.__class__.__name__  # Studio's scope/target stand-ins report the real class
             except Exception:  # noqa: BLE001
@@ -496,6 +917,7 @@ class Kernel:
                 return d.decode() if isinstance(d, bytes) else d
 
         m.display = k._display
+        m.set_matplotlib_formats = lambda *formats, **kw: k.set_figure_format(formats[0]) if formats else None
         m.HTML, m.Markdown, m.Image, m.SVG = HTML, Markdown, Image, SVG
         m.clear_output = lambda wait=False: k._emit({"output_type": "clear_output"})
         m.Javascript = lambda *a, **kw: None
@@ -517,78 +939,70 @@ class Kernel:
         return m
 
     # --- execution ----------------------------------------------------------------
-    def _dispatch(self):
-        while True:
-            e = self.q.get()
-            with self.lock:
-                if e not in self.pending:
-                    continue  # cancelled
-                self.pending.remove(e)
-                self.current = e
-            self._event("running", e)
-            try:
-                self.session.worker.call(self._run, e, timeout=None)
-            except BaseException as ex:  # noqa: BLE001
-                e.ok = False
-                self._emit_to(e, {"output_type": "error", "ename": type(ex).__name__, "evalue": str(ex), "traceback": [f"{type(ex).__name__}: {ex}"]})
-            finally:
-                with self.lock:
-                    self.current = None
-                if not e.ok:  # like Jupyter's run all: stop the rest of the batch after an error
-                    with self.lock:
-                        dropped = [p for p in self.pending if p.batch == e.batch]
-                        self.pending = [p for p in self.pending if p.batch != e.batch]
-                    for p in dropped:
-                        self._event("cancelled", p)
-                self._event("done", e)
-                self._finish_traces()
-
     def _event(self, kind: str, e: _Exec):
-        ev = {"kind": kind, "cell": e.cell_id, "exec": e.id}
+        ev = {"kind": kind, "cell": e.cell_id, "exec": e.id, "kernel": self.id, "path": self.path}
         if kind == "done":
             ev.update({"ok": e.ok, "execution_count": e.count, "outputs": e.outputs})
-        self.bus.publish("nb", ev)
-        for w in list(self._watchers):
-            try:
-                w(ev)
-            except Exception:  # noqa: BLE001
-                pass
+        self.manager._notify(ev)
 
     def _emit_to(self, e: _Exec, out: Dict[str, Any]):
-        if out.get("output_type") == "clear_output":
-            e.outputs.clear()
-        elif out.get("output_type") == "stream" and e.outputs and e.outputs[-1].get("output_type") == "stream" and e.outputs[-1].get("name") == out["name"]:
-            e.outputs[-1]["text"] += out["text"]
-        else:
-            e.outputs.append(dict(out))
-        self.bus.publish("nb", {"kind": "output", "cell": e.cell_id, "exec": e.id, "output": out})
+        with e.lock:
+            if out.get("output_type") == "clear_output":
+                e.outputs.clear()
+            elif out.get("output_type") == "stream" and e.outputs and e.outputs[-1].get("output_type") == "stream" and e.outputs[-1].get("name") == out["name"]:
+                e.outputs[-1]["text"] += out["text"]
+            else:
+                e.outputs.append(dict(out))
+            self.bus.publish("nb", {"kind": "output", "cell": e.cell_id, "exec": e.id, "kernel": self.id, "path": self.path, "output": out})
 
     def _emit(self, out: Dict[str, Any]):
         e = self.current
         if e is not None:
-            self._flush_streams(e, force=True)
-            self._emit_to(e, out)
+            with e.lock:
+                self._flush_streams(e, force=True)
+                self._emit_to(e, out)
 
     def _stream(self, e: _Exec, name: str, text: str):
+        if not text:
+            return
         other = "stderr" if name == "stdout" else "stdout"
-        if e._buf.get(other):  # keep stdout/stderr interleaving in order
-            self._emit_to(e, {"output_type": "stream", "name": other, "text": e._buf.pop(other)})
-        e._buf[name] = e._buf.get(name, "") + text
-        self._flush_streams(e)
+        with e.lock:
+            if other in e._buf:  # keep stdout/stderr interleaving in order
+                self._emit_to(e, {"output_type": "stream", "name": other, "text": "".join(e._buf.pop(other))})
+            buf = e._buf.get(name)
+            if buf is None:
+                e._buf[name] = [text]
+            else:
+                buf.append(text)
+            if time.time() - e._last_flush >= 0.1:
+                self._flush_streams(e)
 
     def _flush_streams(self, e: _Exec, force: bool = False):
-        now = time.time()
-        if not force and now - e._last_flush < 0.1:
-            return
-        e._last_flush = now
-        for name in ("stdout", "stderr"):
-            t = e._buf.pop(name, "")
-            if t:
-                self._emit_to(e, {"output_type": "stream", "name": name, "text": t})
+        """Send buffered stdout/stderr text (at most every 0.1 s unless forced; the KernelManager's flusher sends what a quiet cell left in the buffer)."""
+        with e.lock:
+            now = time.time()
+            if not force and now - e._last_flush < 0.1:
+                return
+            e._last_flush = now
+            for name in ("stdout", "stderr"):
+                t = "".join(e._buf.pop(name, ()))
+                if t:
+                    self._emit_to(e, {"output_type": "stream", "name": name, "text": t})
 
     def _display(self, *objs, **kw):
         for o in objs:
-            self._emit({"output_type": "display_data", "data": rich_bundle(o), "metadata": {}})
+            self._emit({"output_type": "display_data", "data": rich_bundle(o, self.figure_format), "metadata": {}})
+
+    def _settle(self, e: _Exec, tid: int):
+        """Mark the cell as no longer running and drop an interrupt that arrived as it ended, so it cannot hit the next job. Retries if that very interrupt lands while doing so."""
+        while True:
+            try:
+                with self.manager.lock:
+                    e.running = False
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), None)
+                return
+            except KeyboardInterrupt:
+                continue
 
     def _run(self, e: _Exec):
         """Runs on the hardware thread."""
@@ -602,25 +1016,38 @@ class Kernel:
         self.count += 1
         e.count = self.count
         self.ns["In"].append(e.code)
+        err: Optional[BaseException] = None
         try:
-            os.makedirs(e.cwd, exist_ok=True)
-            os.chdir(e.cwd)
-            self._run_source(e.code, e)
-        except KeyboardInterrupt:
-            e.ok = False
-            self._flush_streams(e, force=True)
-            self._emit_to(e, {"output_type": "error", "ename": "KeyboardInterrupt", "evalue": "interrupted", "traceback": ["KeyboardInterrupt: interrupted"]})
-        except BaseException as ex:  # noqa: BLE001
-            e.ok = False
-            self._flush_streams(e, force=True)
-            tb = traceback.format_exception(type(ex), ex, ex.__traceback__)
-            tb = [t for t in tb if "cwstudio/notebook.py" not in t.replace("\\", "/") and "cwstudio/worker.py" not in t.replace("\\", "/")]
-            self._emit_to(e, {"output_type": "error", "ename": type(ex).__name__, "evalue": str(ex), "traceback": tb})
-        finally:
+            try:
+                with self.manager.lock:
+                    e.running = True  # from here on Stop may raise KeyboardInterrupt in this thread
+                cwd = self.cwd if self.cwd and os.path.isdir(self.cwd) else e.cwd
+                os.makedirs(cwd, exist_ok=True)
+                os.chdir(cwd)
+                self._run_source(e.code, e)
+            except BaseException as ex:  # noqa: BLE001
+                err = ex
+            finally:
+                self._settle(e, tid)
+        except KeyboardInterrupt as ex:  # a second Stop that arrived while the first one was being handled
+            err = err or ex
+        # no interrupt can reach this thread any more: report and clean up
+        try:
+            if err is not None:
+                e.ok = False
+                self._flush_streams(e, force=True)
+                if isinstance(err, KeyboardInterrupt):
+                    self._emit_to(e, {"output_type": "error", "ename": "KeyboardInterrupt", "evalue": "interrupted", "traceback": ["KeyboardInterrupt: interrupted"]})
+                else:
+                    tb = traceback.format_exception(type(err), err, err.__traceback__)
+                    tb = [t for t in tb if "cwstudio/notebook.py" not in t.replace("\\", "/") and "cwstudio/worker.py" not in t.replace("\\", "/")]
+                    self._emit_to(e, {"output_type": "error", "ename": type(err).__name__, "evalue": str(err), "traceback": tb})
             try:
                 self._flush_figures()
             except Exception:  # noqa: BLE001
                 pass
+        finally:
+            err = None  # noqa: F841 - the traceback references the cell's frames
             self._flush_streams(e, force=True)
             for r in _ROUTERS.values():
                 r.sinks.pop(tid, None)
@@ -647,19 +1074,17 @@ class Kernel:
                 self.ns["_"] = val
                 self.ns["Out"][e.count] = val
                 if _is_figure(val):
-                    return
+                    if not (_is_mpl_figure(val) and getattr(getattr(val, "canvas", None), "manager", None) is None):
+                        return  # a pyplot figure: shown with the cell's other open figures when it ends
+                    # a Figure made without pyplot is shown like any other result
                 self._flush_streams(e, force=True)
-                self._emit_to(e, {"output_type": "execute_result", "execution_count": e.count, "data": rich_bundle(val), "metadata": {}})
+                self._emit_to(e, {"output_type": "execute_result", "execution_count": e.count, "data": rich_bundle(val, self.figure_format), "metadata": {}})
 
     def _patch_pyplot(self):
-        """Make plt.show() display the current figures right away (it is a no-op with the Agg backend). Studio's own backend does this from the first cell; the patch covers code that switched to another backend."""
-        global SHOW_HOOK
-        SHOW_HOOK = self._flush_figures
+        """Make plt.show() display the current figures right away (it is a no-op with the Agg backend). Studio's own backend does this from the first cell; the patch covers code that switched to another backend. Both go through SHOW_HOOK, which the KernelManager points at the running cell's kernel."""
         plt = sys.modules.get("matplotlib.pyplot")
         if plt is not None and not getattr(plt.show, "_studio", False):
-            show = lambda *a, **kw: self._flush_figures()  # noqa: E731
-            show._studio = True
-            plt.show = show
+            plt.show = _show_figures
 
     def _flush_figures(self):
         plt = sys.modules.get("matplotlib.pyplot")
@@ -667,10 +1092,11 @@ class Kernel:
             return
         for num in plt.get_fignums():
             fig = plt.figure(num)
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight", dpi=100)
-            plt.close(fig)
-            self._emit({"output_type": "display_data", "data": {"image/png": base64.b64encode(buf.getvalue()).decode(), "text/plain": f"<Figure {num}>"}, "metadata": {}})
+            try:
+                data = figure_bundle(fig, self.figure_format, f"<Figure {num}>")
+            finally:
+                plt.close(fig)
+            self._emit({"output_type": "display_data", "data": data, "metadata": {}})
 
     # --- shell and magics ------------------------------------------------------------
     def _shell_env(self) -> Dict[str, str]:
@@ -699,18 +1125,8 @@ class Kernel:
         if os.name == "nt":
             kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         p = subprocess.Popen(cmd, shell=True, cwd=os.getcwd(), env=self._shell_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", executable=shell_exe, **kw)
-        lines = []
-        try:
-            assert p.stdout is not None
-            for line in p.stdout:
-                if capture:
-                    lines.append(line.rstrip("\n"))
-                else:
-                    sys.stdout.write(line)
-            p.wait()
-        except KeyboardInterrupt:
-            p.kill()
-            raise
+        lines: List[str] = []
+        _pump(p, (lambda line: lines.append(line.rstrip("\n"))) if capture else sys.stdout.write)
         if capture:
             return lines
         return None
@@ -734,29 +1150,27 @@ class Kernel:
         assert p.stdin is not None and p.stdout is not None
         p.stdin.write(body.replace("\r\n", "\n"))
         p.stdin.close()
-        try:
-            for line in p.stdout:
-                sys.stdout.write(line)
-            p.wait()
-        except KeyboardInterrupt:
-            p.kill()
-            raise
+        _pump(p, sys.stdout.write)
         if p.returncode:
             print(f"(exit status {p.returncode})", file=sys.stderr)
         return None
 
     def _magic(self, name: str, arg: str):
         arg = arg.strip()
-        if name in ("matplotlib", "load_ext", "reload_ext", "config", "autoreload", "aimport", "precision", "xmode", "colors", "pylab", "gui"):
+        if name == "config":
+            m = re.search(r"figure_formats?\s*=\s*[\[{(]?\s*['\"](\w+)", arg)
+            if m and "InlineBackend" in arg:
+                self.set_figure_format(m.group(1))
+            return None
+        if name in ("matplotlib", "load_ext", "reload_ext", "autoreload", "aimport", "precision", "xmode", "colors", "pylab", "gui"):
             return None
         if name == "run":
             return self._magic_run(arg)
         if name == "cd":
             target = os.path.expanduser(expand(arg.strip("'\""), self.ns) or "~")
             os.chdir(target)
-            e = self.current
-            if e is not None:
-                e.cwd = os.getcwd()
+            self.cwd = os.getcwd()
+            print(self.cwd)
             return None
         if name == "pwd":
             return os.getcwd()
@@ -888,6 +1302,55 @@ class Kernel:
                 pass
 
 
+_REPR = reprlib.Repr()
+_REPR.maxstring = _REPR.maxother = 120
+_REPR.maxlist = _REPR.maxtuple = _REPR.maxset = _REPR.maxdict = _REPR.maxdeque = _REPR.maxarray = 12
+
+
+def _safe_repr(v) -> str:
+    if isinstance(v, _Live):
+        attr = object.__getattribute__(v, "_attr")
+        kind = getattr(object.__getattribute__(v, "_k").session, attr + "_kind", None)
+        return f"<Studio's {attr}: {kind}>" if kind else f"<Studio's {attr}: not connected>"
+    if type(v).__module__.split(".")[0] == "chipwhisperer":
+        return f"<{type(v).__module__}.{type(v).__name__}>"
+    try:
+        if isinstance(v, np.ndarray):
+            with np.printoptions(threshold=50, edgeitems=3):
+                return repr(v)
+        return _REPR.repr(v)
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def _pump(p: subprocess.Popen, write: Callable[[str], Any]):
+    """Forward a child process's output line by line until it exits. The pipe is read on a helper thread so the cell keeps running Python code and Stop (an exception raised in the hardware thread) works even while the command prints nothing; Stop kills the command."""
+    q: "queue.Queue[Optional[str]]" = queue.Queue()
+
+    def reader():
+        try:
+            for line in p.stdout:
+                q.put(line)
+        except (OSError, ValueError):
+            pass
+        finally:
+            q.put(None)
+    threading.Thread(target=reader, name="notebook-shell-output", daemon=True).start()
+    try:
+        while True:
+            try:
+                line = q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if line is None:
+                break
+            write(line)
+        p.wait()
+    except BaseException:
+        p.kill()
+        raise
+
+
 def _is_figure(v) -> bool:
     return type(v).__module__.startswith("matplotlib") and type(v).__name__ in ("Figure", "AxesImage", "Line2D") or (isinstance(v, list) and v and type(v[0]).__module__.startswith("matplotlib"))
 
@@ -956,7 +1419,13 @@ class _CWProxy(types.ModuleType):
         if s.scope_kind == "sim":
             if not os.path.isfile(fw_path):
                 raise FileNotFoundError(fw_path)
-            print(f"Simulator: pretending to program {os.path.basename(fw_path)} ({os.path.getsize(fw_path)} bytes)")
+            sc = unwrap(scope)
+            res = s.worker.call(sc.load_firmware, fw_path, timeout=120) if hasattr(sc, "load_firmware") else {"emulated": False}
+            if res.get("emulated"):
+                print(f"Simulator: {os.path.basename(fw_path)} runs in the emulator ({res.get('core_label')}, SimpleSerial {res.get('protocol')})")
+                s.note_programmed(fw_path, res)
+            else:
+                print(f"Simulator: pretending to program {os.path.basename(fw_path)} ({os.path.getsize(fw_path)} bytes)")
             return True
         return self._real.program_target(unwrap(scope), prog_type, fw_path, **kwargs)
 
@@ -1032,7 +1501,10 @@ class _Live:
 
     @property
     def __class__(self):
-        return type(self._live())
+        try:
+            return type(self._live())
+        except Exception:  # noqa: BLE001 - not connected (any more): isinstance() checks must not raise
+            return type(self)
 
     def __getattr__(self, name):
         return getattr(self._live(), name)
@@ -1215,25 +1687,77 @@ class Tutorials:
     def status(self) -> Dict[str, Any]:
         info = None
         try:
-            with open(os.path.join(self.dest, ".cwstudio-source.json"), "r", encoding="utf-8") as f:
+            with open(os.path.join(self.dest, self.MANIFEST), "r", encoding="utf-8") as f:
                 info = json.load(f)
+            info.pop("files", None)
         except (OSError, ValueError):
             pass
         link = os.path.join(self.store.root, "firmware", "mcu")
         return {"installed": info, "folder": self.DIR, "firmware_linked": os.path.isfile(os.path.join(link, "Makefile.inc")), "job": {k: v for k, v in self.job.items() if k != "cancel"} or None}
 
-    def fetch(self, wait: bool = False) -> Dict[str, Any]:
+    MANIFEST = ".cwstudio-source.json"
+    MODES = ("backup", "keep")
+
+    def fetch(self, wait: bool = False, on_modified: Optional[str] = None) -> Dict[str, Any]:
+        """Download (or update) the tutorials. Files changed or added locally since the last download are never lost: if any of them would be replaced by a different upstream version, the job stops in state ``confirm`` listing them under ``conflicts`` until it is called again with ``on_modified`` = ``backup`` (install the new version, keep the local copy renamed to ``<name>.local-<timestamp><ext>``) or ``keep`` (leave the local copy in place, update everything else)."""
+        if on_modified is not None and on_modified not in self.MODES:
+            raise ValueError(f"on_modified must be one of {', '.join(self.MODES)}")
         if self.job.get("state") in ("resolving", "downloading", "extracting"):
             return self.status()
         from cwstudio.toolchains import Cancelled  # noqa: F401
         self.job = {"state": "resolving", "done": 0, "total": 0, "error": None, "cancel": threading.Event()}
-        th = threading.Thread(target=self._fetch, name="fetch-tutorials", daemon=True)
+        th = threading.Thread(target=self._fetch, args=(on_modified,), name="fetch-tutorials", daemon=True)
         th.start()
         if wait:
             th.join()
         return self.status()
 
-    def _fetch(self):
+    @staticmethod
+    def _hash(path: str) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for buf in iter(lambda: f.read(1 << 20), b""):
+                h.update(buf)
+        return h.hexdigest()
+
+    @classmethod
+    def _files(cls, root: str) -> Dict[str, str]:
+        """Relative path (with ``/``) to SHA-256 of every regular file under ``root``, without following links (``firmware`` links and the manifest are skipped)."""
+        out: Dict[str, str] = {}
+        for d, dirs, files in os.walk(root):
+            dirs[:] = [x for x in dirs if not os.path.islink(os.path.join(d, x))]
+            for n in files:
+                full = os.path.join(d, n)
+                rel = os.path.relpath(full, root).replace(os.sep, "/")
+                if rel == cls.MANIFEST or os.path.islink(full) or not os.path.isfile(full):
+                    continue
+                out[rel] = cls._hash(full)
+        return out
+
+    def local_changes(self, new: str) -> Dict[str, Any]:
+        """Compare the installed tutorials with a freshly extracted tree ``new``. Returns the files changed or added locally (``carry``, kept as they are) and those of them that upstream ships differently (``conflicts``). Installs from before Studio recorded hashes count a file as changed when it differs from the new version."""
+        try:
+            with open(os.path.join(self.dest, self.MANIFEST), "r", encoding="utf-8") as f:
+                known = json.load(f).get("files")
+        except (OSError, ValueError, AttributeError):
+            known = None
+        new_files = self._files(new)
+        carry, conflicts = [], []
+        if not os.path.isdir(self.dest):
+            return {"carry": carry, "conflicts": conflicts, "new": new_files}
+        for rel, h in sorted(self._files(self.dest).items()):
+            if known is not None and known.get(rel) == h:
+                continue  # unchanged since it was downloaded
+            if known is None and (rel not in new_files or new_files[rel] == h):
+                continue  # old install without hashes: only files that differ from upstream count
+            if new_files.get(rel) == h:
+                continue  # the local edit matches the new upstream file
+            carry.append(rel)
+            if rel in new_files:
+                conflicts.append(rel)
+        return {"carry": carry, "conflicts": conflicts, "new": new_files}
+
+    def _fetch(self, on_modified: Optional[str] = None):
         from cwstudio.toolchains import download, extract
         job = self.job
         tmp = self.dest + ".tmp"
@@ -1245,23 +1769,46 @@ class Tutorials:
                 ref = self.fm.resolve()["commit"]
             sha = self.fm._gh(f"/repos/{self.fm.sources_cfg['repo']}/contents/jupyter?ref={ref}")["sha"]
             job["state"] = "downloading"
-            archive = os.path.join(self.store.root, ".downloads", f"chipwhisperer-jupyter-{sha[:12]}.tar.gz")
-            log.info("Downloading ChipWhisperer tutorial notebooks at %s", sha[:7])
+            downloads = os.path.join(self.store.root, ".downloads")
+            archive = os.path.join(downloads, f"chipwhisperer-jupyter-{sha[:12]}.tar.gz")
+            if not os.path.isfile(archive):  # kept while waiting for a confirm, so the second call does not download again
+                log.info("Downloading ChipWhisperer tutorial notebooks at %s", sha[:7])
 
-            def progress(done, total):
-                job["done"], job["total"] = done, total
-            download(f"https://codeload.github.com/{self.REPO}/tar.gz/{sha}", archive, None, progress, job["cancel"])
+                def progress(done, total):
+                    job["done"], job["total"] = done, total
+                download(f"https://codeload.github.com/{self.REPO}/tar.gz/{sha}", archive, None, progress, job["cancel"])
             job["state"] = "extracting"
             self._publish("tutorials", self.status())
             shutil.rmtree(tmp, ignore_errors=True)
             extract(archive, tmp, members=lambda n: n.split("/", 1)[1] if "/" in n and n.split("/", 1)[1] else None, cancel=job["cancel"])
-            with open(os.path.join(tmp, ".cwstudio-source.json"), "w", encoding="utf-8") as f:
-                json.dump({"repo": self.REPO, "commit": sha, "firmware_commit": ref, "installed": time.time()}, f)
+            ch = self.local_changes(tmp)
+            if ch["conflicts"] and on_modified is None:
+                shutil.rmtree(tmp, ignore_errors=True)
+                job["state"], job["conflicts"] = "confirm", ch["conflicts"]
+                log.warning("%d tutorial file(s) were changed locally and differ in the new download; choose whether to back them up or keep them", len(ch["conflicts"]))
+                return
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            backups = []
+            for rel in ch["carry"]:
+                local = os.path.join(self.dest, *rel.split("/"))
+                target = os.path.join(tmp, *rel.split("/"))
+                if rel in ch["conflicts"] and on_modified == "backup":
+                    stem, ext = os.path.splitext(target)
+                    target = f"{stem}.local-{stamp}{ext}"
+                    backups.append(os.path.relpath(target, tmp).replace(os.sep, "/"))
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copy2(local, target)
+            with open(os.path.join(tmp, self.MANIFEST), "w", encoding="utf-8") as f:
+                json.dump({"repo": self.REPO, "commit": sha, "firmware_commit": ref, "installed": time.time(), "files": ch["new"]}, f)
             shutil.rmtree(self.dest, ignore_errors=True)
             os.replace(tmp, self.dest)
-            shutil.rmtree(os.path.join(self.store.root, ".downloads"), ignore_errors=True)
+            shutil.rmtree(downloads, ignore_errors=True)
             self.link_firmware()
             job["state"] = "installed"
+            job["kept"] = [r for r in ch["carry"] if r not in ch["conflicts"] or on_modified == "keep"]
+            job["backups"] = backups
+            if backups:
+                log.info("Kept your edited tutorial files as backups: %s", ", ".join(backups))
             log.info("Tutorial notebooks ready in %s", self.dest)
         except Exception as e:  # noqa: BLE001
             job["state"], job["error"] = "error", f"{type(e).__name__}: {e}"

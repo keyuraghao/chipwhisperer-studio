@@ -28,7 +28,8 @@ INSTRUCTIONS = (
     "Typical flow: studio_status, then scope_connect (kind='sim' when no hardware), target_connect, optionally toolchains_list, toolchain_install, firmware_fetch_sources, firmware_build and firmware_program, "
     "then capture_start with wait=true, traces_summary, cpa_start with wait=true and cpa_result. For fault injection configure glitch.* with scope_set_setting, then glitch_start and glitch_results. "
     "Settings are addressed by dotted paths from scope_get_settings / target_get_settings (e.g. 'gain.db', 'adc.samples', 'clock.clkgen_freq', 'glitch.width'). "
-    "For custom experiments, notebook_run_code runs Python in Studio's notebook kernel with cw bound to the connected hardware; notebook_run runs a whole stored notebook (e.g. NewAE's tutorials after tutorials_fetch). "
+    "For custom experiments, notebook_run_code runs Python in Studio's shared notebook kernel (or, with notebook_path, in that notebook's own kernel) with cw bound to the connected hardware; notebook_run runs a whole stored notebook (e.g. NewAE's tutorials after tutorials_fetch). "
+    "To see which firmware code a part of a trace is, run code_map_build after capturing (it emulates the programmed or newest built ELF for that trace), then code_map_region with a sample range or code_map_lookup with a function or file:line. "
     "Long jobs (capture, glitch, CPA, builds, downloads) run in the background; pass wait=true or poll the matching status tool. Only one hardware job runs at a time; capture_stop stops it."
 )
 
@@ -123,7 +124,7 @@ def start_embedded(host: str, port: int, simulate: bool, data_dir: Optional[str]
     """Run a headless Studio (API + UI) in a background thread and return its URL."""
     import uvicorn
     from cwstudio.app import create_app
-    from cwstudio.cli import _free_port, _wait_ready
+    from cwstudio.cli import _free_port, _wait_started
     from cwstudio.session import Session
 
     session = Session(simulate=simulate, data_dir=data_dir)
@@ -132,9 +133,20 @@ def start_embedded(host: str, port: int, simulate: bool, data_dir: Optional[str]
     config = uvicorn.Config(app, host=host, port=port, log_level="warning", ws_max_size=64 * 1024 * 1024, timeout_graceful_shutdown=3, log_config=None)
     server = uvicorn.Server(config)
     app.state.server = server
-    threading.Thread(target=server.run, name="studio-embedded", daemon=True).start()
-    if not _wait_ready(host, port, 30):
-        raise StudioError("embedded Studio did not start")
+
+    def serve():
+        try:
+            server.run()
+        except SystemExit:  # uvicorn exits when it cannot open the port; it has logged why
+            pass
+
+    thread = threading.Thread(target=serve, name="studio-embedded", daemon=True)
+    thread.start()
+    # wait for this server's own socket (connecting to the port could reach another program that took it first), and give up as soon as the server thread ends
+    if not _wait_started(server, 30, alive=thread.is_alive):
+        server.should_exit = True
+        session.close()
+        raise StudioError(f"embedded Studio did not start (is port {port} on {host} in use?)")
     return f"http://{host}:{port}"
 
 
@@ -195,9 +207,9 @@ def build_server(client: StudioClient, url_note: str = ""):
 
     # ----- scope -----------------------------------------------------------------
     @mcp.tool(annotations=HW)
-    def scope_connect(kind: Literal["auto", "lite", "pro", "nano", "husky", "huskyplus", "sim"] = "auto", sn: Optional[str] = None, force: bool = False, default_setup: bool = True) -> Dict[str, Any]:
-        """Connect to a capture scope. kind='sim' uses the built-in simulator (no hardware). sn picks a device by serial number, force reconnects a device another program left open, default_setup applies ChipWhisperer's recommended settings for the default target."""
-        return client.post("/api/scope/connect", {"kind": kind, "sn": sn, "force": force, "default_setup": default_setup})
+    def scope_connect(kind: Literal["auto", "lite", "pro", "nano", "husky", "huskyplus", "sim"] = "auto", sn: Optional[str] = None, force: bool = False, default_setup: bool = True, sim_model: Optional[Literal["husky", "huskyplus", "pro", "lite", "nano"]] = None) -> Dict[str, Any]:
+        """Connect to a capture scope. kind='sim' uses the built-in simulator (no hardware); sim_model picks which ChipWhisperer it stands in for (default husky), which decides the protocols, triggers and programmers offered. sn picks a device by serial number, force reconnects a device another program left open, default_setup applies ChipWhisperer's recommended settings for the default target."""
+        return client.post("/api/scope/connect", {"kind": kind, "sn": sn, "force": force, "default_setup": default_setup, "sim_model": sim_model})
 
     @mcp.tool(annotations=HW)
     def scope_disconnect() -> Dict[str, Any]:
@@ -249,14 +261,14 @@ def build_server(client: StudioClient, url_note: str = ""):
         return client.put("/api/target/settings", {"path": path, "value": value})
 
     @mcp.tool(annotations=DESTRUCTIVE)
-    def target_program(path: str, programmer: Literal["STM32F", "XMEGA", "AVR", "SAM4S", "NEORV32"] = "STM32F") -> Dict[str, Any]:
-        """Erase and program the target microcontroller with a .hex/.bin file on the machine running Studio, using the chosen programmer (STM32F for CWLITEARM/Nano/STM32 targets, XMEGA for CWLITEXMEGA, AVR for ATmega, SAM4S for Husky's target, NEORV32 for the soft core)."""
+    def target_program(path: str, programmer: Literal["STM32F", "XMEGA", "AVR", "SAM4S", "NEORV32", "iCE40", "XC7A35T"] = "STM32F") -> Dict[str, Any]:
+        """Erase and program the target microcontroller with a .hex/.bin file on the machine running Studio, using the chosen programmer (STM32F for CWLITEARM/Nano/STM32 targets, XMEGA for CWLITEXMEGA, AVR for ATmega, SAM4S for Husky's target, NEORV32 for the soft core), or load an FPGA bitstream (iCE40, XC7A35T on CW312T boards). Programmers the connected model does not support are refused with the reason (see hardware_capabilities)."""
         return client.post("/api/target/program", {"programmer": programmer, "path": path}, timeout=900)
 
     @mcp.tool(annotations=HW)
-    def serial_write(data: str, hex: bool = False, newline: bool = True) -> Dict[str, Any]:
-        """Write raw data to the target serial port: text, or hex bytes when hex=true; newline appends a line feed."""
-        return client.post("/api/target/serial/write", {"data": data, "hex": hex, "newline": newline})
+    def serial_write(data: str, hex: bool = False, newline: bool = True, eol: Optional[Literal["none", "lf", "cr", "crlf"]] = None) -> Dict[str, Any]:
+        """Write raw data to the target serial port: text, or hex bytes when hex=true; newline appends a line feed, or eol picks the line ending (none, lf, cr, crlf)."""
+        return client.post("/api/target/serial/write", {"data": data, "hex": hex, "newline": newline, "eol": eol})
 
     @mcp.tool(annotations=RO)
     def serial_read(since: float = 0, limit: int = 200) -> List[Dict[str, Any]]:
@@ -487,7 +499,7 @@ def build_server(client: StudioClient, url_note: str = ""):
         return client.post("/api/firmware/plan", {"project": project, "platform": platform, "compiler": compiler, "crypto_target": crypto_target, "ss_ver": ss_ver, "cflags": cflags, "make_args": make_args})
 
     @mcp.tool(annotations=HW)
-    def firmware_build(project: str = "simpleserial-aes", platform: str = "CWLITEARM", compiler: Literal["gcc", "clang"] = "gcc", crypto_target: Optional[str] = "TINYAES128C", ss_ver: Optional[Literal["SS_VER_2_1", "SS_VER_1_1", "SS_VER_1_0", "SS_VER_2_0"]] = "SS_VER_2_1", cflags: Optional[str] = None, make_args: Optional[str] = None, clean: bool = True, jobs: Optional[int] = None, wait: bool = True, timeout_s: float = 900, log_tail: int = 40) -> Dict[str, Any]:
+    def firmware_build(project: str = "simpleserial-aes", platform: str = "CWLITEARM", compiler: Literal["gcc", "clang"] = "gcc", crypto_target: Optional[str] = "TINYAES128C", ss_ver: Optional[Literal["SS_VER_2_1", "SS_VER_1_1", "SS_VER_1_0"]] = "SS_VER_2_1", cflags: Optional[str] = None, make_args: Optional[str] = None, clean: bool = True, jobs: Optional[int] = None, wait: bool = True, timeout_s: float = 900, log_tail: int = 40) -> Dict[str, Any]:
         """Compile a ChipWhisperer firmware project for a platform with GCC or clang using ChipWhisperer's makefiles. crypto_target picks the AES/crypto implementation (TINYAES128C, AVRCRYPTOLIB, MBEDTLS, HWAES...), ss_ver the SimpleSerial protocol (SS_VER_2_1 for current Studio/ChipWhisperer, SS_VER_1_1 legacy), cflags adds compiler flags, make_args adds make variables (e.g. 'OPT=2 EXTRA_OPTS=...'), clean rebuilds from scratch. Returns the .hex path, sizes and programmer, plus the end of the build log."""
         res = client.post("/api/firmware/build", {"project": project, "platform": platform, "compiler": compiler, "crypto_target": crypto_target, "ss_ver": ss_ver, "cflags": cflags, "make_args": make_args, "clean": clean, "jobs": jobs})
         end = time.time() + timeout_s
@@ -543,9 +555,9 @@ def build_server(client: StudioClient, url_note: str = ""):
 
     @mcp.tool(annotations=HW)
     def notebook_run_code(code: str, notebook_path: Optional[str] = None, timeout_s: float = 600) -> Dict[str, Any]:
-        """Run Python in Studio's notebook kernel (one persistent namespace, same one the Notebook tab uses) and return its output. Inside it, `import chipwhisperer as cw` gives cw.scope()/cw.target() bound to Studio's connected devices, cw.capture_trace() stores traces in the Capture tab, IPython magics and !shell commands work, and `studio` offers studio.traces, studio.add_trace(), studio.build_firmware(), studio.program(). notebook_path sets the working directory (relative paths as in that notebook)."""
-        r = client.post("/api/kernel/run", {"code": code, "path": notebook_path, "timeout": timeout_s}, timeout=timeout_s + 30)
-        return {"ok": r.get("ok"), "execution_count": r.get("execution_count"), **_summarise_outputs(r.get("outputs"))}
+        """Run Python in a Studio notebook kernel and return its output. Without notebook_path it runs in the shared default kernel (one persistent namespace for agent code); with notebook_path (relative to the notebooks folder) it runs in that notebook's own kernel, the namespace its tab in the Notebook tab uses, with the notebook's folder as working directory. Inside, `import chipwhisperer as cw` gives cw.scope()/cw.target() bound to Studio's connected devices, cw.capture_trace() stores traces in the Capture tab, IPython magics and !shell commands work, and `studio` offers studio.traces, studio.add_trace(), studio.build_firmware(), studio.program(). Cells of all kernels run one at a time."""
+        r = client.post("/api/kernel/run", {"code": code, "path": notebook_path, "kernel": notebook_path, "timeout": timeout_s}, timeout=timeout_s + 30)
+        return {"ok": r.get("ok"), "execution_count": r.get("execution_count"), "kernel": r.get("kernel"), **_summarise_outputs(r.get("outputs"))}
 
     @mcp.tool(annotations=RO)
     def notebook_list() -> Dict[str, Any]:
@@ -573,7 +585,7 @@ def build_server(client: StudioClient, url_note: str = ""):
 
     @mcp.tool(annotations=HW)
     def notebook_run(path: str, stop_on_error: bool = True, timeout_s: float = 1800) -> Dict[str, Any]:
-        """Run every code cell of a stored notebook in order (like Run all), save the outputs into the notebook and return a per-cell summary."""
+        """Run every code cell of a stored notebook in order (like Run all) in that notebook's own kernel, save the outputs into the notebook and return a per-cell summary. Its variables stay available to notebook_run_code(notebook_path=path) until kernel_shutdown."""
         r = client.post("/api/notebooks/run", {"path": path, "stop_on_error": stop_on_error, "timeout": timeout_s}, timeout=timeout_s + 60)
         cells = []
         for c in r["notebook"]["cells"]:
@@ -581,25 +593,38 @@ def build_server(client: StudioClient, url_note: str = ""):
                 cells.append({"id": c["id"], "first_line": (c["source"].strip().splitlines() or [""])[0][:80], **_summarise_outputs(c.get("outputs"), 800)})
         return {"path": path, "ok": r["ok"], "cells_run": r["cells_run"], "failed_cell": r["failed_cell"], "cells": cells}
 
+    def _kernel_query(notebook_path: Optional[str]) -> Dict[str, Any]:
+        return {"kernel": notebook_path} if notebook_path else {}
+
     @mcp.tool(annotations=RO)
-    def kernel_variables() -> List[Dict[str, Any]]:
-        """Variables currently defined in the notebook kernel (name, type, shape, short repr)."""
-        return client.get("/api/kernel/variables")
+    def kernel_variables(notebook_path: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Variables defined in a notebook kernel (name, type, shape, short repr): the shared default kernel, or the kernel of the notebook at notebook_path."""
+        return client.get("/api/kernel/variables", **_kernel_query(notebook_path))
+
+    @mcp.tool(annotations=RO)
+    def kernel_list() -> List[Dict[str, Any]]:
+        """Running notebook kernels: id (the notebook path, or "default"), busy, queued cells, execution count, number of variables and how many Studio windows have the notebook open."""
+        return client.get("/api/kernels")
 
     @mcp.tool(annotations=HW)
-    def kernel_interrupt() -> Dict[str, Any]:
-        """Interrupt the running notebook cell and drop queued cells."""
-        return client.post("/api/kernel/interrupt")
+    def kernel_interrupt(notebook_path: Optional[str] = None) -> Dict[str, Any]:
+        """Interrupt the running cell of a kernel and drop its queued cells: the shared default kernel, the kernel of the notebook at notebook_path, or every kernel with notebook_path="all"."""
+        return client.post("/api/kernel/interrupt", _kernel_query(notebook_path))
 
     @mcp.tool(annotations=DESTRUCTIVE)
-    def kernel_restart() -> Dict[str, Any]:
-        """Restart the notebook kernel: clears all notebook variables (Studio's hardware connection is kept)."""
-        return client.post("/api/kernel/restart")
+    def kernel_restart(notebook_path: Optional[str] = None) -> Dict[str, Any]:
+        """Restart a kernel, clearing its variables (Studio's hardware connection is kept): the shared default kernel, or the kernel of the notebook at notebook_path. Other notebooks are not affected."""
+        return client.post("/api/kernel/restart", _kernel_query(notebook_path))
+
+    @mcp.tool(annotations=DESTRUCTIVE)
+    def kernel_shutdown(notebook_path: str) -> Dict[str, Any]:
+        """Shut down the kernel of the notebook at notebook_path and free its memory (it starts again, empty, when the notebook next runs a cell). Use it after notebook_run on notebooks you no longer need."""
+        return client.post("/api/kernels/shutdown", {"kernel": notebook_path})
 
     @mcp.tool(annotations=NET)
-    def tutorials_fetch(wait: bool = True, timeout_s: float = 900) -> Dict[str, Any]:
-        """Download NewAE's tutorial notebooks (chipwhisperer-jupyter, matched to the installed firmware sources) into the notebooks folder, with firmware paths linked so their build cells work."""
-        r = client.post("/api/notebooks/tutorials/fetch")
+    def tutorials_fetch(wait: bool = True, timeout_s: float = 900, on_modified: Optional[Literal["backup", "keep"]] = None) -> Dict[str, Any]:
+        """Download NewAE's tutorial notebooks (chipwhisperer-jupyter, matched to the installed firmware sources) into the notebooks folder, with firmware paths linked so their build cells work. Locally edited or added files are kept; if some of them would be replaced by a different upstream version the job stops in state "confirm" listing job.conflicts, and nothing changes until you call again with on_modified="backup" (install the new versions and keep the local copies as <name>.local-<timestamp>.<ext>) or on_modified="keep" (leave the local copies in place). Ask the user before choosing."""
+        r = client.post("/api/notebooks/tutorials/fetch", {"on_modified": on_modified} if on_modified else None)
         end = time.time() + timeout_s
         while wait and time.time() < end:
             r = client.get("/api/notebooks")["tutorials"]
@@ -643,6 +668,13 @@ def build_server(client: StudioClient, url_note: str = ""):
         if sample is not None:
             return client.post("/api/calc/stats", {"source": "sample", "sample": sample})
         return client.post("/api/calc/stats", {"source": "trace", "index": -1 if trace_index is None else trace_index, "start": start, "end": end})
+
+    from cwstudio.mcp_interfaces import register_interface_tools
+    register_interface_tools(mcp, client, RO, HW, DESTRUCTIVE)  # protocols and interfaces: UART, SPI, GPIO, triggers, bit-banger, 1-Wire, OpenOCD
+    from cwstudio.mcp_logic import register_logic_tools
+    register_logic_tools(mcp, client, RO, HW)  # logic analyser: sources, capture, import/export, decoders, measurements, channels
+    from cwstudio.mcp_codemap import register_codemap_tools
+    register_codemap_tools(mcp, client, RO, HW)  # code map: firmware emulation, code on the waveform, alignment, exact mode
 
     # ----- resources and prompts --------------------------------------------------------------
     @mcp.resource("studio://status", mime_type="application/json")
