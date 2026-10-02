@@ -459,10 +459,10 @@ def test_queued_event_comes_before_running(client, monkeypatch):
 def test_cd_lasts_until_restart(client, tmp_path):
     (tmp_path / "sub").mkdir()
     run_in(client, "cd/a.ipynb", f"%cd {tmp_path / 'sub'}")
-    assert result(run_in(client, "cd/a.ipynb", "import os\nos.getcwd()")) == repr(str(tmp_path / "sub"))
-    assert result(run_in(client, "cd/b.ipynb", "import os\nos.getcwd()")) == repr(os.path.join(client.session.notebooks.root, "cd"))  # other notebooks keep their folder
+    assert result(run_in(client, "cd/a.ipynb", "import os\nos.path.realpath(os.getcwd())")) == repr(os.path.realpath(tmp_path / "sub"))
+    assert result(run_in(client, "cd/b.ipynb", "import os\nos.path.realpath(os.getcwd())")) == repr(os.path.realpath(os.path.join(client.session.notebooks.root, "cd")))  # other notebooks keep their folder
     client.post("/api/kernel/restart", json={"kernel": "cd/a.ipynb"})
-    assert result(run_in(client, "cd/a.ipynb", "import os\nos.getcwd()")) == repr(os.path.join(client.session.notebooks.root, "cd"))
+    assert result(run_in(client, "cd/a.ipynb", "import os\nos.path.realpath(os.getcwd())")) == repr(os.path.realpath(os.path.join(client.session.notebooks.root, "cd")))
 
 
 @pytest.mark.skipif(os.name == "nt", reason="uses sleep from a POSIX shell")

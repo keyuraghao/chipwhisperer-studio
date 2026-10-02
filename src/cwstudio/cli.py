@@ -21,9 +21,25 @@ def _port_free(host: str, port: int) -> bool:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind((host, port))
-            return True
         except OSError:
             return False
+    return not _listening(host, port)
+
+
+def _listening(host: str, port: int) -> bool:
+    """Whether a server already accepts connections on the port. macOS and Windows let a socket bind 127.0.0.1 while another listens on 0.0.0.0 (and the reverse), so the bind test alone misses those; a port left in TIME_WAIT refuses connections, so it still counts as free."""
+    probe = {"0.0.0.0": "127.0.0.1", "": "127.0.0.1", "::": "::1"}.get(host, host)
+    family = socket.AF_INET6 if ":" in probe else socket.AF_INET
+    targets = [(family, probe)] + ([(socket.AF_INET6, "::1")] if host in ("0.0.0.0", "") and socket.has_ipv6 else [])
+    for fam, addr in targets:
+        with socket.socket(fam, socket.SOCK_STREAM) as c:
+            c.settimeout(0.3)
+            try:
+                if c.connect_ex((addr, port)) == 0:
+                    return True
+            except OSError:
+                pass
+    return False
 
 
 def _free_port(host: str, preferred: int) -> int:
