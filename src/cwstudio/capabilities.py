@@ -81,7 +81,7 @@ def capabilities(scope, target=None) -> Dict[str, Any]:
     if m is None:
         none = cap(False, "connect a scope first")
         return {"connected": scope is not None, "model": None, "label": None, "uart": none, "simpleserial": none, "spi": none, "jtag": none, "swd": none, "trace": none, "gpio": none, "userio": none, "bitbanger": none, "onewire": none,
-                "triggers": {}, "programmers": {}, "logic_analyzer": {"native": none, "adc": none, "external": cap(True), "files": cap(True)}}
+                "triggers": {}, "programmers": {}, "logic_analyzer": logic_sources(None)}
     husky, nano, openadc = m in HUSKY, m == "nano", m in OPENADC
     spi_fw = _feature(scope, "TARGET_SPI")
     mpsse_fw = _feature(scope, "MPSSE")
@@ -149,14 +149,30 @@ def capabilities(scope, target=None) -> Dict[str, Any]:
     p["OpenOCD"] = cap(jtag_ok, out["jtag"]["reason"])
     out["programmers"] = p
 
-    depth = 65535 if m == "huskyplus" else 16376
-    out["logic_analyzer"] = {
-        "native": cap(husky and (la_present or out["simulated"]), "the built-in logic analyser is on the ChipWhisperer-Husky; use the analog input or an external analyser" if not husky else "the Husky logic analyser component is not available", depth=depth, groups=LA_GROUPS, channels_per_capture=9, max_rate_hz=250e6),
-        "adc": cap(True, channels=1, note="one digital line wired to the measure input, thresholded"),
-        "external": cap(True),
-        "files": cap(True, formats=["vcd", "csv", "sr"]),
-    }
+    out["logic_analyzer"] = logic_sources(scope, m, la_present)
     return out
+
+
+def logic_sources(scope, m: Optional[str] = None, la_present: bool = False) -> Dict[str, Any]:
+    """Logic analyser sources: the Husky's built-in LA, a line on the analog input of any ChipWhisperer, the simulator's demo traffic, external analysers through sigrok-cli (when installed) and files from any analyser."""
+    from cwstudio.logic import sigrok
+    none = cap(False, "connect a scope first")
+    sg = sigrok.status()
+    external = cap(sg["available"], sg["reason"], tool="sigrok-cli", path=sg["path"], version=sg["version"], install=sg["install"])
+    files = cap(True, formats=["vcd", "csv", "sr"], export=["vcd", "csv", "sr"])
+    if m is None:
+        return {"native": none, "adc": none, "sim": cap(False, "connect the simulator for its demo traffic"), "external": external, "files": files}
+    husky = m in HUSKY
+    simulated = bool(getattr(scope, "sim_model", None))
+    depth = 65535 if m == "huskyplus" else 16376
+    return {
+        "native": cap(husky and (la_present or simulated), "the built-in logic analyser is on the ChipWhisperer-Husky; use the analog input or an external analyser" if not husky else "the Husky logic analyser component is not available (TraceWhisperer did not start)",
+                      depth=depth, groups=LA_GROUPS, channels_per_capture=9, max_rate_hz=250e6, clk_sources=["usb", "target", "pll"], downsample=[1, 65536], pretrigger=False, with_analog=husky),
+        "adc": cap(True, channels=1, note="one digital line wired to the measure input, captured as traces and thresholded", max_segments=2000),
+        "sim": cap(simulated, "the simulated logic source needs the simulator connected", channels=18),
+        "external": external,
+        "files": files,
+    }
 
 
 # ----- gating of the generic scope settings tree -------------------------------------------------

@@ -11,6 +11,7 @@ import { initFirmware } from './firmware.js';
 import { initNotebook } from './notebook.js';
 import { initNotes, initCalc, initSelectionStats } from './tools.js';
 import { initInterfaces } from './interfaces.js';
+import { initLogic } from './logic.js';
 
 const ctx = new Emitter();
 ctx.status = null;
@@ -26,6 +27,7 @@ const PANELS = {
   capture: ['Capture', 'Record power traces while the waveform updates live.'],
   analysis: ['Analysis', 'Recover the AES key with correlation power analysis.'],
   notebook: ['Notebook', 'Run Python cell by cell with the connected hardware; traces land in the Capture tab.'],
+  logic: ['Logic', 'Capture digital signals from the Husky, the analog input, the simulator, sigrok or a file, and decode them.'],
   glitch: ['Glitch', 'Sweep glitch parameters and map where the target misbehaves.'],
   notes: ['Notes', 'A text pad for keys, settings that worked and to-dos. Saved automatically.'],
   calc: ['Calculator', 'Quick maths plus statistics of whatever you select.'],
@@ -56,9 +58,13 @@ themeBtn.addEventListener('click', () => {
 ctx.showTab = (name) => {
   document.querySelectorAll('#tabs .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('#sidebar .panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + name));
-  const nbMode = name === 'notebook';
+  // The Notebook and Logic tabs replace the waveform in the main area.
   const main = document.getElementById('main');
-  if (main.classList.contains('nb-mode') !== nbMode) { main.classList.toggle('nb-mode', nbMode); if (!nbMode && ctx.wave) setTimeout(() => ctx.wave.resize(), 30); }
+  const wasWave = !main.classList.contains('nb-mode') && !main.classList.contains('la-mode');
+  main.classList.toggle('nb-mode', name === 'notebook');
+  main.classList.toggle('la-mode', name === 'logic');
+  if (!wasWave && name !== 'notebook' && name !== 'logic' && ctx.wave) setTimeout(() => ctx.wave.resize(), 30);
+  ctx.activeTab = name;
   try { localStorage.setItem('cw.tab', name); } catch (e) { /* ignore */ }
   ctx.emit('tab', name);
 };
@@ -179,6 +185,7 @@ async function boot() {
   initAnalysis(ctx, document.getElementById('panel-analysis'));
   initGlitch(ctx, document.getElementById('panel-glitch'));
   ctx.notebook = initNotebook(ctx, document.getElementById('panel-notebook'), document.getElementById('nb-view'));
+  ctx.logic = initLogic(ctx, document.getElementById('panel-logic'), document.getElementById('la-view'));
   initNotes(ctx, document.getElementById('panel-notes'));
   initCalc(ctx, document.getElementById('panel-calc'));
   initSelectionStats(ctx, document.getElementById('sel-stats'));
@@ -189,6 +196,7 @@ async function boot() {
   document.getElementById('btn-stop').addEventListener('click', () => ctx.capture.stop());
   document.addEventListener('keydown', (e) => {
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (ctx.activeTab === 'logic') return; // the Logic tab has its own keys (zoom, pan, cursors, Esc to stop)
     if (e.key === 's' || e.key === 'S') ctx.capture.single();
     else if (e.key === 'r' || e.key === 'R') ctx.capture.start();
     else if (e.key === 'Escape') ctx.capture.stop();
@@ -217,7 +225,7 @@ async function boot() {
   sock.on('cpa', (ev) => ctx.emit('cpa', ev));
   sock.on('glitch', (ev) => { ctx.emit('glitch', ev); if (ev.state === 'running') ensureRunning(); else ctx.refreshStatus(); });
   sock.on('glitch_result', (ev) => ctx.emit('glitch_result', ev));
-  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials', 'openocd', 'spi']) sock.on(k, (ev) => ctx.emit(k, ev));
+  for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials', 'openocd', 'spi', 'la']) sock.on(k, (ev) => ctx.emit(k, ev));
 
   // Restore last tab; fall back to Connect.
   let tab = 'connect';

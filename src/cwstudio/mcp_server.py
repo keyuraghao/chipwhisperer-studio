@@ -659,6 +659,8 @@ def build_server(client: StudioClient, url_note: str = ""):
 
     from cwstudio.mcp_interfaces import register_interface_tools
     register_interface_tools(mcp, client, RO, HW, DESTRUCTIVE)  # protocols and interfaces: UART, SPI, GPIO, triggers, bit-banger, 1-Wire, OpenOCD
+    from cwstudio.mcp_logic import register_logic_tools
+    register_logic_tools(mcp, client, RO, HW)  # logic analyser: sources, capture, import/export, decoders, measurements, channels
 
     # ----- resources and prompts --------------------------------------------------------------
     @mcp.resource("studio://status", mime_type="application/json")

@@ -210,6 +210,11 @@ class SimScope:
         self.capture_delay = 0.0       # extra latency per capture (seconds) to mimic USB
         self._bg_cache: Optional[np.ndarray] = None
         self._geo_cache: Optional[tuple] = None
+        self._measure_hook = None      # set by the logic analyser's analog-to-logic source: a callable(n) giving what the measure input sees instead of the AES leakage
+        self.LA = None
+        if sim_model in ("husky", "huskyplus"):
+            from cwstudio.logic.sources import SimLA
+            self.LA = SimLA(self, plus=sim_model == "huskyplus")  # the Husky logic analyser (scope.LA) on the demo traffic
 
     # --- API used by Studio ------------------------------------------------
     def _dict_repr(self):
@@ -265,6 +270,12 @@ class SimScope:
         """Return True on timeout (like the real API)."""
         if not self._armed:
             return True
+        if self._measure_hook is not None:
+            # a digital line on the measure input triggers the capture itself
+            self._last_trace = np.asarray(self._measure_hook(int(self.adc.samples)), dtype=np.float32)
+            self._armed = False
+            self.adc._state = False
+            return False
         deadline = time.time() + float(self.adc.timeout)
         while self.target is None or not self.target._triggered:
             if time.time() > deadline:
@@ -381,6 +392,7 @@ class SimTarget:
         self._last_pt = b""
         self._last_ct = b""
         self._triggered = False
+        self._trigger_count = 0  # how often the trigger pin went high (the simulated logic analyser watches it)
         self._rx = bytearray()   # data the *host* can read (target -> host)
         self._lock = threading.Lock()
         self.output_len = 16
@@ -469,6 +481,7 @@ class SimTarget:
             self._last_pt = data
             self._last_ct = encrypt_block(self._key, data) if len(data) == 16 else b""
             self._triggered = True
+            self._trigger_count += 1
             resp = self._last_ct
             if self._glitch_active() and self._glitch_outcome() == "success":
                 resp = bytes(b ^ 0xFF for b in resp)
@@ -477,6 +490,7 @@ class SimTarget:
         elif cmd == "g":
             # simpleserial-glitch style: loop counter, expect 0x09C4 (2500) normally
             self._triggered = True
+            self._trigger_count += 1
             outcome = self._glitch_outcome() if self._glitch_active() else "normal"
             if outcome == "reset":
                 self._pending_response = None
