@@ -19,11 +19,13 @@ def _port_free(host: str, port: int) -> bool:
     with socket.socket(family, socket.SOCK_STREAM) as s:
         if os.name != "nt":
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)  # fails while any socket holds the port, on any address
         try:
             s.bind((host, port))
         except OSError:
             return False
-    return not _listening(host, port)
+    return os.name == "nt" or not _listening(host, port)
 
 
 def _listening(host: str, port: int) -> bool:
@@ -33,7 +35,7 @@ def _listening(host: str, port: int) -> bool:
     targets = [(family, probe)] + ([(socket.AF_INET6, "::1")] if host in ("0.0.0.0", "") and socket.has_ipv6 else [])
     for fam, addr in targets:
         with socket.socket(fam, socket.SOCK_STREAM) as c:
-            c.settimeout(0.3)
+            c.settimeout(1.0)
             try:
                 if c.connect_ex((addr, port)) == 0:
                     return True
