@@ -204,7 +204,7 @@ def main(argv=None):
     except window.WindowUnavailable as e:
         print(f"Studio cannot open its own window: {e}", flush=True)
         if has_display():
-            print("Opening it in your web browser instead. Close this console window or press Ctrl+C to quit.", flush=True)
+            print(fallback_message(url), flush=True)
         open_browser(url)
         try:
             while thread.is_alive():
@@ -216,6 +216,29 @@ def main(argv=None):
     server.should_exit = True
     thread.join(10)
     return 0
+
+
+def has_console() -> bool:
+    """True when Studio's output reaches a console or terminal the user sees: not for the windowed Windows executable (output goes to studio.log), the macOS app or a launcher started from a desktop menu."""
+    if _streams_redirected:
+        return False
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None and stream.isatty():
+                return True
+        except (AttributeError, ValueError, OSError):
+            pass
+    return False
+
+
+def fallback_message(url: str) -> str:
+    """What to do when Studio opened in the browser because its own window is unavailable: with a console, quit there; without one, there is nothing to close."""
+    if has_console():
+        where = "close this console window" if sys.platform == "win32" else "close this terminal"
+        return f"Opening it in your web browser instead. Press Ctrl+C here or {where} to quit."
+    monitor = "Task Manager" if sys.platform == "win32" else "Activity Monitor" if sys.platform == "darwin" else "your system monitor (or kill the process)"
+    return (f"Opening it in your web browser instead ({url}). Studio keeps running in the background without a window or console: "
+            f"to quit, end ChipWhisperer Studio in {monitor}, or send POST {url.split('?')[0]}api/shutdown.")
 
 
 def has_display() -> bool:
@@ -283,16 +306,39 @@ def default_mode() -> str:
     return "window"
 
 
+def mcp_command() -> dict:
+    """The command an MCP client should start for this installation, as {"command": ..., "args": [...]}.
+
+    In a bundle it is the executable itself, except in the Windows window build, whose ChipWhispererStudio.exe is a windowed program without standard input and output: there the console executable cw-studio.exe next to it serves MCP. A pip install uses the cw-studio command, or python -m cwstudio when that is not on PATH.
+    """
+    if getattr(sys, "frozen", False):
+        exe = os.path.abspath(sys.executable)
+        if sys.platform == "win32":
+            console = os.path.join(os.path.dirname(exe), "cw-studio.exe")
+            if os.path.exists(console):
+                exe = console
+        return {"command": exe, "args": ["mcp"]}
+    import shutil
+    if shutil.which("cw-studio"):
+        return {"command": "cw-studio", "args": ["mcp"]}
+    return {"command": sys.executable, "args": ["-m", "cwstudio", "mcp"]}
+
+
 def main_web(argv=None):
     """Entry point of cw-studio-web: the same Studio, opening in the web browser by default."""
     os.environ.setdefault("CWSTUDIO_DEFAULT_UI", "browser")
     return main(argv)
 
 
+_streams_redirected = False  # set when output goes to studio.log because there is no console
+
+
 def _ensure_streams() -> None:
     """Without a console (the windowed Windows executable, pythonw) sys.stdout and sys.stderr are None; send output to a log file so logging and uvicorn work and errors are kept."""
+    global _streams_redirected
     if sys.stdout is not None and sys.stderr is not None:
         return
+    _streams_redirected = True
     folder = os.path.join(os.path.expanduser("~"), "ChipWhispererStudio")
     try:
         os.makedirs(folder, exist_ok=True)

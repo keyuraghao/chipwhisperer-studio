@@ -622,9 +622,9 @@ def build_server(client: StudioClient, url_note: str = ""):
         return client.post("/api/kernels/shutdown", {"kernel": notebook_path})
 
     @mcp.tool(annotations=NET)
-    def tutorials_fetch(wait: bool = True, timeout_s: float = 900) -> Dict[str, Any]:
-        """Download NewAE's tutorial notebooks (chipwhisperer-jupyter, matched to the installed firmware sources) into the notebooks folder, with firmware paths linked so their build cells work."""
-        r = client.post("/api/notebooks/tutorials/fetch")
+    def tutorials_fetch(wait: bool = True, timeout_s: float = 900, on_modified: Optional[Literal["backup", "keep"]] = None) -> Dict[str, Any]:
+        """Download NewAE's tutorial notebooks (chipwhisperer-jupyter, matched to the installed firmware sources) into the notebooks folder, with firmware paths linked so their build cells work. Locally edited or added files are kept; if some of them would be replaced by a different upstream version the job stops in state "confirm" listing job.conflicts, and nothing changes until you call again with on_modified="backup" (install the new versions and keep the local copies as <name>.local-<timestamp>.<ext>) or on_modified="keep" (leave the local copies in place). Ask the user before choosing."""
+        r = client.post("/api/notebooks/tutorials/fetch", {"on_modified": on_modified} if on_modified else None)
         end = time.time() + timeout_s
         while wait and time.time() < end:
             r = client.get("/api/notebooks")["tutorials"]

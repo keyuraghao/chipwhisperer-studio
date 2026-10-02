@@ -125,7 +125,7 @@ class CodeMapService:
             found = [p for pat in ("*.elf", "*/*.elf", "*/*/*.elf") for p in glob.glob(os.path.join(path, pat))]
             if not found:
                 raise FileNotFoundError(f"no .elf in {path}: build the firmware first (Firmware tab) or give the .elf")
-            if sources is None and not self.source_roots:
+            if (sources is None and not self.source_roots) or sources == []:
                 sources = [path]
             path = max(found, key=os.path.getmtime)
         if not os.path.isfile(path):
@@ -287,7 +287,7 @@ class CodeMapService:
     # --- status -------------------------------------------------------------------------------------
     def status(self, full: bool = False) -> Dict[str, Any]:
         st: Dict[str, Any] = {"ready": self.timeline is not None, "engines": engine_status(), "mapping": self.mapping.to_json(), "alignment": self.alignment,
-                              "cores": {k: cy.CORE_LABELS[k] for k in cy.ALL_CORES}, "source_roots": self.source_roots, "programmed": getattr(self.s, "programmed", None)}
+                              "cores": {k: cy.CORE_LABELS[k] for k in cy.ALL_CORES}, "source_roots": self.source_roots, "pathsep": os.pathsep, "programmed": getattr(self.s, "programmed", None)}
         st.update(self.meta)
         if full and self.timeline is not None:
             st["band"] = self.timeline.to_json()
@@ -488,19 +488,20 @@ class CodeMapService:
         require(caps.get("trace"), "Arm trace (exact mode)")
         if tl.prog.arch != "arm":
             raise Unsupported("exact mode records Arm SWO trace; this firmware is " + str(tl.prog.arch))
-        interval = int(p.get("interval") or 64)
+        requested = int(p.get("interval") or 64)
+        interval, cyctap, preset = swo.pc_sample_interval(requested)  # the DWT samples every 64 or 1024 cycles times 1 to 16: the nearest of those
         if caps.get("simulated"):
             fake = swo.FakeTraceWhisperer(tl.run, interval=interval)
             stream = swo.raw_bytes(fake.read_capture_data())
             samples = swo.decode_pc_samples(stream)
             res = swo.compare(samples, tl)
-            res.update({"mode": "simulated", "interval": interval, "bytes": len(stream)})
+            res.update({"mode": "simulated", "interval": interval, "interval_requested": requested, "bytes": len(stream)})
         else:
             if "set_pcsample_params" not in tl.prog.symbols:
                 raise Unsupported("exact mode needs firmware with ChipWhisperer's simpleserial-trace commands (PC sampling setup); build simpleserial-trace for this platform")
             if self.s.target is None:
                 raise Unsupported("connect the target first")
-            rec = swo.HuskyPCTrace(sc, self.s.target, swo_div=int(p.get("swo_div") or 8), postinit=max(0, interval // 64 - 1))
+            rec = swo.HuskyPCTrace(sc, self.s.target, swo_div=int(p.get("swo_div") or 8), cyctap=cyctap, postinit=preset, postreset=preset)
             key = bytes.fromhex(self.meta["key"])
             text = bytes.fromhex(self.meta["text"])
 
@@ -509,7 +510,10 @@ class CodeMapService:
                 return rec.capture(key, text)
             got = self.s.worker.call(_do, timeout=60)
             res = swo.compare(got["samples"], tl)
-            res.update({"mode": "husky", "interval": interval, "bytes": got["bytes"], "textout": got["textout"]})
+            res.update({"mode": "husky", "interval": interval, "interval_requested": requested, "bytes": got["bytes"], "textout": got["textout"]})
+            if not res["samples"]:
+                res["message"] = ("the Husky received no trace bytes: check that the target's SWO (TDO) reaches USERIO D2 and that the firmware is simpleserial-trace" if not got["bytes"]
+                                  else f"{got['bytes']} trace bytes arrived but none was a PC sample: check the SWO bit rate (swo_div) against the target clock")
         m = self.mapping
         for r in res.get("rows", []):
             r["sample"] = round(float(m.sample(r["cycle"] * (res.get("scale") or 1.0) + (res.get("offset") or 0.0))), 2)

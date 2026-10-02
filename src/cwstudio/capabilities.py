@@ -63,6 +63,17 @@ def model_of(scope) -> Optional[str]:
         return None
 
 
+def scope_type(scope) -> str:
+    """A name for a scope object Studio has no model for (CW305, CW310, a future scope): its ChipWhisperer type string or its class name."""
+    try:
+        t = scope._getCWType()
+        if t:
+            return str(t)
+    except Exception:  # noqa: BLE001
+        pass
+    return type(scope).__name__
+
+
 def _feature(scope, name: str) -> Optional[bool]:
     """True/False from the firmware feature list, None if the scope cannot say (simulator, old library)."""
     if getattr(scope, "sim_model", None):
@@ -80,11 +91,15 @@ def _has(scope, attr: str) -> bool:
         return False
 
 
+# Studio does not update scope firmware itself; the chipwhisperer library does (scope.upgrade_firmware(), which also works from a cell in the Notebook tab).
+FW_TOO_OLD = "the scope firmware is too old for {what}; update it with scope.upgrade_firmware() (for example in a Notebook cell), see https://chipwhisperer.readthedocs.io/en/latest/firmware.html"
+
+
 def capabilities(scope, target=None) -> Dict[str, Any]:
     m = model_of(scope)
     if m is None:
-        none = cap(False, "connect a scope first")
-        return {"connected": scope is not None, "model": None, "label": None, "uart": none, "simpleserial": none, "spi": none, "jtag": none, "swd": none, "trace": none, "gpio": none, "userio": none, "bitbanger": none, "onewire": none,
+        none = cap(False, "connect a scope first" if scope is None else f"this scope type ({scope_type(scope)}) is not supported by the Interfaces tab")
+        return {"connected": scope is not None, "model": None, "label": None, "reason": none["reason"], "uart": none, "simpleserial": none, "spi": none, "jtag": none, "swd": none, "trace": none, "gpio": none, "userio": none, "bitbanger": none, "onewire": none,
                 "triggers": {}, "programmers": {}, "logic_analyzer": logic_sources(None), "clock": {"adc_mul": none}}
     husky, nano, openadc = m in HUSKY, m == "nano", m in OPENADC
     spi_fw = _feature(scope, "TARGET_SPI")
@@ -102,7 +117,7 @@ def capabilities(scope, target=None) -> Dict[str, Any]:
         trace_present = False
 
     def fw(flag, what):
-        return None if flag in (True, None) else f"the scope firmware is too old for {what}; update it from the Connect tab"
+        return None if flag in (True, None) else FW_TOO_OLD.format(what=what)
 
     out: Dict[str, Any] = {"connected": True, "model": m, "label": LABELS.get(m, m), "simulated": bool(getattr(scope, "sim_model", None))}
     upins = UART_PIN_MODES["nano" if nano else "openadc"]

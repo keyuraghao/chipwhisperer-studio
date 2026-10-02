@@ -368,7 +368,7 @@ def test_api_view_channels_decoders_search_measure_files(client, tmp_path):
     # channels: rename, colour, hide, reorder, bus
     r = client.put("/api/la/channels", json={"channels": [{"index": "CLK", "name": "Clock", "color": "#123456", "hidden": True}], "order": ["TRIG"], "buses": [{"name": "spi", "channels": ["SPI CS", "SPI SCK"], "format": "bin"}]}).json()
     clk = next(c for c in r["channels"] if c["name"] == "Clock")
-    assert clk["hidden"] and clk["color"] == "#123456" and r["order"][0] == 2 and r["buses"][0]["channels"] == [4, 5]
+    assert clk["hidden"] and clk["color"] == "#123456" and r["order"][0] == 2 and r["buses"][0]["channels"] == ["SPI CS", "SPI SCK"] and r["buses"][0]["index"] == [4, 5]
     v = client.post("/api/la/view", json={"a": 0, "b": n, "px": 500}).json()
     assert all(c["i"] != clk["index"] for c in v["channels"]) and v["buses"][0]["runs"]
     assert client.put("/api/la/channels", json={"channels": [{"index": 0, "color": "red"}]}).status_code == 400

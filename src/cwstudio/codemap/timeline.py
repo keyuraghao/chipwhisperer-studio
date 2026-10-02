@@ -173,7 +173,7 @@ class Timeline:
         # lines
         fl = self.file[idx].astype(np.int64)
         ln = self.line[idx].astype(np.int64)
-        keys = fl * 1_000_000 + ln
+        keys = np.where((fl >= 0) & (ln > 0), fl * 1_000_000 + ln, -1)  # line 0 (code the compiler attributes to no source line) and code without line info: one "(no line info)" group
         lines = []
         uk, inv = np.unique(keys, return_inverse=True)
         cyc_sum = np.bincount(inv, weights=part)
@@ -183,15 +183,23 @@ class Timeline:
         np.maximum.at(lasts, inv, e.astype(np.float64))
         counts = np.bincount(inv)
         lr_m = (self.lr_end > c0) & (self.lr_start < c1)
-        lr_keys = self.file[self.lr_first[lr_m]].astype(np.int64) * 1_000_000 + self.line[self.lr_first[lr_m]].astype(np.int64)
+        lr_f = self.file[self.lr_first[lr_m]].astype(np.int64)
+        lr_l = self.line[self.lr_first[lr_m]].astype(np.int64)
+        lr_keys = np.where((lr_f >= 0) & (lr_l > 0), lr_f * 1_000_000 + lr_l, -1)
         exec_count = {int(k): int(v) for k, v in zip(*np.unique(lr_keys, return_counts=True))}
         any_inst = np.zeros(len(uk), np.int64)
         any_inst[inv] = idx
         src_lines: Dict[int, List[str]] = {}
+        no_info = None
         for j in range(len(uk)):
+            i0 = int(any_inst[j])
+            if uk[j] < 0:
+                f = int(self.func[i0])
+                no_info = {"file": None, "file_index": -1, "path": None, "line": 0, "no_line_info": True, "cycles": float(cyc_sum[j]), "instructions": int(counts[j]),
+                           "executions": exec_count.get(-1, 0), "first": float(firsts[j]), "last": float(lasts[j]), "func": prog.functions[f].name if f >= 0 else None, "inline": None, "text": None}
+                continue
             fi = int(uk[j] // 1_000_000)
             li = int(uk[j] % 1_000_000)
-            i0 = int(any_inst[j])
             f = int(self.func[i0])
             text = None
             if fi >= 0 and fi not in src_lines:
@@ -204,6 +212,8 @@ class Timeline:
                           "instructions": int(counts[j]), "executions": exec_count.get(int(uk[j]), 0), "first": float(firsts[j]), "last": float(lasts[j]),
                           "func": prog.functions[f].name if f >= 0 else None, "inline": prog.inline_names[inl] if inl >= 0 else None, "text": text})
         lines.sort(key=lambda d: d["first"])
+        if no_info is not None:
+            lines.append(no_info)  # last: it is not a place in the source
         return {"cycles": [float(c0), float(c1)], "functions": flist, "inlined": inl_list, "lines": lines[:limit], "lines_total": len(lines), "instructions": int(len(idx))}
 
     def function_ranges(self, name: str) -> List[Tuple[float, float, int]]:

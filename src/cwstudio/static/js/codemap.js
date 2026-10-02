@@ -55,7 +55,7 @@ export function initCodeMap(ctx, el) {
   const elfPath = h('input', { id: 'cm-elf-path', class: 'flex mono', placeholder: '.elf or project folder on the Studio machine' });
   const elfFile = h('input', { id: 'cm-elf-file', type: 'file', accept: '.elf', class: 'flex', title: 'or upload an .elf from this computer' });
   const pathRow = h('div', { style: 'display:none' }, h('div', { class: 'row' }, h('label', {}, ''), elfPath), h('div', { class: 'row' }, h('label', {}, ''), elfFile));
-  const srcIn = h('input', { id: 'cm-sources', class: 'flex mono', placeholder: 'source folder (default: the paths in the ELF)' });
+  const srcIn = h('input', { id: 'cm-sources', class: 'flex mono', placeholder: 'source folder (default: the paths in the ELF)', oninput: () => { srcIn.dataset.dirty = '1'; } });
   const traceIn = h('input', { id: 'cm-trace', type: 'number', min: 0, placeholder: 'newest', style: 'width:90px' });
   const coreSel = h('select', { id: 'cm-core', class: 'flex', title: 'timing model; auto picks it from the ELF' }, h('option', { value: '' }, 'auto'));
   const protoSel = h('select', { id: 'cm-proto', title: 'SimpleSerial version; auto asks the firmware' }, ...[['', 'auto'], ['2.1', '2.1'], ['1.1', '1.1'], ['1.0', '1.0']].map(([v, t]) => h('option', { value: v }, t)));
@@ -92,9 +92,10 @@ export function initCodeMap(ctx, el) {
   // ----- exact mode -----
   const pcBtn = h('button', { class: 'btn sm', id: 'cm-pctrace', onclick: () => pcTrace() }, 'Record PC samples');
   const pcTxt = h('div', { class: 'help mono', id: 'cm-pc-txt' });
+  const pcInt = h('input', { id: 'cm-pc-interval', type: 'number', min: 64, max: 16384, step: 64, value: 64, style: 'width:90px', title: 'cycles between PC samples: the Arm DWT samples every 64 × 1 to 16 or 1024 × 1 to 16 cycles, other values are rounded to the nearest of those' });
   const exactCard = h('div', { class: 'card', style: 'display:none' },
     h('div', { class: 'card-head' }, h('span', { class: 'title' }, 'Exact mode'), h('span', { class: 'sub' }, 'real program counter samples from the Husky Arm trace port (SWO)')),
-    h('div', { class: 'row' }, pcBtn, h('span', { class: 'muted', id: 'cm-pc-hint', style: 'font-size:12px' }, 'needs simpleserial-trace firmware on an Arm target')), pcTxt);
+    h('div', { class: 'row' }, pcBtn, h('label', {}, 'Every'), pcInt, h('span', { class: 'muted', style: 'font-size:12px' }, 'cycles'), h('span', { class: 'muted', id: 'cm-pc-hint', style: 'font-size:12px' }, 'needs simpleserial-trace firmware on an Arm target')), pcTxt);
 
   el.append(
     h('h2', {}, 'Firmware'),
@@ -148,6 +149,7 @@ export function initCodeMap(ctx, el) {
   function renderStatus() {
     if (!st) return;
     if (coreSel.options.length <= 1 && st.cores) Object.entries(st.cores).forEach(([k, v]) => coreSel.append(h('option', { value: k }, v)));
+    if (document.activeElement !== srcIn && !srcIn.dataset.dirty) srcIn.value = (st.source_roots || []).join(st.pathsep || ':');
     const fw = st.firmware || {};
     const prog = st.program || {};
     if (!st.ready) {
@@ -218,7 +220,7 @@ export function initCodeMap(ctx, el) {
       try { elf = (await upload('/api/codemap/upload', elfFile.files[0])).path; } catch (e) { buildMsg.textContent = e.message; buildMsg.className = 'help err'; return; }
     }
     if (elf) p.elf = elf;
-    if (srcIn.value.trim()) p.sources = srcIn.value.trim();
+    p.sources = srcIn.value.trim();  // empty clears a source folder chosen before (back to the paths in the ELF)
     if (traceIn.value !== '') p.trace = +traceIn.value;
     if (coreSel.value) p.core = coreSel.value;
     if (protoSel.value) p.protocol = protoSel.value;
@@ -228,6 +230,7 @@ export function initCodeMap(ctx, el) {
     buildBtn.disabled = true; buildMsg.className = 'help'; buildMsg.textContent = 'Emulating…';
     try {
       st = await post('/api/codemap/build', p);
+      delete srcIn.dataset.dirty;
       delete st.band;
       buildMsg.textContent = `Built in ${st.seconds}s: ${fmt(st.instructions)} instructions emulated.`;
       buildMsg.className = 'help ok';
@@ -313,6 +316,11 @@ export function initCodeMap(ctx, el) {
     lineList.innerHTML = '';
     regionFiles = {};
     res.lines.forEach((l) => {
+      if (l.no_line_info) {  // line 0 and code without line information: one entry, not a place in the source
+        lineList.append(h('div', { class: 'cm-item caller', 'data-line': 'none', title: `code the debug information gives no source line for (compiler generated, library code or line 0): ${fmt(l.cycles)} cycles, samples ${fmt(l.samples[0])} to ${fmt(l.samples[1])}` },
+          h('span', { class: 'sw', style: `background:${funcColor(l.func || '?')}` }), h('span', { class: 'nm', style: 'font-weight:500' }, '(no line info)'), h('span', { class: 'loc' }, `${fmt(l.cycles)} cyc`)));
+        return;
+      }
       if (l.file_index >= 0) (regionFiles[l.file_index] = regionFiles[l.file_index] || new Set()).add(l.line);
       const item = h('div', { class: 'cm-item', 'data-line': `${l.file}:${l.line}`, title: `${l.path || ''}:${l.line} in ${l.func || '?'}${l.inline ? ' (inlined ' + l.inline + ')' : ''}: ${fmt(l.cycles)} cycles, ${l.executions} runs, samples ${fmt(l.samples[0])} to ${fmt(l.samples[1])}` },
         h('span', { class: 'sw', style: `background:${funcColor(l.func || '?')}` }), h('span', { class: 'nm mono', style: 'font-weight:500' }, `${l.file || '?'}:${l.line}`), h('span', { class: 'loc' }, `${fmt(l.cycles)} cyc · ×${l.executions}`),
@@ -450,8 +458,16 @@ export function initCodeMap(ctx, el) {
   async function pcTrace() {
     pcBtn.disabled = true; pcTxt.textContent = 'recording…';
     try {
-      const r = await post('/api/codemap/pctrace', {});
-      pcTxt.textContent = `${r.mode}: ${r.samples} PC samples every ${r.interval} cycles · ${(r.agreement * 100).toFixed(1)}% in the emulated function · cycle scale ${r.scale.toFixed(4)}`;
+      const want = Math.round(+pcInt.value) || 64;
+      const r = await post('/api/codemap/pctrace', { interval: want });
+      if (r.interval) pcInt.value = r.interval;
+      const every = `every ${r.interval} cycles${r.interval_requested && r.interval_requested !== r.interval ? ` (${r.interval_requested} rounded to a step the Arm DWT supports)` : ''}`;
+      if (!r.samples || r.agreement == null) {
+        pcTxt.textContent = `${r.mode}: no PC samples arrived (${every}). ${r.message || ''}`.trim();
+        ctx.wave.setHighlights([]);
+        return;
+      }
+      pcTxt.textContent = `${r.mode}: ${r.samples} PC samples ${every} · ${(r.agreement * 100).toFixed(1)}% in the emulated function · cycle scale ${(+r.scale).toFixed(4)}`;
       ctx.wave.setHighlights((r.rows || []).filter((x) => !x.match).map((x) => ({ a: x.sample - 1, b: x.sample + 1 })));
     } catch (e) { pcTxt.textContent = e.message; } finally { pcBtn.disabled = !(st && st.ready); }
   }

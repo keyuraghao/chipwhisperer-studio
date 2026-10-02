@@ -40,11 +40,13 @@ def register_logic_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]) ->
     def la_capture(source: Literal["native", "adc", "sim", "sigrok"] = "sim", group: Optional[Literal["CW 20-pin", "USERIO 20-pin", "glitch"]] = None, clk_source: Optional[Literal["usb", "target", "pll"]] = None, oversampling: Optional[float] = None, downsample: Optional[int] = None,
                    depth: Optional[int] = None, trigger: Optional[str] = None, with_analog: Optional[bool] = None, fire: Optional[Literal["simpleserial", "none"]] = None, segments: Optional[int] = None, samples: Optional[int] = None, level: Optional[str] = None,
                    hysteresis: Optional[float] = None, sim_signal: Optional[str] = None, samplerate: Optional[float] = None, duration_ms: Optional[float] = None, pretrigger: Optional[float] = None, channels: Optional[List[str]] = None,
-                   jitter_ns: Optional[float] = None, glitches_per_ms: Optional[float] = None, device: Optional[str] = None, time_ms: Optional[float] = None, triggers: Optional[str] = None, timeout: float = 60) -> Dict[str, Any]:
-        """Capture logic data and wait for it; returns the capture summary (channels, sample rate, trigger index, duration). native (Husky): group, clk_source and oversampling set the sampling clock (rate = source x oversampling / downsample), depth (max 16376 Husky, 65535 Husky Plus), trigger ('capture', 'manual', 'rising_tio1', 'falling_userio_d3', 'HS1', 'glitch', ...; no pre-trigger), fire='simpleserial' sends a command so the target raises its trigger, with_analog also keeps the ADC trace (trigger 'capture'). adc (any ChipWhisperer): segments traces of samples each, level ('auto' or volts) and hysteresis; on the simulator sim_signal picks the demo line on the measure input. sim: samplerate, duration_ms, pretrigger (%), channels, jitter_ns, glitches_per_ms. sigrok: device (e.g. 'fx2lafw' or 'demo'), samplerate, channels, samples or time_ms, triggers ('D0=r,D1=1')."""
+                   jitter_ns: Optional[float] = None, glitches_per_ms: Optional[float] = None, device: Optional[str] = None, time_ms: Optional[float] = None, triggers: Optional[str] = None, timeout: Optional[float] = None) -> Dict[str, Any]:
+        """Capture logic data and wait for it; returns the capture summary (channels, sample rate, trigger index, duration). native (Husky): group, clk_source and oversampling set the sampling clock (rate = source x oversampling / downsample), depth (max 16376 Husky, 65535 Husky Plus), trigger ('capture', 'manual', 'rising_tio1', 'falling_userio_d3', 'HS1', 'glitch', ...; no pre-trigger), fire='simpleserial' sends a command so the target raises its trigger, with_analog also keeps the ADC trace (trigger 'capture'). adc (any ChipWhisperer): segments traces of samples each, level ('auto' or volts) and hysteresis; on the simulator sim_signal picks the demo line on the measure input. sim: samplerate, duration_ms, pretrigger (%), channels, jitter_ns, glitches_per_ms. sigrok: device (e.g. 'fx2lafw' or 'demo'), samplerate, channels, samples or time_ms, triggers ('D0=r,D1=1'). Defaults match the Logic tab (native downsample 96, adc segments 20). timeout is how long the analyser waits for its trigger (native default 5 s, sigrok default 60 s); the tool waits that long plus a margin for the capture to finish."""
         settings = clean(group=group, clk_source=clk_source, oversampling=oversampling, downsample=downsample, depth=depth, trigger=trigger, with_analog=with_analog, fire=fire, segments=segments, samples=samples, level=level, hysteresis=hysteresis,
-                         sim_signal=sim_signal, samplerate=samplerate, duration_ms=duration_ms, pretrigger=pretrigger, channels=channels, jitter_ns=jitter_ns, glitches_per_ms=glitches_per_ms, device=device, time_ms=time_ms, triggers=triggers, timeout=None)
-        return call("POST", "/api/la/capture", {"source": source, "settings": settings, "wait": True, "timeout": timeout}, timeout=timeout + 30)
+                         sim_signal=sim_signal, samplerate=samplerate, duration_ms=duration_ms, pretrigger=pretrigger, channels=channels, jitter_ns=jitter_ns, glitches_per_ms=glitches_per_ms, device=device, time_ms=time_ms, triggers=triggers, timeout=timeout)
+        # the analyser gives up after its own trigger timeout; the wait covers that plus reading the capture (a slow native capture takes up to depth / rate)
+        wait = max(60.0, float(timeout or 0) + 60.0)
+        return call("POST", "/api/la/capture", {"source": source, "settings": settings, "wait": True, "timeout": wait}, timeout=wait + 30)
 
     @mcp.tool(annotations=HW)
     def la_import(path: str, format: Optional[Literal["vcd", "csv", "sr"]] = None, samplerate: Optional[float] = None) -> Dict[str, Any]:
@@ -78,13 +80,13 @@ def register_logic_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]) ->
             return call("GET", "/api/la/channels")
         upd: Dict[str, Dict[str, Any]] = {}
         for old, new in (rename or {}).items():
-            upd.setdefault(old, {"index": old})["name"] = new
+            upd.setdefault(old, {"channel": old})["name"] = new
         for ch in hide or []:
-            upd.setdefault(ch, {"index": ch})["hidden"] = True
+            upd.setdefault(ch, {"channel": ch})["hidden"] = True
         for ch in show or []:
-            upd.setdefault(ch, {"index": ch})["hidden"] = False
+            upd.setdefault(ch, {"channel": ch})["hidden"] = False
         for ch, col in (colors or {}).items():
-            upd.setdefault(ch, {"index": ch})["color"] = col
+            upd.setdefault(ch, {"channel": ch})["color"] = col
         return call("PUT", "/api/la/channels", clean(channels=list(upd.values()) or None, order=order, buses=buses))
 
     @mcp.tool(annotations=RO)

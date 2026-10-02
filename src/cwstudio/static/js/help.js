@@ -7,7 +7,10 @@ function copyBlock(text) {
 }
 
 export function initHelp(ctx, el) {
-  const mcpJson = JSON.stringify({ mcpServers: { 'chipwhisperer-studio': { command: 'cw-studio', args: ['mcp'] } } }, null, 2);
+  // The command for this installation (from /api/meta): cw-studio for a pip install; in a bundle the full path of its executable, which in the Windows window build is the console program cw-studio.exe, as the windowed ChipWhispererStudio.exe has no standard input and output for MCP.
+  const mcp = (ctx.meta && ctx.meta.mcp_command) || { command: 'cw-studio', args: ['mcp'] };
+  const shellArg = (a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : '"' + a.replace(/"/g, '\\"') + '"');
+  const mcpJson = JSON.stringify({ mcpServers: { 'chipwhisperer-studio': { command: mcp.command, args: mcp.args } } }, null, 2);
   el.append(
     h('h2', {}, 'Quick start'),
     h('div', { class: 'card' }, h('ol', { style: 'padding-left:18px;margin:0;display:grid;gap:6px' },
@@ -30,14 +33,14 @@ export function initHelp(ctx, el) {
     h('div', { class: 'card' },
       h('p', { style: 'margin:0 0 10px' }, 'Studio includes a Model Context Protocol server with tools for every feature in this window: connecting, all scope and target settings, programming, SimpleSerial, capture, traces, CPA, glitching, toolchains and firmware builds, notebooks and their kernels, the hardware interfaces (UART, SPI, GPIO, triggers, OpenOCD), the logic analyser and the code map. Agents attach to this running Studio, so you can watch what they do live.'),
       h('div', { class: 'muted', style: 'margin-bottom:6px' }, 'Claude Code:'),
-      copyBlock('claude mcp add chipwhisperer-studio -- cw-studio mcp'),
+      copyBlock('claude mcp add chipwhisperer-studio -- ' + [mcp.command, ...mcp.args].map(shellArg).join(' ')),
       h('div', { class: 'muted', style: 'margin:10px 0 6px' }, 'Claude Desktop, Cursor and other clients (mcpServers config):'),
       copyBlock(mcpJson),
-      h('div', { class: 'help' }, 'Standalone bundle: use the full path to ChipWhispererStudio as the command. Add --simulate to try it without hardware, or --transport streamable-http to serve MCP over HTTP.')),
+      h('div', { class: 'help' }, 'These commands are for this installation. Elsewhere: after pip install the command is cw-studio. In a standalone bundle it is the full path of the bundle\'s program: on Windows cw-studio.exe in the window build (ChipWhispererStudio.exe there is a windowed program without a console, so it cannot serve MCP) and ChipWhispererStudio.exe in the Web build; on macOS ChipWhisperer Studio.app/Contents/MacOS/ChipWhispererStudio; on Linux ChipWhispererStudio in the bundle folder. Add --simulate to try it without hardware, or --transport streamable-http to serve MCP over HTTP.')),
     h('h2', {}, 'Keyboard'),
     h('div', { class: 'card' }, h('div', { class: 'kv' },
-      h('span', { class: 'k' }, 'S'), h('span', {}, 'single capture (from every tab)'),
-      h('span', { class: 'k' }, 'R'), h('span', {}, 'run capture (from every tab)'),
+      h('span', { class: 'k' }, 'S'), h('span', {}, 'single capture (from every tab, except while a notebook has the focus: in a cell or after clicking in it)'),
+      h('span', { class: 'k' }, 'R'), h('span', {}, 'run capture (from every tab, except while a notebook has the focus)'),
       h('span', { class: 'k' }, 'Esc'), h('span', {}, 'stop (in the Logic tab: stop the logic capture)'),
       h('span', { class: 'k' }, 'Space'), h('span', {}, 'pause or resume the display'),
       h('span', { class: 'k' }, 'Left / Right'), h('span', {}, 'previous or next trace (browse mode)'),

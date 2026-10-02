@@ -542,3 +542,76 @@ def test_notebook_run_keeps_edits_saved_meanwhile_and_does_not_recreate(client):
     client.delete("/api/notebooks/file", params={"path": path})
     th.join(30)
     assert not os.path.exists(store.path(path))
+
+
+def _tutorial_archive(path, files):
+    import io
+    import tarfile
+    with tarfile.open(path, "w:gz") as tar:
+        for rel, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo("chipwhisperer-jupyter-abc/" + rel)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+
+
+def test_tutorial_update_never_overwrites_local_edits(tmp_path, monkeypatch):
+    """Download tutorials used to replace the whole folder, losing edited notebooks and files the user added; edits are now detected by hash and the download asks first."""
+    import types
+    from cwstudio import toolchains
+    archives = {}
+    fm = types.SimpleNamespace(root=str(tmp_path / "nofw"), sources_cfg={"repo": "newaetech/chipwhisperer"}, is_valid_root=lambda root: False,
+                               installed_source=lambda: {"commit": "fw1"}, _gh=lambda url: {"sha": archives["sha"]})
+    monkeypatch.setattr(toolchains, "download", lambda url, dest, *a, **k: (os.makedirs(os.path.dirname(dest), exist_ok=True), __import__("shutil").copy(archives["path"], dest)))
+    events = []
+    tut = notebook.Tutorials(notebook.NotebookStore(str(tmp_path / "nb")), fm, lambda kind, st: events.append(st))
+    v1 = {"courses/lab1.ipynb": "lab1 v1", "courses/lab2.ipynb": "lab2 v1", "README.md": "readme v1"}
+    archives.update(sha="a" * 40, path=str(tmp_path / "v1.tar.gz"))
+    _tutorial_archive(archives["path"], v1)
+    assert tut.fetch(wait=True)["job"]["state"] == "installed"
+    dest = tut.dest
+    manifest = json.load(open(os.path.join(dest, notebook.Tutorials.MANIFEST)))
+    assert set(manifest["files"]) == set(v1) and "files" not in tut.status()["installed"]
+
+    # the user edits lab1, adds traces next to it, and leaves lab2 alone; upstream changes lab1 and lab2
+    open(os.path.join(dest, "courses", "lab1.ipynb"), "w").write("lab1 edited")
+    open(os.path.join(dest, "courses", "traces.npy"), "w").write("mine")
+    archives.update(sha="b" * 40, path=str(tmp_path / "v2.tar.gz"))
+    _tutorial_archive(archives["path"], {"courses/lab1.ipynb": "lab1 v2", "courses/lab2.ipynb": "lab2 v2", "README.md": "readme v1"})
+    st = tut.fetch(wait=True)
+    assert st["job"]["state"] == "confirm" and st["job"]["conflicts"] == ["courses/lab1.ipynb"]
+    assert open(os.path.join(dest, "courses", "lab1.ipynb")).read() == "lab1 edited"  # nothing changed yet
+    assert open(os.path.join(dest, "courses", "lab2.ipynb")).read() == "lab2 v1"
+    with pytest.raises(ValueError):
+        tut.fetch(wait=True, on_modified="overwrite")
+
+    # keep: the edited file stays, everything else updates, and it still counts as edited next time
+    st = tut.fetch(wait=True, on_modified="keep")
+    assert st["job"]["state"] == "installed" and st["job"]["backups"] == []
+    assert open(os.path.join(dest, "courses", "lab1.ipynb")).read() == "lab1 edited"
+    assert open(os.path.join(dest, "courses", "lab2.ipynb")).read() == "lab2 v2"
+    assert open(os.path.join(dest, "courses", "traces.npy")).read() == "mine"  # added files survive an update
+    assert tut.fetch(wait=True)["job"]["conflicts"] == ["courses/lab1.ipynb"]
+
+    # backup: the new version is installed and the user's copy is kept next to it
+    st = tut.fetch(wait=True, on_modified="backup")
+    assert st["job"]["state"] == "installed" and len(st["job"]["backups"]) == 1
+    backup = st["job"]["backups"][0]
+    assert backup.startswith("courses/lab1.local-") and backup.endswith(".ipynb")
+    assert open(os.path.join(dest, *backup.split("/"))).read() == "lab1 edited"
+    assert open(os.path.join(dest, "courses", "lab1.ipynb")).read() == "lab1 v2"
+    assert open(os.path.join(dest, "courses", "traces.npy")).read() == "mine"
+    # nothing edited any more: the next update goes straight through
+    assert tut.fetch(wait=True)["job"]["state"] == "installed"
+
+    # an install from before hashes were recorded: files that differ from upstream count as edited
+    m = json.load(open(os.path.join(dest, notebook.Tutorials.MANIFEST)))
+    m.pop("files")
+    json.dump(m, open(os.path.join(dest, notebook.Tutorials.MANIFEST), "w"))
+    open(os.path.join(dest, "README.md"), "w").write("my notes")
+    assert tut.fetch(wait=True)["job"]["conflicts"] == ["README.md"]
+
+
+def test_tutorials_fetch_api_rejects_unknown_choice(client):
+    r = client.post("/api/notebooks/tutorials/fetch", json={"on_modified": "overwrite"})
+    assert r.status_code == 400 and "on_modified" in r.json()["detail"]

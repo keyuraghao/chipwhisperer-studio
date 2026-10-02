@@ -714,3 +714,148 @@ def test_mcp_interface_tools_against_the_simulator(client):
     assert call("trigger_configure", kind="basic", pins=["tio1"])["supported"] is False
     assert call("bitbang", bits="1")["supported"] is False and call("onewire")["supported"] is False
     assert call("userio_set", direction=1)["supported"] is False
+
+
+# ----- a scope left in MPSSE mode, unsupported scope types, capabilities on the hardware thread ----------------------------
+class FakeNAEUSB:
+    def __init__(self, mpsse):
+        self.mpsse = mpsse
+
+    def is_MPSSE_enabled(self):
+        return self.mpsse
+
+
+class FakeScope:
+    """A real-hardware stand-in: no sim_model, a ChipWhisperer type string and a NAEUSB that answers MPSSE_ENABLED."""
+
+    def __init__(self, cwtype="cwhusky", mpsse=False, sn="SN0001"):
+        self.cwtype, self.sn, self.calls, self._nae = cwtype, sn, [], FakeNAEUSB(mpsse)
+
+    def _getCWType(self):
+        return self.cwtype
+
+    def _getNAEUSB(self):
+        return self._nae
+
+    def check_feature(self, name):
+        raise RuntimeError("no firmware feature list in the fake")
+
+    def enable_MPSSE(self, enable=True, **kw):
+        self.calls.append(("enable_MPSSE", enable))
+
+    def dis(self):
+        self.calls.append(("dis",))
+
+
+@pytest.fixture
+def fresh(monkeypatch):
+    """A Studio of its own whose USB bus holds what the test says (nothing by default)."""
+    from cwstudio import openocd
+    bus = []
+    monkeypatch.setattr(openocd, "usb_scopes", lambda: list(bus))
+    session = Session(simulate=True, data_dir=tempfile.mkdtemp())
+    with TestClient(create_app(session)) as c:
+        c.session, c.bus = session, bus
+        yield c
+
+
+def test_mpsse_usb_configuration_rule():
+    from cwstudio.openocd import is_mpsse_config
+    assert is_mpsse_config([0xFF, 0xFF])  # udc_desc_*_mpsse: the vendor interface plus the MPSSE vendor interface
+    assert not is_mpsse_config([0xFF, 0x02, 0x0A])  # normal mode: vendor plus one CDC port
+    assert not is_mpsse_config([0xFF, 0x02, 0x0A, 0x02, 0x0A])
+    assert not is_mpsse_config([0xFF])  # firmware without CDC
+    assert not is_mpsse_config([])
+
+
+def test_mpsse_found_on_the_usb_bus_after_a_restart(fresh, monkeypatch):
+    from cwstudio import hardware, openocd
+    fresh.bus.append({"model": "huskyplus", "pid": 0xACE6, "sn": "HP42", "classes": [0xFF, 0xFF]})
+    fresh.session.interfaces.openocd._scan_at = 0
+    st = fresh.get("/api/interfaces/openocd").json()
+    m = st["mpsse"]
+    assert m and m["detected"] is True and m["model"] == "huskyplus" and m["sn"] == "HP42" and m["kind"] == "huskyplus" and m["connected"] is False
+    assert "Restore normal mode" in m["warning"]
+    assert fresh.get("/api/interfaces").json()["mpsse"]["detected"] is True
+    # OpenOCD can use the found scope: the command line names its product ID and serial number
+    cmd = fresh.session.interfaces.openocd.command_line("target/stm32f3x.cfg", "jtag", openocd.DEFAULT_PORTS, binary="openocd")
+    assert "ftdi vid_pid 0x2b3e 0xace6" in cmd and "adapter serial HP42" in cmd
+    # Restore normal mode connects to it by kind and serial number and turns MPSSE off
+    made = []
+
+    def connect(kind="auto", sn=None, **kw):
+        made.append((kind, sn))
+        s = FakeScope("cwhuskyplus", mpsse=True, sn=sn)
+        made.append(s)
+        return s
+    monkeypatch.setattr(hardware, "connect_scope", connect)
+    fresh.bus.clear()
+    r = fresh.post("/api/interfaces/openocd/mpsse", json={"enable": False, "reconnect": False})
+    assert r.status_code == 200, r.text
+    assert made[0] == ("huskyplus", "HP42") and made[1].calls == [("enable_MPSSE", False), ("dis",)]
+    fresh.session.interfaces.openocd._scan_at = 0
+    assert fresh.get("/api/interfaces/openocd").json()["mpsse"] is None
+
+
+def test_mpsse_normal_scopes_are_left_alone(fresh):
+    fresh.bus.append({"model": "husky", "pid": 0xACE5, "sn": "H1", "classes": [0xFF, 0x02, 0x0A]})
+    fresh.session.interfaces.openocd._scan_at = 0
+    assert fresh.get("/api/interfaces/openocd").json()["mpsse"] is None
+
+
+def test_mpsse_found_on_a_connected_scope(fresh, monkeypatch):
+    from cwstudio import hardware
+    s = fresh.session
+    scope = FakeScope("cwhusky", mpsse=True, sn="H7")
+    s.scope, s.scope_kind = scope, "husky"
+    st = fresh.get("/api/interfaces").json()
+    m = st["mpsse"]
+    assert m and m["detected"] and m["connected"] is True and m["model"] == "husky" and m["sn"] == "H7" and m["kind"] == "husky"
+    assert st["capabilities"]["model"] == "husky"  # the scope stays connected until OpenOCD or Restore needs it
+    made = []
+    monkeypatch.setattr(hardware, "connect_scope", lambda kind="auto", sn=None, **kw: made.append((kind, sn)) or FakeScope(sn=sn))
+    r = fresh.post("/api/interfaces/openocd/mpsse", json={"enable": False, "reconnect": False})
+    assert r.status_code == 200, r.text
+    assert s.scope is None and ("dis",) in scope.calls  # Studio let go of it before reconnecting to turn MPSSE off
+    assert made == [("husky", "H7")]
+    assert fresh.get("/api/interfaces").json()["mpsse"] is None
+
+
+def test_mpsse_connected_scope_in_normal_mode_is_asked_once(fresh):
+    s = fresh.session
+    scope = FakeScope("cwlite", mpsse=False)
+    asked = []
+    scope._nae.is_MPSSE_enabled = lambda: asked.append(1) or False
+    s.scope = scope
+    for _ in range(3):
+        assert fresh.get("/api/interfaces").json()["mpsse"] is None
+    assert asked == [1]
+
+
+def test_unsupported_scope_type_says_so(fresh):
+    s = fresh.session
+    s.scope = FakeScope("cw305")
+    c = fresh.get("/api/capabilities").json()
+    want = "this scope type (cw305) is not supported by the Interfaces tab"
+    assert c["connected"] is True and c["model"] is None and c["reason"] == want
+    assert c["uart"]["reason"] == want and c["jtag"]["reason"] == want
+    assert fresh.get("/api/interfaces").json()["capabilities"]["spi"]["reason"] == want
+    d = refused(fresh.post("/api/interfaces/spi/enable", json={}), want)
+    assert "connect a scope first" not in d
+    s.scope = None
+    assert fresh.get("/api/capabilities").json()["uart"]["reason"] == "connect a scope first"
+
+
+def test_capabilities_endpoint_runs_on_the_hardware_thread(fresh, monkeypatch):
+    import threading
+    from cwstudio import capabilities as capmod
+    real, seen = capmod.capabilities, []
+
+    def spy(scope, target=None):
+        seen.append(threading.current_thread())
+        return real(scope, target)
+    monkeypatch.setattr(capmod, "capabilities", spy)
+    assert fresh.post("/api/scope/connect", json={"kind": "sim", "sim_model": "husky"}).status_code == 200
+    assert fresh.get("/api/capabilities").json()["model"] == "husky"
+    hw = fresh.session.worker.call(threading.current_thread)
+    assert seen and seen[-1] is hw

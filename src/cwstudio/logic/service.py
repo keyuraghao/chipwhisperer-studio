@@ -24,7 +24,7 @@ from cwstudio.capabilities import Unsupported, require
 from cwstudio.logic import decoders as dec
 from cwstudio.logic import formats, sigrok, synth
 from cwstudio.logic.model import AnalogChannel, Channel, LogicCapture, parse_pattern
-from cwstudio.logic.sources import CLK_SOURCES, LA_TRIGGER_HELP, LA_TRIGGERS, LogicJob, adc_rate
+from cwstudio.logic.sources import CLK_SOURCES, DEFAULTS, LA_TRIGGER_HELP, LA_TRIGGERS, LogicJob, adc_rate
 from cwstudio.web import FileResponse, HTTPException, Request, Response, UploadFile
 
 log = logging.getLogger("cwstudio.logic")
@@ -137,7 +137,7 @@ class LogicService:
             entry["id"] = sid
             entry["label"] = SOURCE_LABELS[sid]
             out.append(entry)
-        info: Dict[str, Any] = {"sources": out, "la_triggers": LA_TRIGGERS, "la_trigger_help": LA_TRIGGER_HELP, "clk_sources": CLK_SOURCES, "sim_channels": synth.DEMO_CHANNELS, "decoders": dec.registry(), "formats": formats.FORMATS}
+        info: Dict[str, Any] = {"sources": out, "la_triggers": LA_TRIGGERS, "la_trigger_help": LA_TRIGGER_HELP, "clk_sources": CLK_SOURCES, "sim_channels": synth.DEMO_CHANNELS, "decoders": dec.registry(), "formats": formats.FORMATS, "defaults": copy.deepcopy(DEFAULTS)}
         if scope is not None:
             def probe():
                 d: Dict[str, Any] = {}
@@ -222,11 +222,13 @@ class LogicService:
     def status(self) -> Dict[str, Any]:
         job = self.job
         running = job is not None and not job.finished.is_set()
-        out = {"running": running, "job": {"source": job.source, "phase": job.phase} if running else None, "last": self.last, **self.captures_list(), "decoders": list(self.decoders.values()), "buses": self.buses}
+        out = {"running": running, "job": {"source": job.source, "phase": job.phase} if running else None, "last": self.last, **self.captures_list(), "decoders": list(self.decoders.values())}
         try:
-            out["capture"] = self.summary()
+            cur = self.cap()
+            out["capture"] = self.summary(cur)
         except LookupError:
-            out["capture"] = None
+            cur, out["capture"] = None, None
+        out["buses"] = self.bus_info(cur)
         return out
 
     # --- files ------------------------------------------------------------------------------------
@@ -302,8 +304,14 @@ class LogicService:
         chans = p.get("channels")
         if chans is None:
             chans = [i for i in cap.meta.get("order", range(len(cap.channels))) if not cap.channels[i].hidden]
-        buses = p.get("buses", self.buses)
-        res = cap.view(a, b, px, chans, buses=buses or None, analog=bool(p.get("analog", True)))
+        buses = self.bus_info(cap, p.get("buses", self.buses))
+        active = [{"name": bb["name"], "channels": bb["index"], "format": bb["format"]} for bb in buses if not bb["disabled"]]
+        res = cap.view(a, b, px, chans, buses=active or None, analog=bool(p.get("analog", True)))
+        if buses:
+            # one entry per bus in the stored order; a bus whose channels are not in this capture is disabled with a notice instead of failing the view
+            got = iter(res.get("buses") or [])
+            res["buses"] = [{"runs": [], "disabled": True, "missing": bb["missing"]} if bb["disabled"] else next(got) for bb in buses]
+            res["notices"] = [bb["notice"] for bb in buses if bb["disabled"]]
         res["capture"] = cap.id
         res["version"] = cap.version
         ids = p.get("decoders")
@@ -311,11 +319,15 @@ class LogicService:
         for did, d in list(self.decoders.items()):
             if (ids is not None and did not in ids) or not d.get("enabled", True):
                 continue
-            r = self.result_or_pending(did, cap)
+            try:
+                r = self.result_or_pending(did, cap)
+            except Exception as e:  # noqa: BLE001  one broken decoder reports its own error and never fails the whole view
+                log.debug("decoder %s failed", did, exc_info=True)
+                r = e
             if r is None:
                 out.append({"id": did, "type": d["type"], "name": d["name"], "pending": True, "rows": []})
             elif isinstance(r, Exception):
-                out.append({"id": did, "error": str(r)})
+                out.append({"id": did, "type": d["type"], "name": d["name"], "error": str(r) or type(r).__name__, "rows": []})
             else:
                 out.append({"id": did, "type": d["type"], "name": d["name"], "rows": r.view(a, b, px), "meta": r.meta})
         res["decoders"] = out
@@ -324,16 +336,47 @@ class LogicService:
 
     def channels(self, cid: Optional[str] = None) -> Dict[str, Any]:
         cap = self.cap(cid)
-        return {"capture": cap.id, "channels": [c.info(i) for i, c in enumerate(cap.channels)], "analog": [a.info(i) for i, a in enumerate(cap.analog)], "order": cap.meta.get("order"), "buses": self.buses}
+        return {"capture": cap.id, "channels": [c.info(i) for i, c in enumerate(cap.channels)], "analog": [a.info(i) for i, a in enumerate(cap.analog)], "order": cap.meta.get("order"), "buses": self.bus_info(cap)}
+
+    def bus_info(self, cap: Optional[LogicCapture], buses: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+        """The buses (stored by channel name) resolved against a capture: channels (names, MSB first), index (the indices in this capture), missing (names not in it) and disabled with a notice when any member is missing."""
+        out = []
+        for b in self.buses if buses is None else buses:
+            names, idx, missing = [], [], []
+            for ref in b.get("channels", []):
+                try:
+                    if cap is None:
+                        raise KeyError(ref)
+                    i = cap.ch_index(ref)
+                    if not 0 <= i < len(cap.channels):
+                        raise KeyError(ref)
+                    idx.append(i)
+                    names.append(cap.channels[i].name)
+                except (KeyError, IndexError, ValueError):
+                    names.append(str(ref))
+                    missing.append(str(ref))
+            e = {"name": b.get("name", "bus"), "channels": names, "format": b.get("format", "hex"), "index": None if missing else idx, "missing": missing, "disabled": bool(missing)}
+            if missing and cap is not None:
+                e["notice"] = f"bus {e['name']} is disabled: channel{'s' if len(missing) > 1 else ''} {', '.join(missing)} {'are' if len(missing) > 1 else 'is'} not in this capture"
+            elif cap is None:
+                e.update(index=None, missing=[], disabled=False)
+            out.append(e)
+        return out
 
     def set_channels(self, p: Dict[str, Any]) -> Dict[str, Any]:
-        """Rename, recolour, hide or reorder channels and define buses. Body: channels [{index or name, name, color, hidden}], order [indices top to bottom], buses [{name, channels (MSB first), format}], analog [{index, hidden}]."""
+        """Rename, recolour, hide or reorder channels and define buses. Body: channels [{channel (index or name), name, color, hidden}] (``index`` is accepted as an alias of ``channel``), order [channels (index or name) top to bottom], buses [{name, channels (index or name, MSB first), format}], analog [{index, hidden, remove}]. Buses are kept by channel name, so they follow the channels into later captures."""
         cap = self.cap(p.get("capture"))
         for upd in p.get("channels") or []:
-            ref = upd.get("index", upd.get("channel"))
+            ref = upd.get("channel") if upd.get("channel") not in (None, "") else upd.get("index")
+            if ref in (None, ""):
+                raise ValueError("each channel update needs channel (an index or a name)")
             ch = cap.channels[cap.ch_index(ref)]
             if upd.get("name") not in (None, ""):
-                ch.name = str(upd["name"])[:60]
+                new = str(upd["name"])[:60]
+                if new != ch.name:
+                    for bb in self.buses:  # buses are stored by name: a rename carries over
+                        bb["channels"] = [new if x == ch.name else x for x in bb["channels"]]
+                ch.name = new
             if upd.get("color"):
                 if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(upd["color"])):
                     raise ValueError("colours look like #2fbf9b")
@@ -353,7 +396,15 @@ class LogicService:
         if p.get("buses") is not None:
             buses = []
             for b in p["buses"]:
-                members = [cap.ch_index(x) for x in b.get("channels", [])]
+                members = []
+                for x in b.get("channels", []):
+                    try:
+                        members.append(cap.channels[cap.ch_index(x)].name)
+                    except (KeyError, IndexError, ValueError):
+                        if isinstance(x, str) and not x.strip().lstrip("-").isdigit():
+                            members.append(x)  # a bus kept from an earlier capture may name a channel this one lacks; it stays, disabled
+                        else:
+                            raise ValueError(f"no channel {x} in this capture") from None
                 if not members:
                     raise ValueError("a bus needs at least one channel")
                 if len(members) > 32:
@@ -439,6 +490,8 @@ class LogicService:
             spec = sigrok.check_spec(str((p.get("options") or {}).get("spec", "")))
         elif kind not in dec.DECODERS:
             raise ValueError(f"unknown decoder {kind!r}; choose one of {', '.join(list(dec.DECODERS) + ['sigrok'])}")
+        else:
+            dec.validate_options(kind, p.get("options"))
         did = p.get("id") or f"d{next(self._ids)}"
         try:
             cap = self.cap()
@@ -552,8 +605,11 @@ class LogicService:
                 r = self._sigrok_decode(cap, d["options"].get("spec", ""))
             else:
                 r = self._run_decoder(cap, d["type"], self._resolve(cap, d["channels"]), d["options"], in_process)
-        except (dec.DecodeError, KeyError, ValueError, RuntimeError, Unsupported) as e:
+        except Exception as e:  # noqa: BLE001  any failure is this decoder's error, shown on its row
             r = e if not isinstance(e, KeyError) else dec.DecodeError(str(e).strip("'\""))
+            if not isinstance(e, (dec.DecodeError, KeyError, ValueError, RuntimeError, Unsupported)):
+                log.debug("decoder %s raised", did, exc_info=True)
+                r = dec.DecodeError(f"{type(e).__name__}: {e}")
         with self._lock:
             self._results = {k: v for k, v in self._results.items() if not (k[0] == cap.id and k[2] == did)}
             self._results[key] = r
@@ -586,6 +642,7 @@ class LogicService:
             mapping = p.get("channels") or dec.guess_channels(kind, cap) if kind in dec.DECODERS else p.get("channels")
             if kind not in dec.DECODERS:
                 raise dec.DecodeError(f"unknown decoder {kind!r}; choose one of {', '.join(list(dec.DECODERS) + ['sigrok'])}")
+            dec.validate_options(kind, p.get("options"))
             r = self._run_decoder(cap, kind, self._resolve(cap, mapping or {}), p.get("options") or {}, self.big(cap))
         items = r.items()
         rows = p.get("rows")
@@ -746,7 +803,7 @@ def register_routes(app, session) -> None:
 
     @app.put("/api/la/channels")
     async def la_channels_put(req: Request):
-        """Body: channels [{index or name, name, color, hidden}], order [indices], buses [{name, channels, format}], analog [{index, hidden, remove}]."""
+        """Body: channels [{channel (index or name; index is an alias), name, color, hidden}], order [channels], buses [{name, channels (index or name, MSB first), format}], analog [{index, hidden, remove}]."""
         p = await body(req)
         return await run(la.set_channels, p)
 

@@ -13,10 +13,11 @@ import socket
 import subprocess
 import threading
 import time
+import weakref
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional
 
-from cwstudio.capabilities import Unsupported, capabilities, model_of, require
+from cwstudio.capabilities import LABELS, Unsupported, capabilities, model_of, require
 
 log = logging.getLogger("cwstudio.openocd")
 
@@ -27,6 +28,58 @@ PIDS = {"nano": 0xACE0, "lite": 0xACE2, "pro": 0xACE3, "husky": 0xACE5, "huskypl
 TOOLCHAIN_ID = "openocd"
 DEFAULT_PORTS = {"gdb": 3333, "telnet": 4444, "tcl": 6666}
 SYSTEM_SCRIPT_DIRS = ["/usr/share/openocd/scripts", "/usr/local/share/openocd/scripts", "/opt/homebrew/share/openocd/scripts"]
+MODEL_BY_PID = {v: k for k, v in PIDS.items()}
+# In MPSSE mode the SAM firmware swaps its USB configuration (firmware/mcu/hal/sam4s/udi_composite_desc.c, udc_desc_*_mpsse): two vendor-specific interfaces (class 0xFF) and no CDC interfaces, under the same product ID. In normal mode the scope has its vendor interface plus a CDC control (0x02) and data (0x0A) pair per serial port; firmware without CDC has a single vendor interface.
+VENDOR_CLASS = 0xFF
+CDC_CLASSES = (0x02, 0x0A)
+SCAN_INTERVAL = 3.0
+DETECTED_WARNING = ("The scope is in MPSSE (JTAG/SWD) mode, probably left on by an earlier Studio session or another tool: its USB-CDC serial port and the native programmers are unavailable. "
+                    "Use Restore normal mode (Interfaces tab, JTAG and SWD) to bring it back.")
+
+
+def is_mpsse_config(classes: List[int]) -> bool:
+    """True for the interface classes of a NewAE scope's USB configuration in MPSSE mode: at least two interfaces, all vendor-specific, no CDC."""
+    return len(classes) >= 2 and all(c == VENDOR_CLASS for c in classes) and not any(c in CDC_CLASSES for c in classes)
+
+
+def usb_scopes() -> List[Dict[str, Any]]:
+    """NewAE scopes on the USB bus: model, product ID, serial number (None when the device cannot be opened) and the class of each interface. Reading the configuration descriptors does not open the device."""
+    try:
+        import usb1
+    except Exception:  # noqa: BLE001
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        with usb1.USBContext() as ctx:
+            for dev in ctx.getDeviceIterator(skip_on_error=True):
+                try:
+                    if dev.getVendorID() != VID or dev.getProductID() not in MODEL_BY_PID:
+                        continue
+                    classes = []
+                    for conf in dev.iterConfigurations():
+                        for iface in conf:
+                            for setting in iface:
+                                classes.append(setting.getClass())
+                                break  # the first alternate setting is enough
+                        break  # the scopes have a single configuration
+                    try:
+                        sn = dev.getSerialNumber()
+                    except Exception:  # noqa: BLE001
+                        sn = None
+                    out.append({"model": MODEL_BY_PID[dev.getProductID()], "pid": dev.getProductID(), "sn": sn, "classes": classes})
+                except Exception:  # noqa: BLE001
+                    continue
+    except Exception as e:  # noqa: BLE001
+        log.debug("USB scan for MPSSE scopes failed: %s", e)
+    return out
+
+
+def scope_in_mpsse(scope) -> bool:
+    """Ask a connected scope's firmware whether MPSSE mode is on (feature MPSSE_ENABLED, naeusb.is_MPSSE_enabled); False when it cannot say."""
+    try:
+        return bool(scope._getNAEUSB().is_MPSSE_enabled())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def tcl_query(port: int, command: str, timeout: float = 10.0, host: str = "127.0.0.1") -> str:
@@ -95,6 +148,8 @@ class OpenOCD:
         self.log_seq = 0
         self.mpsse: Optional[Dict[str, Any]] = None
         self._lock = threading.Lock()
+        self._scan_at = 0.0
+        self._checked_scope = lambda: None  # weak reference to the connected scope already asked whether it is in MPSSE mode
 
     # --- discovery --------------------------------------------------------
     def binary(self) -> Optional[str]:
@@ -162,6 +217,44 @@ class OpenOCD:
             raise Unsupported(f"{transport.upper()} on the USERIO header needs a ChipWhisperer-Husky" + (" with SAM firmware 1.4 or newer" if caps["model"] in ("husky", "huskyplus") else ""))
         return caps
 
+    def detect(self, force: bool = False) -> Optional[Dict[str, Any]]:
+        """Find a scope that is already in MPSSE mode, for example after a Studio restart (the MPSSE state Studio keeps lives in memory only) or when another tool switched it. A connected scope is asked once through its firmware; with no scope connected the USB bus is scanned (at most every few seconds) for a NewAE scope whose configuration is the MPSSE one. A find becomes the MPSSE state, so Restore normal mode is offered."""
+        if self.mpsse:
+            return self.mpsse
+        scope = self.s.scope
+        info: Optional[Dict[str, Any]] = None
+        if scope is not None:
+            if getattr(scope, "sim_model", None) or scope is self._checked_scope():
+                return None
+            try:
+                self._checked_scope = weakref.ref(scope)
+            except TypeError:
+                self._checked_scope = lambda: scope
+            if not self.s.worker.call(scope_in_mpsse, scope, timeout=15):
+                return None
+            model = model_of(scope)
+            info = {"model": model, "pid": PIDS.get(model), "sn": getattr(scope, "sn", None), "kind": self.s.scope_kind or "auto", "connected": True}
+        else:
+            now = time.time()
+            if not force and now - self._scan_at < SCAN_INTERVAL:
+                return None
+            self._scan_at = now
+            found = [d for d in usb_scopes() if is_mpsse_config(d.get("classes") or [])]
+            if not found:
+                return None
+            d = found[0]
+            info = {"model": d["model"], "pid": d["pid"], "sn": d.get("sn"), "kind": d["model"], "connected": False}
+        self.mpsse = {"enabled": True, "transport": "jtag", "header": "target", "since": time.time(), "detected": True, "warning": DETECTED_WARNING, **info}
+        log.warning("Found the %s in MPSSE (JTAG/SWD) mode; restore normal mode from the Interfaces tab (JTAG and SWD)", LABELS.get(info["model"], info["model"] or "scope"))
+        self._publish("openocd", {"kind": "mpsse", "mpsse": self.mpsse})
+        return self.mpsse
+
+    def _release_detected(self) -> None:
+        """A scope found in MPSSE mode while connected stays connected until OpenOCD needs it or normal mode is restored; then Studio lets it go."""
+        if self.mpsse and self.mpsse.get("connected") and self.s.scope is not None:
+            self.s.disconnect_scope()
+            self.mpsse["connected"] = False
+
     def mpsse_enable(self, transport: str = "jtag", header: str = "target") -> Dict[str, Any]:
         """Switch the connected scope into MPSSE mode. Studio releases the scope (it re-enumerates); use :meth:`mpsse_disable` to come back."""
         if self.mpsse:
@@ -202,6 +295,7 @@ class OpenOCD:
     def mpsse_disable(self, reconnect: bool = True) -> Dict[str, Any]:
         """Leave MPSSE mode: stop OpenOCD, reconnect to the scope, turn MPSSE off (the scope resets) and reconnect normally."""
         self.stop()
+        self._release_detected()
         info = self.mpsse or {}
         kind = info.get("kind") or "auto"
         sn = info.get("sn")
@@ -263,6 +357,8 @@ class OpenOCD:
                 raise Unsupported("needs real hardware: OpenOCD cannot drive the simulator")
             raise Unsupported("enable MPSSE (JTAG/SWD) mode on the scope first")
         binary = self.binary()
+        if binary:
+            self._release_detected()
         if not binary:
             raise Unsupported("OpenOCD is not installed: install it from the Firmware tab's toolchains (xPack OpenOCD) or put openocd on PATH")
         if target_cfg and not target_cfg.endswith(".cfg"):

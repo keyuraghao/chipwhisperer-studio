@@ -458,7 +458,7 @@ export function initInterfaces(ctx, el) {
     const st = ocdStatus, m = st.mpsse;
     ocdInfo.innerHTML = '';
     [['OpenOCD', st.installed ? st.binary : 'not installed (install it here or from the Firmware tab toolchains)'], ['Server', st.running ? `running (pid ${st.pid}), GDB ${st.ports.gdb}, telnet ${st.ports.telnet}, TCL ${st.ports.tcl}` : (st.exit_code != null ? `stopped (exit ${st.exit_code})` : 'stopped')],
-      ['MPSSE', m ? `${m.transport.toUpperCase()} on the ${m.header === 'userio' ? 'USERIO' : '20-pin target'} header (${m.model})` : 'off']].forEach(([k, v]) => ocdInfo.append(h('span', { class: 'k' }, k), h('span', { class: 'mono' }, v)));
+      ['MPSSE', m ? (m.detected ? `on (found already in MPSSE mode, ${m.model || 'scope'}${m.sn ? ' ' + m.sn : ''})` : `${(m.transport || 'jtag').toUpperCase()} on the ${m.header === 'userio' ? 'USERIO' : '20-pin target'} header (${m.model})`) : 'off']].forEach(([k, v]) => ocdInfo.append(h('span', { class: 'k' }, k), h('span', { class: 'mono' }, v)));
     if ((st.log || []).length && !ocdLog.childNodes.length) st.log.forEach(logLine);
     mpsseBanner.style.display = m ? '' : 'none';
     mpsseBanner.textContent = m ? m.warning : '';
@@ -497,7 +497,8 @@ export function initInterfaces(ctx, el) {
   // ---------- capabilities and gating ----------
   function applyCaps() {
     const c = caps.connected && caps.model ? caps : null;
-    const e = (k) => (c ? c[k] : null) || NO_SCOPE;
+    const none = caps.connected && !caps.model ? { available: false, reason: caps.reason || 'this scope type is not supported by the Interfaces tab' } : NO_SCOPE;  // a scope Studio has no model for (CW305 and similar) says so instead of "connect a scope first"
+    const e = (k) => (c ? c[k] : null) || none;
     overview.innerHTML = '';
     if (c) {
       modelLine.textContent = `${c.label}${c.simulated ? ' (simulated)' : ''}: available interfaces are enabled below; the rest show why not.`;
@@ -505,7 +506,7 @@ export function initInterfaces(ctx, el) {
         const x = e(k); overview.append(h('span', { class: 'badge ' + (x.available ? 'ok' : 'err'), title: x.available ? 'available' : x.reason }, l));
       });
       overview.append(h('span', { class: 'badge', title: 'I2C, CAN and LIN have no ChipWhisperer hardware support' }, 'I2C / CAN: none'));
-    } else modelLine.textContent = state.mpsse ? 'The scope is in MPSSE mode for OpenOCD; restore normal mode in the JTAG and SWD section.' : 'Connect a scope (or the simulator) to see which interfaces it offers.';
+    } else modelLine.textContent = state.mpsse ? 'The scope is in MPSSE mode for OpenOCD; restore normal mode in the JTAG and SWD section.' : (caps.connected ? none.reason[0].toUpperCase() + none.reason.slice(1) + '.' : 'Connect a scope (or the simulator) to see which interfaces it offers.');
     const uartOk = uart.set(e('uart'));
     term.gate();
     if (uartOk) {
@@ -517,7 +518,8 @@ export function initInterfaces(ctx, el) {
     }
     if (ss.set(e('simpleserial'))) {
       const cdc = c.simpleserial.cdc || {};
-      gateEl(ssBtns.cdc, !!cdc.available && !c.simulated, c.simulated ? 'the simulator has no USB-CDC port' : cdc.reason);
+      gateEl(ssBtns.cdc, !!cdc.available, cdc.reason); // the simulator offers it like the model it stands in for; its simulated target then answers SimpleSerial v2
+      if (!ssBtns.cdc.disabled) ssBtns.cdc.title = c.simulated ? 'simulated: the simulated target answers SimpleSerial v2, as over the scope\'s USB-CDC port' : 'SimpleSerial v2 over the scope\'s USB-CDC serial port';
       if (ssBtns.cdc.disabled && ssVer === 'cdc') { ssVer = '2.1'; paintSeg(); }
       const sst = state.simpleserial || {};
       ssState.textContent = sst.target ? `target: ${sst.target}${sst.version ? ', SimpleSerial ' + sst.version : ''}` : 'no target connected';
@@ -531,7 +533,7 @@ export function initInterfaces(ctx, el) {
     }
     if (gpio.set(e('gpio'), c && !c.gpio.read.available ? 'drive only' : null)) gpioRead(); else gpioTable.innerHTML = '';
     if (uio.set(e('userio'))) uioRead(); else uioGrid.innerHTML = '';
-    const anyTrig = c ? { available: true } : NO_SCOPE;
+    const anyTrig = c ? { available: true } : none;
     if (trig.set(anyTrig)) {
       [...kindSel.options].forEach((o) => { const x = (c.triggers || {})[o.value] || {}; gateEl(o, !!x.available, x.reason); });
       if (kindSel.selectedOptions[0] && kindSel.selectedOptions[0].disabled) kindSel.value = 'basic';
@@ -546,7 +548,7 @@ export function initInterfaces(ctx, el) {
       fill(bbData, all, 'USERIO_D0'); fill(bbClk, [...all.filter((p) => p !== 'target_pwr' && p !== 'nrst'), 'disabled'], 'USERIO_CK'); fill(owPin, all, 'USERIO_D0');
     }
     trace.set(e('trace'));
-    progs.set(c ? { available: true } : NO_SCOPE, 'per model');
+    progs.set(c ? { available: true } : none, 'per model');
     progList.innerHTML = '';
     Object.entries((c && c.programmers) || {}).forEach(([k, v]) => progList.append(h('span', { class: 'k' }, k), h('span', { class: v.available ? 'ok' : 'muted', title: v.reason || '' }, v.available ? 'available' : v.reason)));
     applyOcdGates();

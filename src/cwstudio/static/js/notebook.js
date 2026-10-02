@@ -199,7 +199,7 @@ export function initNotebook(ctx, sideEl, viewEl) {
         else if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); runCell(cell.id, true); }
         else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runCell(cell.id, false); }
         else if (e.key === 'Enter' && e.altKey) { e.preventDefault(); runCell(cell.id, false); addCell('code', cell.id); }
-        else if (e.key === 'Escape') { ta.blur(); if (cell.cell_type === 'markdown') el._render(); }
+        else if (e.key === 'Escape') { viewEl.focus({ preventScroll: true }); if (cell.cell_type === 'markdown') el._render(); } // leave the cell but keep the focus in the notebook, so single-key shortcuts stay off
         else if (e.key === 'Enter') {
           // keep indentation, add one level after a colon
           const s = ta.selectionStart, line = ta.value.slice(ta.value.lastIndexOf('\n', s - 1) + 1, s);
@@ -654,6 +654,7 @@ export function initNotebook(ctx, sideEl, viewEl) {
   const varsName = h('span', { class: 'muted nb-vars-name' });
   const tutInfo = h('div', { class: 'help' });
   const tutProgress = h('progress', { style: 'display:none' });
+  const tutAsk = h('div', { class: 'nb-tut-ask', style: 'display:none' });
   const fileIn = h('input', { type: 'file', accept: '.ipynb', style: 'display:none', onchange: async () => {
     if (!fileIn.files.length) return;
     try { const r = await upload('/api/notebooks/import', fileIn.files[0]); toast(`Imported ${r.path}`, 'ok'); await loadList(); openDoc(r.path); } catch (e) { toast(e.message, 'err', 6000); }
@@ -664,15 +665,34 @@ export function initNotebook(ctx, sideEl, viewEl) {
     if (name === null) return;
     try { const r = await post('/api/notebooks/new', { name }); await loadList(); openDoc(r.path); } catch (e) { toast(e.message, 'err'); }
   }
-  async function fetchTutorials() {
-    try { renderTut(await post('/api/notebooks/tutorials/fetch')); } catch (e) { toast(e.message, 'err', 6000); }
+  async function fetchTutorials(onModified) {
+    tutAskDismissed = false;
+    try { renderTut(await post('/api/notebooks/tutorials/fetch', onModified ? { on_modified: onModified } : {})); } catch (e) { toast(e.message, 'err', 6000); }
   }
-  let tutState = null;
+  let tutState = null, tutAskDismissed = false;
+  // A download that would replace tutorial files you edited stops in state "confirm" and asks here: update and keep your copies as backups, keep your copies as they are, or cancel.
+  function renderTutAsk(t) {
+    const conflicts = (t.job && t.job.state === 'confirm' && t.job.conflicts) || [];
+    tutAsk.style.display = conflicts.length && !tutAskDismissed ? '' : 'none';
+    if (!conflicts.length || tutAskDismissed) return;
+    const shown = conflicts.slice(0, 8);
+    tutAsk.innerHTML = '';
+    tutAsk.append(
+      h('div', { class: 'help' }, `You changed ${conflicts.length} tutorial file${conflicts.length === 1 ? '' : 's'} that the download would replace:`),
+      h('ul', { class: 'help mono', style: 'margin:4px 0 4px 16px;padding:0' }, ...shown.map((c) => h('li', {}, c)), conflicts.length > shown.length ? h('li', {}, `and ${conflicts.length - shown.length} more`) : null),
+      h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
+        h('button', { class: 'btn sm primary', title: 'Install the new versions and keep your copies next to them as <name>.local-<date>-<time>', onclick: () => fetchTutorials('backup') }, 'Update, back up mine'),
+        h('button', { class: 'btn sm', title: 'Update everything else and leave your edited files as they are', onclick: () => fetchTutorials('keep') }, 'Keep mine'),
+        h('button', { class: 'btn ghost sm', onclick: () => { tutAskDismissed = true; renderTutAsk(t); } }, 'Cancel')));
+  }
   function renderTut(t, fromList) {
     const busy = t.job && ['resolving', 'downloading', 'extracting'].includes(t.job.state);
     tutProgress.style.display = busy ? '' : 'none';
     if (busy) { if (t.job.total) { tutProgress.max = t.job.total; tutProgress.value = t.job.done; } else tutProgress.removeAttribute('value'); }
-    tutInfo.textContent = busy ? `${t.job.state}…` : t.job && t.job.state === 'error' ? t.job.error : t.installed ? `chipwhisperer-jupyter ${t.installed.commit.slice(0, 8)}${t.firmware_linked ? '' : ' (download firmware sources in the Firmware tab so build cells work)'}` : 'NewAE\'s courses (SCA101, Fault101, ...) and demos, matched to your firmware sources.';
+    renderTutAsk(t);
+    const backups = (t.job && t.job.state === 'installed' && t.job.backups) || [];
+    if (backups.length && tutState && tutState !== 'installed' && !fromList) toast(`Kept your edited tutorial files as ${backups.join(', ')}`, 'ok', 8000);
+    tutInfo.textContent = busy ? `${t.job.state}…` : t.job && t.job.state === 'error' ? t.job.error : t.job && t.job.state === 'confirm' && tutAskDismissed ? 'Download cancelled; your edited tutorial files were not changed.' : t.installed ? `chipwhisperer-jupyter ${t.installed.commit.slice(0, 8)}${t.firmware_linked ? '' : ' (download firmware sources in the Firmware tab so build cells work)'}` : 'NewAE\'s courses (SCA101, Fault101, ...) and demos, matched to your firmware sources.';
     // Reload the list once when a download finishes (the job keeps saying "installed" afterwards, and loadList renders this card again).
     const state = t.job ? t.job.state : null;
     if (state === 'installed' && tutState && tutState !== 'installed' && !fromList) loadList();
@@ -731,18 +751,18 @@ export function initNotebook(ctx, sideEl, viewEl) {
       listEl),
     h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('span', { class: 'title' }, 'ChipWhisperer tutorials')),
-      tutInfo, tutProgress,
-      h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn sm primary', onclick: fetchTutorials }, 'Download tutorials'))),
+      tutInfo, tutProgress, tutAsk,
+      h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'btn sm primary', title: 'Download or update the tutorials. Files you changed are never overwritten without asking.', onclick: () => fetchTutorials() }, 'Download tutorials'))),
     h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('span', { class: 'title' }, 'Variables'), varsName, h('div', { class: 'end' }, h('button', { class: 'btn ghost sm', onclick: loadVars }, 'Refresh'))),
       varsEl),
     h('div', { class: 'help' }, 'Cells run inside Studio: cw.scope() and cw.target() use the connected devices, captured traces appear in the Capture tab, and !make uses Studio\'s compilers. Each open notebook has its own variables (its kernel); cells of all notebooks run one at a time. The studio object adds helpers such as studio.traces, studio.build_firmware() and studio.program().'));
 
-  // Studio's single-key capture shortcuts (s single, r run, Esc stop, space pause, +/- zoom, arrows) belong to the waveform, which the Notebook tab hides. Keep them from firing here, e.g. after Esc leaves a cell or while a toolbar button has focus.
+  // Studio's single-key shortcuts (s single, r run, Esc stop, space pause, +/- zoom, arrows) must not fire while the notebook has the focus: in a cell, on a notebook toolbar button, after Esc leaves a cell, or after a click anywhere in the notebook (the view takes the focus, see tabindex). With the focus elsewhere (the tab bar, the header), S and R still capture as in every other tab.
   const CAPTURE_KEYS = new Set(['s', 'S', 'r', 'R', 'Escape', ' ', '+', '=', '-', '_', 'ArrowLeft', 'ArrowRight']);
   const captureKey = (e) => CAPTURE_KEYS.has(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target && e.target.tagName) || '');
-  window.addEventListener('keydown', (e) => { if (viewEl.offsetParent && captureKey(e) && (e.target === document.body || e.target === document.documentElement)) e.stopPropagation(); }, true);
-  [viewEl, sideEl].forEach((el) => el.addEventListener('keydown', (e) => { if (captureKey(e) || e.key === 'Escape') e.stopPropagation(); })); // Esc in a cell blurs it first, so the capture shortcut would see no focused input
+  viewEl.tabIndex = -1;
+  [viewEl, sideEl].forEach((el) => el.addEventListener('keydown', (e) => { if (captureKey(e) || e.key === 'Escape') e.stopPropagation(); }));
   document.addEventListener('keydown', (e) => {
     if (!viewEl.offsetParent) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); const d = focusedDoc(); if (d) d.save(true); }

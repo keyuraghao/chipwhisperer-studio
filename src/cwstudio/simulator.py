@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from cwstudio import simtrigger
 from cwstudio.aes import HW, SBOX, encrypt_block
 
 log = logging.getLogger("cwstudio.sim")
@@ -316,6 +317,8 @@ class SimScope:
             raise OSError("scope not connected")
         self._armed = True
         self.adc._state = True
+        if self.target is not None:
+            self.target._traffic = []  # the advanced triggers see what happens on the lines from now on
 
     def capture(self, poll_done: bool = False) -> bool:
         """Return True on timeout (like the real API)."""
@@ -328,6 +331,9 @@ class SimScope:
             self.adc._state = False
             return False
         deadline = time.time() + float(self.adc.timeout)
+        adv = simtrigger.configured(self)
+        if adv is not None:
+            return self._capture_advanced(adv, deadline)
         if not self.trigger_driven():
             # the trigger watches pins the simulated target never toggles: like real hardware, wait out the timeout; the target's run is not captured
             time.sleep(max(0.0, deadline - time.time()))
@@ -359,6 +365,64 @@ class SimScope:
         self.adc._state = False
         self.adc._trig_count = trig
         return False
+
+    def _timeout(self, deadline: float) -> bool:
+        time.sleep(max(0.0, deadline - time.time()))
+        if self.target is not None:
+            self.target._triggered = False
+            self.target._last_run = None
+        self._armed = False
+        self.adc._state = False
+        return True
+
+    def _capture_advanced(self, cfg: Dict[str, Any], deadline: float) -> bool:
+        """A capture with a trigger other than the trigger pins (simtrigger): wait for the target's command, find when the trigger fires on what the target did, and record the trace from there; a trigger that never fires times out like the hardware."""
+        while self.target is None or not self.target._triggered:
+            if time.time() > deadline:
+                self._armed = False
+                self.adc._state = False
+                return True
+            time.sleep(0.0005)
+        if self.capture_delay:
+            time.sleep(self.capture_delay)
+        fw_run = getattr(self.target, "_last_run", None)
+        if fw_run is not None:
+            hi, lo = fw_run[0].trigger_window()
+            trig = int(((lo if lo is not None else fw_run[0].total_cycles) - (hi or 0)) * self._spc())
+        else:
+            leak_start, leak_spacing = self._leak_pos()
+            trig = int(leak_start + 16 * leak_spacing)
+        if cfg["kind"] == "fallback":
+            self._trig_note(f"Simulator: {cfg['why']}; the capture triggers on the target's trigger pin (TIO4) instead")
+            fire, win = 0.0, None
+        elif cfg["kind"] == "sad" and getattr(self, "_sim_sad_ref", None) is None:
+            self._trig_note("Simulator: the SAD trigger has no reference (no trace had been captured when it was configured); the capture triggers on the target's trigger pin (TIO4) instead")
+            fire, win = 0.0, None
+        else:
+            fire, win = simtrigger.fire_time(self, cfg)
+        if fire is None:
+            self._trig_note(f"Simulator: the {cfg['kind'].replace('_', ' ')} trigger ({simtrigger.describe(cfg)}) never fired on what the simulated target did; the capture times out")
+            return self._timeout(deadline)
+        t0 = simtrigger.trace_start(self, fire)
+        n = int(self.adc.samples)
+        wave = win.trace(t0, n) if win is not None else None
+        if wave is None:
+            wave = simtrigger.render(self, t0, n)
+        self._last_trace = np.asarray(wave, dtype=np.float32)
+        self.target._last_run = None
+        self.target._triggered = False
+        self._armed = False
+        self.adc._state = False
+        self.adc._trig_count = trig
+        self._trig_fired = float(fire)  # where the trigger fired, in ADC samples from the target's trigger rise (tests and the log)
+        return False
+
+    def _trig_note(self, msg: str) -> None:
+        """Log a trigger notice once per configuration (not on every capture)."""
+        key = (msg, repr(getattr(self, "_sim_trigger", None)))
+        if getattr(self, "_trig_noted", None) != key:
+            self._trig_noted = key
+            log.warning("%s", msg)
 
     # pins the simulated target drives: TIO4 is its trigger output; the UART lines (TIO1, TIO2) idle high and never give an edge on their own
     _TRIGGER_PIN = "tio4"
@@ -447,12 +511,13 @@ class SimScope:
         self._geo_cache = (geo_key, geo)
         return geo
 
-    def _synth(self, pt: bytes, key: bytes) -> np.ndarray:
-        n = int(self.adc.samples)
+    def _synth(self, pt: bytes, key: bytes, n: Optional[int] = None, offset: Optional[int] = None) -> np.ndarray:
+        """The AES trace: ``n`` samples (adc.samples) from ``offset`` (adc.offset) samples after the trigger rise; the simulated triggers other than the trigger pin pass their own."""
+        n = int(self.adc.samples) if n is None else int(n)
         gain_scale = (0.6 + self.gain.gain / 78.0) * (1.4 if self.gain.mode == "high" else 0.7)
         # Background: clock ripple + slow envelope + noise
         wave = self._background(n) + self._rng.normal(0, self.noise, n).astype(np.float32)
-        offset = int(self.adc.offset)
+        offset = int(self.adc.offset) if offset is None else int(offset)
         has_key = bool(pt and key and len(pt) >= 16 and len(key) >= 16)
         geo = self._leak_geometry(n, offset)
         if geo is not None:
@@ -512,6 +577,8 @@ class SimTarget:
         self._pending_cmd: Optional[str] = None
         self._last_run = None  # (Run, per-cycle power) of the last emulated command that raised the trigger
         self._reset_count = 0
+        self._traffic: List[tuple] = []  # since the scope was armed: ("rx", bytes the target received), ("tx", bytes it sent), ("op", trigger timing) for the simulated advanced triggers
+        self._raw_in = False
         self.glitch_window = (20, 60)   # ext_offset window where glitches succeed
         self.glitch_width_ok = (5.0, 40.0)
 
@@ -583,6 +650,28 @@ class SimTarget:
     def _firmware(self):
         return getattr(self.scope, "firmware", None) if self.scope is not None else None
 
+    def _record(self, kind: str, value) -> None:
+        """Keep what crossed the target's pins since the scope was armed (simtrigger lays it out in time)."""
+        if kind in ("rx", "tx") and not value:
+            return
+        tr = self._traffic
+        tr.append((kind, bytes(value) if kind in ("rx", "tx") else value))
+        if len(tr) > simtrigger.TRAFFIC_MAX:
+            del tr[: len(tr) - simtrigger.TRAFFIC_MAX]
+
+    def _frame(self, cmd: str, data: bytes) -> bytes:
+        """The bytes a SimpleSerial host sends (or the target answers) for ``cmd`` with the target's protocol version."""
+        from cwstudio.codemap.emu import SimpleSerial
+        try:
+            return SimpleSerial(str(self.protver) if str(self.protver) in ("2.1", "1.1", "1.0") else "2.1").frame(cmd, data)
+        except Exception:  # noqa: BLE001
+            return (cmd + bytes(data).hex() + "\n").encode()
+
+    @staticmethod
+    def _op(run) -> tuple:
+        hi, lo = run.trigger_window()
+        return ("op", (hi, lo, run.total_cycles))
+
     def _fw_glitch(self) -> str:
         """Outcome of the armed glitch on the emulated firmware: 'normal', 'skip' (the core misses instructions where the glitch lands) or 'reset' (too strong: the target crashes). Where it lands (ext_offset) is up to the firmware itself."""
         g = self.scope.glitch
@@ -601,6 +690,8 @@ class SimTarget:
 
     def _fw_write(self, fw, cmd: str, data: bytes) -> None:
         """A command for the emulated firmware: run it and keep its response (and, for commands that raise the trigger, the run the scope turns into a trace). An armed glitch makes the emulated core skip the instructions at ext_offset cycles after the trigger, or crash it."""
+        if not self._raw_in:
+            self._record("rx", fw.fw.ss.frame(cmd, data))
         if cmd == "k":
             self._key = bytes(data)
             return
@@ -620,6 +711,7 @@ class SimTarget:
                 log.debug("glitched firmware crashed: %s", e)
                 outcome = "reset"
         if outcome == "reset" and run.trig:  # the trigger fired, then the target crashed: no response, and it starts over
+            self._record(*self._op(run))
             self._last_run = (run, P)
             self._triggered = True
             self._trigger_count += 1
@@ -631,9 +723,11 @@ class SimTarget:
             self._last_pt = data
             self._last_ct = resp or b""
         if run.trig:
+            self._record(*self._op(run))
             self._last_run = (run, P)
             self._triggered = True
             self._trigger_count += 1
+        self._record("tx", run.output)
         self._pending_response = resp
         self._pending_cmd = "r"
         with self._lock:
@@ -646,6 +740,10 @@ class SimTarget:
         if fw is not None:
             self._fw_write(fw, cmd, data)
             return
+        if not self._raw_in:
+            self._record("rx", self._frame(cmd, data))
+        if cmd in ("p", "g"):
+            self._record("op", None)  # the built-in model raises the trigger pin as soon as the command is in
         if cmd == "p":
             self._last_pt = data
             self._last_ct = encrypt_block(self._key, data) if len(data) == 16 else b""
@@ -676,6 +774,8 @@ class SimTarget:
         else:
             self._pending_response = b""
             self._pending_cmd = "r"
+        if self._pending_response is not None and cmd in ("p", "g") and not self._raw_in:
+            self._record("tx", self._frame("r", self._pending_response))
         # Also mirror into the raw rx buffer as a SimpleSerial-formatted line
         if self._pending_response is not None and cmd in ("p", "g"):
             with self._lock:
@@ -706,6 +806,7 @@ class SimTarget:
         if isinstance(data, str):
             data = data.encode()
         line = bytes(data)
+        self._record("rx", line)
         fw = self._firmware()
         if fw is not None:  # raw serial traffic goes straight to the emulated firmware
             try:
@@ -715,7 +816,20 @@ class SimTarget:
                 out = b""
             with self._lock:
                 self._rx += out
+            self._record("tx", out)
             return
+        with self._lock:
+            before = len(self._rx)
+        self._raw_in = True
+        try:
+            self._write_line(line)
+        finally:
+            self._raw_in = False
+        with self._lock:
+            sent = bytes(self._rx[before:]) if len(self._rx) >= before else b""
+        self._record("tx", sent)
+
+    def _write_line(self, line: bytes) -> None:
         text = line.decode(errors="replace").strip()
         if text.startswith("p") and len(text) == 33:
             self.simpleserial_write("p", bytes.fromhex(text[1:]))

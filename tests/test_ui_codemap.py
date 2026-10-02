@@ -284,3 +284,56 @@ def test_band_sync_long_source_and_switching(studio, tmp_path):
         sync()
         assert not errors, errors
         browser.close()
+
+
+def test_sources_clear_exact_mode_and_line_info(studio, tmp_path):
+    """The Sources field shows the chosen source folder and clearing it really clears it; exact mode rounds the PC sampling interval to what the Arm DWT does and shows it; no PC samples is a message, not a TypeError; code without line info is one "(no line info)" entry, never file:0."""
+    from playwright.sync_api import Error, expect, sync_playwright
+    base, fw = studio
+    _api(base, "POST", "/api/scope/connect", {"kind": "sim", "sim_model": "husky"})
+    _api(base, "POST", "/api/target/connect", {"kind": "sim"})
+    _api(base, "POST", "/api/target/program", {"programmer": "STM32F", "path": fw})
+    _api(base, "POST", "/api/capture/start", {"count": 10, "clear": True})
+    for _ in range(300):
+        if not _api(base, "GET", "/api/status")["job"]["running"]:
+            break
+        time.sleep(0.05)
+    _api(base, "POST", "/api/codemap/build", {"elf": fw, "sources": str(tmp_path)})
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Error as e:
+            pytest.skip(f"Chromium for Playwright is not installed: {e}")
+        page = browser.new_page(viewport={"width": 1400, "height": 950})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base)
+        page.click("#tabs .tab[data-tab=code]")
+        expect(page.locator("#cm-sources")).to_have_value(str(tmp_path), timeout=10000)
+        page.fill("#cm-sources", "")
+        page.click("#cm-build")
+        expect(page.locator("#cm-build-msg")).to_contain_text("Built", timeout=60000)
+        assert _api(base, "GET", "/api/codemap")["source_roots"] == []
+        expect(page.locator("#cm-sources")).to_have_value("")
+        # exact mode on the simulated Husky: 100 cycles is not a DWT interval, 128 is
+        expect(page.locator("#cm-pctrace")).to_be_visible(timeout=10000)
+        page.fill("#cm-pc-interval", "100")
+        page.click("#cm-pctrace")
+        expect(page.locator("#cm-pc-txt")).to_contain_text("every 128 cycles (100 rounded", timeout=20000)
+        expect(page.locator("#cm-pc-interval")).to_have_value("128")
+        # a Husky that receives nothing: a message instead of a TypeError
+        page.route("**/api/codemap/pctrace", lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(
+            {"mode": "husky", "samples": 0, "agreement": None, "scale": None, "offset": None, "rows": [], "interval": 64, "interval_requested": 64, "bytes": 0, "message": "the Husky received no trace bytes"})))
+        page.click("#cm-pctrace")
+        expect(page.locator("#cm-pc-txt")).to_contain_text("no PC samples arrived", timeout=10000)
+        expect(page.locator("#cm-pc-txt")).to_contain_text("received no trace bytes")
+        # a region with line 0 code: one "(no line info)" entry at the end
+        page.route("**/api/codemap/region", lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(
+            {"cycles": [0, 10], "functions": [], "inlined": [], "instructions": 3, "lines_total": 2, "lines": [
+                {"file": "aes.c", "file_index": 0, "path": "aes.c", "line": 12, "cycles": 4, "instructions": 2, "executions": 1, "first": 0, "last": 4, "func": "Cipher", "inline": None, "text": "x = 1;", "samples": [0, 4]},
+                {"file": None, "file_index": -1, "path": None, "line": 0, "no_line_info": True, "cycles": 2, "instructions": 1, "executions": 1, "first": 4, "last": 6, "func": "Cipher", "inline": None, "text": None, "samples": [4, 6]}]})))
+        page.click("#cm-window")
+        expect(page.locator("#cm-lines .cm-item").last).to_contain_text("(no line info)", timeout=10000)
+        assert ":0" not in page.inner_text("#cm-lines")
+        assert not errors, errors
+        browser.close()

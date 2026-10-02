@@ -346,6 +346,39 @@ def test_timeline_region_and_lookup():
     assert at["func"] == "SubBytes"
 
 
+def test_region_groups_code_without_line_info():
+    """Line 0 (code the compiler gives no source line, as clang does for parts of simpleserial_put) and code without line information are one "(no line info)" entry at the end of the lines, never a file:0 entry."""
+    from cwstudio.codemap.emu import Firmware
+    from cwstudio.codemap.program import Program
+    from cwstudio.codemap.timeline import Timeline
+    prog = Program(elf_or_skip("CWLITEARM", "gcc", "TINYAES128C", "SS_VER_2_1"))
+    run, _ = Firmware(prog).encrypt(KEY, bytes(16))
+    tl = Timeline.build(prog, run)
+    sb = tl.function_ranges("SubBytes")
+    clean = tl.region(sb[0][0], sb[0][1])
+    assert not any(ln.get("no_line_info") for ln in clean["lines"])
+    sel = np.flatnonzero((tl.start >= sb[0][0]) & (tl.start < sb[0][1]))
+    tl.line[sel[:5]] = 0  # line 0 records
+    tl.file[sel[5:8]] = -1  # no line information at all
+    reg = tl.region(sb[0][0], sb[0][1])
+    none = [ln for ln in reg["lines"] if ln.get("no_line_info")]
+    assert len(none) == 1 and reg["lines"][-1] is none[0] and none[0]["file_index"] == -1 and none[0]["instructions"] == 8
+    assert all(ln["line"] > 0 and ln["file_index"] >= 0 for ln in reg["lines"][:-1])
+    assert reg["lines_total"] == len(reg["lines"])
+
+
+def test_pc_sample_interval_follows_the_dwt():
+    """The Arm DWT takes a PC sample every 64 or 1024 cycles times 1 to 16 (CYCTAP and the 4-bit POSTPRESET): other intervals round to the nearest of those."""
+    assert swo.pc_sample_interval(64) == (64, 0, 0)
+    assert swo.pc_sample_interval(100) == (128, 0, 1)
+    assert swo.pc_sample_interval(1) == (64, 0, 0)
+    assert swo.pc_sample_interval(1024) == (1024, 0, 15)
+    assert swo.pc_sample_interval(3000) == (3072, 1, 2)
+    assert swo.pc_sample_interval(10 ** 6) == (16384, 1, 15)
+    r = swo.compare([], None)
+    assert r["samples"] == 0 and r["agreement"] is None and r["rows"] == [] and r["message"]
+
+
 def test_inlined_functions_are_found():
     # clang inlines SubBytes, ShiftRows' helpers and xtime into Cipher: the DWARF inline records still place them on the timeline
     from cwstudio.codemap.emu import Firmware
@@ -480,6 +513,23 @@ def test_api_build_region_lookup(api):
     assert api.get("/api/codemap/at", params={"sample": a + 4}).json()["func"] == "SubBytes"
     r = api.get("/api/codemap/model")
     assert r.status_code == 200 and len(r.content) > 5000 * 4
+
+
+def test_api_sources_clear_and_pc_interval(api, tmp_path):
+    """A source folder chosen for the code map can be cleared again (sources "" goes back to the paths in the ELF), and exact mode reports the PC sampling interval the DWT really uses."""
+    elf = elf_or_skip("CWLITEARM", "gcc", "TINYAES128C", "SS_VER_2_1")
+    api.post("/api/scope/connect", json={"kind": "sim", "sim_model": "husky"})
+    api.post("/api/target/connect", json={"kind": "sim"})
+    st = api.post("/api/codemap/build", json={"elf": elf, "sources": str(tmp_path), "key": KEY.hex(), "text": "00" * 16, "align": False}).json()
+    assert st["source_roots"] == [str(tmp_path)] and st["pathsep"] == os.pathsep
+    assert api.session.codemap.prog.source_roots == [str(tmp_path)]
+    st = api.post("/api/codemap/build", json={"elf": elf, "sources": "", "key": KEY.hex(), "text": "00" * 16, "align": False}).json()
+    assert st["source_roots"] == [] and api.session.codemap.prog.source_roots == []
+    assert api.get("/api/codemap").json()["source_roots"] == []
+    pc = api.post("/api/codemap/pctrace", json={"interval": 100}).json()
+    assert pc["interval"] == 128 and pc["interval_requested"] == 100 and pc["samples"] > 10
+    gaps = np.diff([r["cycle"] for r in pc["rows"]])
+    assert np.median(gaps) == pytest.approx(128, abs=1)
 
 
 def test_mcp_codemap_tools():

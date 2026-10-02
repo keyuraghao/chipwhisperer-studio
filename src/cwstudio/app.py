@@ -16,6 +16,7 @@ from cwstudio.analysis import MODELS
 from cwstudio.capabilities import LABELS, SIM_MODELS
 from cwstudio import tools
 from cwstudio.firmware import CRYPTO_TARGETS, SS_VERSIONS
+from cwstudio.cli import mcp_command
 from cwstudio.interfaces import register_routes as register_interface_routes
 from cwstudio.logic.service import register_routes as register_logic_routes
 from cwstudio.codemap.service import register_routes as register_codemap_routes
@@ -28,9 +29,16 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 def create_app(session: Session) -> App:
     from contextlib import asynccontextmanager
 
+    def _detect_mpsse():
+        try:
+            session.interfaces.openocd.detect(force=True)
+        except Exception as e:  # noqa: BLE001
+            log.debug("MPSSE detection at startup failed: %s", e)
+
     @asynccontextmanager
     async def lifespan(_app):
         session.bus.attach_loop(asyncio.get_running_loop())
+        asyncio.get_running_loop().run_in_executor(None, _detect_mpsse)  # a scope left in MPSSE mode by an earlier run is reported (and offered Restore normal mode) from the start
         yield
         await asyncio.get_running_loop().run_in_executor(None, session.close)
 
@@ -76,13 +84,17 @@ def create_app(session: Session) -> App:
             "crypto_targets": CRYPTO_TARGETS,
             "ss_versions": SS_VERSIONS,
             "sim_models": {k: LABELS[k] for k in SIM_MODELS},
+            "mcp_command": mcp_command(),
         }
 
     @app.get("/api/capabilities")
     async def capabilities():
         """What the connected scope supports: protocols, triggers, programmers, debug and logic-analyser sources, each with the reason when unavailable."""
         from cwstudio.capabilities import capabilities as caps
-        return caps(session.scope, session.target)
+        scope, target = session.scope, session.target
+        if scope is None:
+            return caps(None)  # nothing to read from hardware
+        return await run(session.worker.call, caps, scope, target, timeout=30)  # firmware features and component probes are scope reads: they run on the hardware thread like every other
 
     @app.get("/api/devices")
     async def devices():
@@ -596,8 +608,13 @@ def create_app(session: Session) -> App:
         return FileResponse(full)
 
     @app.post("/api/notebooks/tutorials/fetch")
-    async def tutorials_fetch():
-        return await run(session.tutorials.fetch)
+    async def tutorials_fetch(req: Request):
+        """Download or update the tutorials. Optional body {"on_modified": "backup" | "keep"} answers a job that stopped in state "confirm" because locally edited files would be replaced."""
+        p = await body(req)
+        try:
+            return await run(session.tutorials.fetch, on_modified=p.get("on_modified") or None)
+        except ValueError as e:
+            err(e)
 
     # Kernel routes take an optional kernel id (query or body field "kernel"): a notebook's path for that notebook's own kernel, a temporary id, or nothing for the shared default kernel.
     def kernel_id(req: Request, p: Optional[Dict[str, Any]] = None) -> Optional[str]:

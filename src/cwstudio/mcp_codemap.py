@@ -77,5 +77,5 @@ def register_codemap_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]) 
 
     @mcp.tool(annotations=HW)
     def code_map_pc_trace(interval: int = 64) -> Dict[str, Any]:
-        """Exact mode: record real program counter samples through a ChipWhisperer-Husky's Arm trace port (SWO, every `interval` cycles; needs simpleserial-trace firmware) and compare them with the emulation: agreement (share of samples in the predicted function) and the fitted cycle scale. On the simulator the samples come from the emulated run through the same decoder."""
+        """Exact mode: record real program counter samples through a ChipWhisperer-Husky's Arm trace port (SWO, every `interval` cycles, rounded to the nearest the Arm DWT supports: 64 or 1024 times 1 to 16, the result's `interval`; needs simpleserial-trace firmware) and compare them with the emulation: agreement (share of samples in the predicted function) and the fitted cycle scale. On the simulator the samples come from the emulated run through the same decoder."""
         return call("POST", "/api/codemap/pctrace", {"interval": interval}, timeout=120)

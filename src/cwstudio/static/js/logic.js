@@ -188,19 +188,21 @@ export function initLogic(ctx, sideEl, viewEl) {
     const la = (srcInfo && srcInfo.scope && srcInfo.scope.la) || {};
     const trig = srcInfo ? srcInfo.la_triggers : ['capture', 'manual'];
     const maxDepth = la.max_depth || 16376;
+    // the server's defaults (GET /api/la/sources), so a capture from the tab and one from the API or MCP with the same settings left out are the same
+    const D = (srcInfo && srcInfo.defaults) || { native: { downsample: 96, timeout: 5 }, adc: { segments: 20 } };
     fields.native = [
       sel('group', 'Group', ['CW 20-pin', 'USERIO 20-pin', 'glitch'], s('native', 'group', 'CW 20-pin'), ['CW 20-pin: IO1-4, HS1, HS2, AUX, TRIG, ADC clock', 'USERIO 20-pin: D0-D7, CK', 'glitch internals']),
       sel('clk_source', 'Clock', ['usb', 'target', 'pll'], s('native', 'clk_source', 'usb'), ['USB 96 MHz', 'target (HS1/AUX)', 'Husky PLL']),
       num('oversampling', 'Oversampling', s('native', 'oversampling', 1), { min: 0.25, step: 0.25 }),
-      num('downsample', 'Downsample', s('native', 'downsample', 96), { min: 1, max: 65536 }),
+      num('downsample', 'Downsample', s('native', 'downsample', D.native.downsample), { min: 1, max: 65536 }),
       num('depth', 'Depth', s('native', 'depth', maxDepth), { min: 2, max: maxDepth, step: 2 }),
       sel('trigger', 'Trigger', trig, s('native', 'trigger', 'capture')),
       sel('fire', 'Fire target', ['simpleserial', 'none'], s('native', 'fire', 'simpleserial'), ['send a SimpleSerial command', 'no (wait for the trigger)']),
       chk('with_analog', 'Also capture the ADC trace', s('native', 'with_analog', false)),
-      num('timeout', 'Timeout (s)', s('native', 'timeout', 5), { min: 0.1, step: 0.5 }),
+      num('timeout', 'Timeout (s)', s('native', 'timeout', D.native.timeout), { min: 0.1, step: 0.5 }),
     ];
     fields.adc = [
-      num('segments', 'Segments', s('adc', 'segments', 20), { min: 1, max: 2000 }),
+      num('segments', 'Segments', s('adc', 'segments', D.adc.segments), { min: 1, max: 2000 }),
       num('samples', 'Samples each', s('adc', 'samples', (srcInfo && srcInfo.scope && srcInfo.scope.adc_samples) || 5000), { min: 16 }),
       txt('level', 'Threshold', s('adc', 'level', 'auto'), { title: 'auto, or a level in the ADC range (-0.5..0.5)' }),
       txt('hysteresis', 'Hysteresis', s('adc', 'hysteresis', 'auto'), { title: 'auto, or the band width around the threshold' }),
@@ -406,12 +408,17 @@ export function initLogic(ctx, sideEl, viewEl) {
   async function addTraceRow() { try { await post('/api/la/analog/from_trace', { index: -1 }); await loadCapture(false); } catch (e) { toast(errMsg(e), 'err', 6000); } }
 
   // ----- buses -----
+  let busNoted = '';
   function paintBuses() {
+    // a bus whose channels the new capture lacks is kept but disabled: say so once per change
+    const notes = buses.filter((b) => b.disabled && b.notice).map((b) => b.notice).join('\n');
+    if (notes && notes !== busNoted) toast(notes, 'warn', 6000);
+    busNoted = notes;
     busList.innerHTML = '';
-    buses.forEach((b, k) => busList.append(h('div', { class: 'la-chrow' }, h('span', { class: 'flex' }, h('b', {}, b.name), ' ', h('span', { class: 'muted' }, `${b.channels.map(chName).join(', ')} (${b.format})`)),
+    buses.forEach((b, k) => busList.append(h('div', { class: 'la-chrow' + (b.disabled ? ' disabled' : '') }, h('span', { class: 'flex' }, h('b', {}, b.name), ' ', h('span', { class: 'muted' }, `${b.channels.join(', ')} (${b.format})`), b.disabled && b.notice ? h('div', { class: 'warn la-busnote' }, b.notice) : null),
       h('button', { class: 'icon-btn sm', title: 'remove the bus', html: I.x, onclick: () => saveBuses(buses.filter((_, i) => i !== k)) }))));
   }
-  async function saveBuses(list) { try { const r = await put('/api/la/channels', { buses: list }); buses = r.buses; paintBuses(); requestView(); } catch (e) { toast(errMsg(e), 'err'); } }
+  async function saveBuses(list) { try { const r = await put('/api/la/channels', { buses: list.map((b) => ({ name: b.name, channels: b.channels, format: b.format })) }); buses = r.buses; paintBuses(); buildLayout(); requestView(); } catch (e) { toast(errMsg(e), 'err'); } }
   function addBus() {
     if (!cap) return;
     const name = h('input', { class: 'small', value: `bus${buses.length}`, style: 'width:90px' });
@@ -675,7 +682,7 @@ export function initLogic(ctx, sideEl, viewEl) {
       decRows.forEach((x, j) => { if (x.r.channel === ci && !placed.has(j)) { placed.add(j); rows.push({ t: 'dec', did: x.d.id, rid: x.r.row, h: ROW_H.dec, key: `d${x.d.id}.${x.r.row}` }); } });
     });
     decRows.forEach((x, j) => { if (!placed.has(j)) rows.push({ t: 'dec', did: x.d.id, rid: x.r.row, h: ROW_H.dec, key: `d${x.d.id}.${x.r.row}` }); });
-    buses.forEach((b, k) => rows.push({ t: 'bus', k, h: ROW_H.bus, key: 'bus' + k }));
+    buses.forEach((b, k) => { if (!b.disabled) rows.push({ t: 'bus', k, h: ROW_H.bus, key: 'bus' + k }); });
     let y = 0;
     rows.forEach((r) => { r.y = y; y += r.h; });
     const sig = rows.map((r) => r.key).join('|') + '|' + cap.id + (cap.channels.map((c) => c.name + c.color).join(''));
@@ -714,7 +721,7 @@ export function initLogic(ctx, sideEl, viewEl) {
         el = h('div', { class: 'la-label dec', style: `height:${r.h}px`, title: d ? `${d.name}: ${row ? row.label : ''}` : '' }, h('span', { class: 'n' }, row ? row.label : r.rid));
       } else if (r.t === 'bus') {
         const b = buses[r.k];
-        el = h('div', { class: 'la-label bus', style: `height:${r.h}px`, title: b.channels.map(chName).join(', ') }, h('span', { class: 'n' }, b.name), h('span', { class: 'muted' }, b.format));
+        el = h('div', { class: 'la-label bus', style: `height:${r.h}px`, title: b.channels.join(', ') }, h('span', { class: 'n' }, b.name), h('span', { class: 'muted' }, b.format));
       } else {
         const an = data.analog[r.k];
         el = h('div', { class: 'la-label an', style: `height:${r.h}px` }, h('span', { class: 'la-swatch', style: `background:${an.color}` }), h('span', { class: 'n' }, an.name), h('span', { class: 'muted' }, 'analog'));
@@ -871,10 +878,10 @@ export function initLogic(ctx, sideEl, viewEl) {
   function busText(b, v) { return v == null ? '' : b.format === 'dec' ? String(v) : b.format === 'bin' ? v.toString(2).padStart(b.channels.length, '0') : '0x' + v.toString(16).toUpperCase().padStart(Math.ceil(b.channels.length / 4), '0'); }
   function drawBus(g, r, W) {
     const bv = data.buses && data.buses[r.k]; const b = buses[r.k];
-    if (!bv || !b) return;
+    if (!bv || !b || bv.disabled || !b.index) return;
     const y0 = r.y + 4, y1 = r.y + r.h - 4;
     g.font = `11px ${colors.font}`; g.textBaseline = 'middle';
-    const col = cap.channels[b.channels[0]] ? cap.channels[b.channels[0]].color : colors.kind.data;
+    const col = cap.channels[b.index[0]] ? cap.channels[b.index[0]].color : colors.kind.data;
     for (const [s, e, v] of bv.runs) {
       const x0 = xOf(s), x1 = xOf(e);
       if (x1 < 0 || x0 > W) continue;
@@ -1015,7 +1022,10 @@ export function initLogic(ctx, sideEl, viewEl) {
   hbar.addEventListener('pointerup', () => { sbDrag = null; });
   // keyboard
   document.addEventListener('keydown', (e) => {
-    if (!viewEl.offsetParent || !cap) return;
+    if (!viewEl.offsetParent) return;
+    // Esc stops a capture even before the first one has finished (there is no capture to view yet)
+    if (e.key === 'Escape' && (running || repeat) && document.activeElement.tagName !== 'TEXTAREA') { stopCapture(); e.preventDefault(); return; }
+    if (!cap) return;
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
     const span = view.b - view.a;
     if ((e.key === '+' || e.key === '=') && !e.ctrlKey && !e.metaKey) zoom(0.5, hover ? hover.s : undefined);

@@ -204,6 +204,8 @@ def uart_frames(cap: LogicCapture, ci: int, o: Dict[str, Any]) -> Tuple[List[Dic
     starts = c.edges[nv == (1 if inv else 0)].astype(np.int64)
     nb = 1 + db + npar
     nstop = max(1, int(np.ceil(stop)))
+    if stop <= 0:
+        raise DecodeError("stop bits must be 1, 1.5 or 2")
     # a frame needs its stop bits inside the capture (allowing one bit of slack at the end)
     starts = starts[starts + (nb + stop) * bl <= cap.n + bl]
     if starts.shape[0] == 0:
@@ -222,8 +224,9 @@ def uart_frames(cap: LogicCapture, ci: int, o: Dict[str, Any]) -> Tuple[List[Dic
         chosen.append(i)
         i = nxt_l[i]
     st = starts[np.asarray(chosen, np.int64)]
-    # every bit's middle sample at once: start bit, data bits, parity, stop bits
-    offs = (np.arange(nb + nstop) + 0.5) * bl
+    # every bit's middle sample at once: start bit, data bits, parity, stop bits; a fractional last stop bit (1.5) is sampled in the middle of its half bit, not where the next frame's start bit may already be
+    stop_mid = [min(k + 0.5, (k + stop) / 2) for k in range(nstop)]
+    offs = np.concatenate((np.arange(nb) + 0.5, nb + np.asarray(stop_mid, np.float64))) * bl
     pts = np.minimum((st[:, None] + offs[None, :]).astype(np.int64), cap.n - 1)
     v = (c.value_at(pts.ravel()).reshape(pts.shape).astype(np.int64)) ^ inv
     bits = v[:, 1:1 + db]
@@ -287,11 +290,18 @@ def decode_spi(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) -> R
     miso = _ch(cap, chans, "miso", required=False)
     if mosi is None and miso is None:
         raise DecodeError("choose a MOSI or MISO channel")
-    cpol, cpha = int(_opt(o, "cpol", 0)), int(_opt(o, "cpha", 0))
-    if "mode" in o and o["mode"] not in (None, ""):
-        m = int(o["mode"])
-        cpol, cpha = m >> 1, m & 1
+    # explicit cpol/cpha options win over mode (mode always has its default filled in)
+    m = int(_opt(o, "mode", 0))
+    cpol, cpha = m >> 1, m & 1
+    if o.get("cpol") not in (None, ""):
+        cpol = int(o["cpol"])
+    if o.get("cpha") not in (None, ""):
+        cpha = int(o["cpha"])
+    if cpol not in (0, 1) or cpha not in (0, 1):
+        raise DecodeError("cpol and cpha are 0 or 1")
     ws = int(_opt(o, "word_size", 8))
+    if not 1 <= ws <= 32:
+        raise DecodeError("the SPI word size is 1 to 32 bits")
     msb = str(_opt(o, "bit_order", "msb")).lower() != "lsb"
     cs_level = 1 if str(_opt(o, "cs_active", "low")).lower() in ("high", "1") else 0
     fmt = str(_opt(o, "format", "hex"))
@@ -1019,6 +1029,54 @@ for _spec in DECODERS.values():
 def registry() -> Dict[str, Dict[str, Any]]:
     """The decoders with their channels and options, without the functions (for the API and the UI)."""
     return {k: {kk: vv for kk, vv in v.items() if kk != "fn"} for k, v in DECODERS.items()}
+
+
+_EXTRA_OPTS = {"spi": [{"id": "cpol", "type": "select", "values": [0, 1]}, {"id": "cpha", "type": "select", "values": [0, 1]}]}
+_TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off", "")
+
+
+def validate_options(kind: str, options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Check a decoder's options against its option list (select values, number ranges, auto-or-number fields) before it is stored, so a bad value is refused when it is set instead of failing every decode. Returns the options; raises ValueError naming the option."""
+    spec = DECODERS.get(kind)
+    if spec is None:
+        return dict(options or {})
+    opts = {x["id"]: x for x in spec["options"] + _EXTRA_OPTS.get(kind, [])}
+    for k, v in (options or {}).items():
+        o = opts.get(k)
+        if o is None or v is None or (v == "" and o.get("type") != "bool"):
+            continue
+        label = o.get("label", k).lower()
+        t = o.get("type")
+        if t == "select":
+            if not any(str(v).strip().lower() == str(x).lower() or _same_num(v, x) for x in o["values"]):
+                raise ValueError(f"{kind} option {label}: {v!r} is not one of {', '.join(str(x) for x in o['values'])}")
+        elif t == "number":
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                raise ValueError(f"{kind} option {label}: {v!r} is not a number") from None
+            if not np.isfinite(f) or ("min" in o and f < o["min"]) or ("max" in o and f > o["max"]):
+                rng = f"{o['min']:g} to {o['max']:g}" if "min" in o and "max" in o else f"at least {o['min']:g}" if "min" in o else f"at most {o['max']:g}"
+                raise ValueError(f"{kind} option {label}: {v!r} is not allowed, it must be {rng}")
+        elif t == "text" and k in ("baud", "bitrate"):
+            if str(v).strip().lower() != "auto":
+                try:
+                    f = float(v)
+                except (TypeError, ValueError):
+                    raise ValueError(f"{kind} option {label}: {v!r} is not auto or a number") from None
+                if not f > 0:
+                    raise ValueError(f"{kind} option {label} must be positive")
+        elif t == "bool":
+            if not isinstance(v, bool) and str(v).strip().lower() not in _TRUE + _FALSE:
+                raise ValueError(f"{kind} option {label}: {v!r} is not true or false")
+    return dict(options or {})
+
+
+def _same_num(a, b) -> bool:
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return False
 
 
 def guess_channels(kind: str, cap: LogicCapture) -> Dict[str, int]:

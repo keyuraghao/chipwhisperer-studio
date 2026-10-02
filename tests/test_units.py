@@ -257,3 +257,42 @@ def test_ui_numbers_use_latin_digits():
     js = pathlib.Path(__file__).resolve().parents[1] / "src" / "cwstudio" / "static" / "js"
     bad = [f"{p.name}:{i}" for p in sorted(js.glob("*.js")) if p.name != "api.js" for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if re.search(r"\.toLocale(String|TimeString|DateString)\(|\bIntl\.", line)]
     assert not bad, bad
+
+
+def test_mcp_command_per_build(tmp_path, monkeypatch):
+    """The Help tab's MCP command: the console cw-studio.exe in the Windows window build, the executable itself in other bundles, cw-studio or python -m cwstudio for a pip install."""
+    import shutil as _shutil
+    import sys as _sys
+    from cwstudio import cli
+    windowed = tmp_path / "ChipWhispererStudio.exe"
+    windowed.write_bytes(b"")
+    monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(_sys, "executable", str(windowed))
+    monkeypatch.setattr(_sys, "platform", "win32")
+    assert cli.mcp_command() == {"command": str(windowed), "args": ["mcp"]}  # Web build: its main executable has a console
+    (tmp_path / "cw-studio.exe").write_bytes(b"")
+    assert cli.mcp_command() == {"command": str(tmp_path / "cw-studio.exe"), "args": ["mcp"]}
+    monkeypatch.setattr(_sys, "platform", "darwin")
+    assert cli.mcp_command()["command"] == str(windowed)
+    monkeypatch.setattr(_sys, "frozen", False)
+    monkeypatch.setattr(_shutil, "which", lambda name: "/bin/cw-studio" if name == "cw-studio" else None)
+    assert cli.mcp_command() == {"command": "cw-studio", "args": ["mcp"]}
+    monkeypatch.setattr(_shutil, "which", lambda name: None)
+    assert cli.mcp_command() == {"command": str(windowed), "args": ["-m", "cwstudio", "mcp"]}
+
+
+def test_old_firmware_reason_points_to_the_library_update():
+    """Studio has no firmware update of its own: the reason for features missing from old SAM firmware points to scope.upgrade_firmware()."""
+    from cwstudio.capabilities import capabilities
+
+    class OldHusky:
+        def _getCWType(self):
+            return "cwhusky"
+
+        def check_feature(self, name):
+            return name not in ("TARGET_SPI", "MPSSE", "HUSKY_PIN_CONTROL")
+
+    c = capabilities(OldHusky())
+    for k in ("spi", "jtag"):
+        assert not c[k]["available"]
+        assert "scope.upgrade_firmware()" in c[k]["reason"] and "Connect tab" not in c[k]["reason"], c[k]["reason"]

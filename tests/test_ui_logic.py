@@ -235,3 +235,67 @@ def test_logic_view_fits_phones_and_short_windows(studio):
             assert not errors, errors
             page.close()
         browser.close()
+
+
+def _field(page, label):
+    """The input of a capture form row by its label."""
+    return page.locator("#la-source").locator("xpath=ancestor::div[contains(@class,'card')][1]").locator("div.row", has=page.locator(f"label:text-is('{label}')")).locator("input")
+
+
+def test_logic_esc_stops_the_first_capture_and_defaults_match_the_api(tmp_path):
+    """In a fresh Studio (no capture yet) Esc stops a capture that is waiting for its trigger, and the tab's capture form starts with the same defaults the API and MCP use."""
+    pytest.importorskip("playwright.sync_api")
+    from playwright.sync_api import Error, expect, sync_playwright
+    port = _free_port()
+    env = {**os.environ, "PYTHONPATH": SRC}
+    env.pop("CWSTUDIO_SIGROK_CLI", None)
+    p = subprocess.Popen([sys.executable, "-m", "cwstudio", "--no-browser", "--simulate", "--port", str(port), "--data-dir", str(tmp_path / "data")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        for _ in range(150):
+            try:
+                _api(base, "GET", "/api/status")
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            pytest.fail("Studio did not start")
+        _api(base, "POST", "/api/scope/connect", {"kind": "sim", "sim_model": "husky"})
+        _api(base, "POST", "/api/target/connect", {"kind": "sim"})
+        defaults = _api(base, "GET", "/api/la/sources")["defaults"]
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except Error as e:
+                pytest.skip(f"Chromium for Playwright is not installed: {e}")
+            page = browser.new_page(viewport={"width": 1400, "height": 950})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(base)
+            page.click("#tabs .tab[data-tab=logic]")
+            expect(page.locator("#la-source option[value=native]")).to_have_count(1, timeout=10000)
+            page.select_option("#la-source", "adc")
+            assert _field(page, "Segments").input_value() == str(defaults["adc"]["segments"])
+            page.select_option("#la-source", "native")
+            assert _field(page, "Downsample").input_value() == str(defaults["native"]["downsample"])
+            # the simulated target is never fired, so the analyser waits for its trigger (30 s timeout); Esc must stop it although nothing has been captured yet
+            page.select_option("#la-source", "native")
+            _field(page, "Timeout (s)").fill("30")
+            page.locator("div.row", has=page.locator("label:text-is('Fire target')")).locator("select").select_option("none")
+            assert _api(base, "GET", "/api/la")["capture"] is None
+            page.click("#la-capture")
+            expect(page.locator("#la-run-badge")).not_to_have_text("idle", timeout=5000)
+            for _ in range(100):
+                if _api(base, "GET", "/api/la")["running"]:
+                    break
+                time.sleep(0.05)
+            page.locator("body").click(position={"x": 2, "y": 2})  # focus away from the form, as after clicking Capture
+            t0 = time.time()
+            page.keyboard.press("Escape")
+            expect(page.locator("#la-run-badge")).to_have_text("idle", timeout=5000)
+            assert time.time() - t0 < 5 and not _api(base, "GET", "/api/la")["running"]
+            assert not errors, errors
+            browser.close()
+    finally:
+        p.terminate()
+        p.wait(10)

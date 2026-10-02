@@ -128,6 +128,57 @@ def test_shortcuts_follow_the_active_tab(studio, browser):
     page.context.close()
 
 
+def test_capture_keys_stay_off_while_a_notebook_has_the_focus(studio, browser):
+    """S and R capture from the Notebook tab too, but not while typing in a cell, after Esc leaves a cell, or after a click in the notebook."""
+    _api(studio, "PUT", "/api/notebooks/file", {"path": "keys/k.ipynb", "notebook": {"cells": [{"cell_type": "code", "source": "x = 1"}, {"cell_type": "markdown", "source": "some text"}]}})
+    page = _page(browser, studio, tab="notebook")
+    page.click("#tabs .tab[data-tab=notebook]")
+    page.locator("details.nb-folder > summary", has_text="keys").click()
+    page.click(".nb-file[data-path='keys/k.ipynb']")
+    cell = page.locator(".nb-doc:visible .nb-cell.code textarea").first
+    cell.wait_for()
+    _idle(studio)
+    n = _count(studio)
+    # typing in a cell
+    cell.click()
+    page.keyboard.press("End")
+    page.keyboard.type(" # sr")
+    assert cell.input_value() == "x = 1 # sr"
+    # Esc leaves the cell but keeps the focus in the notebook
+    page.keyboard.press("Escape")
+    assert page.evaluate("() => document.activeElement.id") == "nb-view"
+    page.keyboard.press("s")
+    page.keyboard.press("r")
+    # a click on a part of the notebook that is not a control
+    page.locator(".nb-doc:visible .nb-cell.markdown").first.click(position={"x": 3, "y": 3})
+    page.keyboard.press("Escape")
+    page.keyboard.press("s")
+    time.sleep(0.8)
+    assert _count(studio) == n
+    assert not (_api(studio, "GET", "/api/status").get("job") or {}).get("running")
+    # with the focus outside the notebook (the tab bar) S captures again, as in every other tab
+    page.click("#tabs .tab[data-tab=notebook]")
+    page.keyboard.press("s")
+    assert _wait_count(studio, n + 1)
+    _idle(studio)
+    help_text = page.evaluate("() => document.getElementById('panel-help').innerText")
+    assert "except while a notebook has the focus" in help_text
+    assert not page.errors
+    page.context.close()
+
+
+def test_help_shows_the_mcp_command_of_this_installation(studio, browser):
+    """The MCP set-up in the Help tab uses the command /api/meta reports for this installation, and explains the Windows window build's console executable."""
+    cmd = _api(studio, "GET", "/api/meta")["mcp_command"]
+    assert cmd["args"][-1] == "mcp"
+    page = _page(browser, studio, tab="help")
+    text = page.locator("#panel-help").inner_text()
+    assert '"command": ' + json.dumps(cmd["command"]) in text
+    assert "claude mcp add chipwhisperer-studio -- " in text
+    assert "cw-studio.exe" in text and "windowed" in text
+    page.context.close()
+
+
 def test_top_bar_and_every_tab(studio, browser):
     for theme in ("dark", "light"):
         page = _page(browser, studio, 1100, 800, theme)

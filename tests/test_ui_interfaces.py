@@ -332,3 +332,90 @@ def test_model_switch_refreshes_interfaces_once(studio):
         assert len(loads) == 1, loads
         assert not errors, errors
         browser.close()
+
+
+def test_simulator_offers_simpleserial_over_cdc_like_its_capabilities(studio):
+    """The simulator reports SimpleSerial v2 over USB-CDC as available and connects it, so the Interfaces tab offers it too."""
+    from playwright.sync_api import Error, expect, sync_playwright
+    _api(studio, "POST", "/api/scope/connect", {"kind": "sim", "sim_model": "husky"})
+    assert _api(studio, "GET", "/api/capabilities")["simpleserial"]["cdc"]["available"]
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Error as e:
+            pytest.skip(f"Chromium for Playwright is not installed: {e}")
+        page = browser.new_page(viewport={"width": 1500, "height": 1000})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(studio)
+        page.click("#tabs .tab[data-tab=interfaces]")
+        ss = _card(page, "SimpleSerial")
+        cdc = ss.locator(".seg button", has_text="v2 over CDC")
+        expect(cdc).to_be_enabled(timeout=10000)
+        cdc.click()
+        ss.locator("button", has_text="Connect target").click()
+        expect(ss.locator(".help").first).to_contain_text("SimpleSerial cdc", timeout=10000)
+        ss.locator("button", has_text="Send").click()
+        expect(ss.locator(".code.out")).to_contain_text("r ", timeout=10000)
+        assert not errors, errors
+        browser.close()
+    _api(studio, "POST", "/api/interfaces/simpleserial/connect", {"version": "2.1"})
+
+
+def test_mpsse_left_on_and_unsupported_scope_type(tmp_path, monkeypatch):
+    """A scope left in MPSSE mode by an earlier run (no MPSSE state in memory) is found on the USB bus at startup and Restore normal mode is offered and works; a scope type Studio has no model for says so instead of "connect a scope first". Runs Studio in-process so the USB bus and the scope can be faked."""
+    pytest.importorskip("playwright.sync_api")
+    import threading
+    import uvicorn
+    from playwright.sync_api import expect, sync_playwright
+    from cwstudio import hardware, openocd
+    from cwstudio.app import create_app
+    from cwstudio.cli import _wait_started
+    from cwstudio.session import Session
+    from tests.test_interfaces import FakeScope
+
+    bus = [{"model": "husky", "pid": 0xACE5, "sn": "H9", "classes": [0xFF, 0xFF]}]
+    monkeypatch.setattr(openocd, "usb_scopes", lambda: list(bus))
+    restored = []
+    monkeypatch.setattr(hardware, "connect_scope", lambda kind="auto", sn=None, **kw: restored.append((kind, sn)) or FakeScope(sn=sn))
+    session = Session(simulate=True, data_dir=str(tmp_path))
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(create_app(session), host="127.0.0.1", port=port, log_level="warning", log_config=None))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    assert _wait_started(server, 30, alive=thread.is_alive)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with sync_playwright() as pw:
+            browser = _browser(pw)
+            page = browser.new_page(viewport={"width": 1500, "height": 1000})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(base)
+            page.click("#tabs .tab[data-tab=interfaces]")
+            banner = page.locator("#panel-interfaces .iface-banner")
+            expect(banner).to_be_visible(timeout=10000)
+            expect(banner).to_contain_text("MPSSE")
+            ocd = _card(page, "JTAG and SWD")
+            expect(ocd).to_contain_text("found already in MPSSE mode")
+            expect(ocd.locator("button", has_text="Enable MPSSE")).to_be_disabled()
+            restore = ocd.locator("button", has_text="Restore normal mode")
+            expect(restore).to_be_enabled()
+            bus.clear()
+            restore.click()
+            expect(banner).to_be_hidden(timeout=15000)
+            assert restored and restored[0] == ("husky", "H9")
+            session.interfaces.openocd._scan_at = 0
+            # a scope type without a Studio model (CW305 and similar)
+            session.scope = FakeScope("cw305")
+            page.reload()
+            page.click("#tabs .tab[data-tab=interfaces]")
+            expect(page.locator("#panel-interfaces")).to_contain_text("This scope type (cw305) is not supported by the Interfaces tab.", timeout=10000)
+            expect(_card(page, "UART").locator(".iface-reason")).to_have_text("this scope type (cw305) is not supported by the Interfaces tab")
+            expect(page.locator("#panel-interfaces")).not_to_contain_text("connect a scope first")
+            assert not errors, errors
+            browser.close()
+    finally:
+        session.scope = None
+        server.should_exit = True
+        thread.join(10)

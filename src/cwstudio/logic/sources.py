@@ -33,6 +33,8 @@ LA_TRIGGER_HELP = {
     "HS1": "the HS1 input clock", "trigger signal 0": "trigger signal 0", "trigger signal 1": "trigger signal 1",
 }
 CLK_SOURCES = ["usb", "target", "pll"]
+# capture defaults shared by the Logic tab, the HTTP API and the MCP tools: downsample 96 turns the 96 MHz USB clock into 1 MHz (16 ms at the Husky's full depth, enough for a few UART bytes); 20 analog segments show a burst of traffic
+DEFAULTS = {"native": {"downsample": 96, "timeout": 5.0}, "adc": {"segments": 20}}
 SIM_LA_MAP = {
     "CW 20-pin": ["UART TX", "UART RX", "1-Wire", "TRIG", "HS1", "HS1", None, "TRIG", "ADC"],
     "USERIO 20-pin": ["SPI CS", "SPI SCK", "SPI MOSI", "SPI MISO", "I2C SCL", "I2C SDA", "CAN", "SWDIO", "SWCLK"],
@@ -422,7 +424,7 @@ def native_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
             end = time.time() + 1.0
             while not la.locked and time.time() < end:
                 yield from _wait(0.02, job)
-    ds = int(_num(s.get("downsample"), 1, int))
+    ds = int(_num(s.get("downsample"), DEFAULTS["native"]["downsample"], int))
     if int(la.downsample) != ds:
         la.downsample = ds
     la.capture_group = group
@@ -457,7 +459,7 @@ def native_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
     timed_out = None
     if with_analog:
         timed_out = scope.capture()
-    timeout = _num(s.get("timeout"), 5.0)
+    timeout = _num(s.get("timeout"), DEFAULTS["native"]["timeout"])
     deadline = time.time() + timeout
     job.phase = "waiting for trigger"
     while la.fifo_empty():
@@ -507,7 +509,7 @@ def native_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
 def adc_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
     scope, target, s = job.scope, job.target, job.settings
     sim = bool(getattr(scope, "sim_model", None))
-    segments = max(1, min(int(_num(s.get("segments"), 1, int)), 2000))
+    segments = max(1, min(int(_num(s.get("segments"), DEFAULTS["adc"]["segments"], int)), 2000))
     old_samples = None
     hook = None
     if s.get("samples"):
@@ -545,13 +547,12 @@ def adc_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
     data = np.concatenate(traces)
     sr = adc_rate(scope)
     lvl = s.get("level", "auto")
-    if lvl in (None, "", "auto"):
-        level, hyst = auto_level(data)
-        if s.get("hysteresis") not in (None, "", "auto"):
-            hyst = float(s["hysteresis"])
-    else:
+    level, hyst = auto_level(data)
+    if lvl not in (None, "", "auto"):
         level = float(lvl)
-        hyst = _num(s.get("hysteresis"), 0.0)
+    # "auto" hysteresis is 10 % of the signal swing whether the threshold is automatic or a number
+    if s.get("hysteresis") not in (None, "", "auto"):
+        hyst = float(s["hysteresis"])
     bits = schmitt(data, level, hyst)
     if s.get("invert"):
         bits = 1 - bits

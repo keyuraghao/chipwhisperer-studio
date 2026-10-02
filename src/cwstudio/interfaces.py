@@ -131,6 +131,10 @@ class Interfaces:
     def status(self) -> Dict[str, Any]:
         """Everything the Interfaces tab shows in one call."""
         self._sync()
+        try:
+            self.openocd.detect()  # a scope left in MPSSE mode (Studio restarted, another tool) gets Restore normal mode too
+        except Exception as e:  # noqa: BLE001
+            log.debug("MPSSE detection failed: %s", e)
         out: Dict[str, Any] = {"capabilities": self.caps(), "mpsse": self.openocd.mpsse, "simpleserial": {"version": self.ss_version, "target": self.s.target_kind},
                                "spi": dict(self.spi_state), "trigger": self.trigger_state, "openocd": {k: v for k, v in self.openocd.status().items() if k != "log"}}
         if self.s.scope is not None:
@@ -617,6 +621,16 @@ class Interfaces:
             sim = self._sim()
             for path, value in sets:
                 if sim:
+                    if path == "SAD.reference()":  # the simulated SAD trigger compares against this (none yet: it triggers on TIO4 and says so)
+                        from cwstudio.simtrigger import SAD_LENGTH
+                        n = SAD_LENGTH.get(m, 32)
+                        try:
+                            ref = self._reference_trace()[value:value + n]
+                        except RuntimeError:
+                            ref = None
+                        if ref is not None and len(ref) < n:
+                            raise ValueError(f"the SAD reference needs {n} samples from sample {value}; capture a longer trace or start earlier")
+                        scope._sim_sad_ref = ref
                     if path in ("trigger.module", "trigger.triggers", "adc.basic_mode") and not isinstance(value, list):
                         obj, _, attr = path.partition(".")
                         setattr(getattr(scope, obj), attr, value)
@@ -902,8 +916,14 @@ def register_routes(app, session) -> None:
 
     @app.get("/api/interfaces/openocd")
     async def openocd_status():
-        """OpenOCD binary, scripts folder, server state, ports, MPSSE state and the newest log lines."""
-        return await run(oc.status)
+        """OpenOCD binary, scripts folder, server state, ports, MPSSE state (including a scope found already in MPSSE mode, with detected true) and the newest log lines."""
+        def _do():
+            try:
+                oc.detect()
+            except Exception as e:  # noqa: BLE001
+                log.debug("MPSSE detection failed: %s", e)
+            return oc.status()
+        return await run(_do)
 
     @app.get("/api/interfaces/openocd/targets")
     async def openocd_targets():

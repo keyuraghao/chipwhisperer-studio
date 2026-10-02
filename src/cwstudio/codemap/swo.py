@@ -56,9 +56,9 @@ def decode_pc_samples(stream: Sequence[Tuple[int, int]]) -> List[Tuple[int, int]
 
 def compare(samples: Sequence[Tuple[int, int]], timeline) -> Dict[str, Any]:
     """How well real PC samples (cycle from the trigger, PC) agree with the emulated timeline: fitted cycle scale and offset (from PCs that ran exactly once), and the share of samples whose function matches the emulation at the fitted cycle."""
-    prog = timeline.prog
     if not samples:
-        return {"samples": 0, "agreement": None, "scale": None, "offset": None}
+        return {"samples": 0, "agreement": None, "scale": None, "offset": None, "rows": [], "message": "no PC samples arrived"}
+    prog = timeline.prog
     pcs = timeline.run.pcs
     start = timeline.start
     cyc = np.array([s[0] for s in samples], np.float64)
@@ -85,12 +85,25 @@ def compare(samples: Sequence[Tuple[int, int]], timeline) -> Dict[str, Any]:
     return {"samples": len(pc), "agreement": round(hits / len(pc), 4), "scale": float(k), "offset": float(b), "rows": rows[:2000]}
 
 
+def pc_sample_interval(cycles: int) -> Tuple[int, int, int]:
+    """The PC sampling interval the Arm DWT can do nearest to ``cycles``: (interval, CYCTAP, POSTPRESET). The DWT takes a PC sample each time its POSTCNT counter runs out; that counter counts CYCCNT tap events (bit 6, every 64 cycles, with CYCTAP 0; bit 10, every 1024, with CYCTAP 1) and reloads from the 4-bit POSTPRESET, so the interval is 64 or 1024 cycles times 1 to 16 (64 to 16384)."""
+    want = max(1, int(cycles))
+    best = None
+    for tap, base in ((0, 64), (1, 1024)):
+        for n in range(16):
+            iv = base * (n + 1)
+            d = abs(iv - want)
+            if best is None or d < best[0]:
+                best = (d, iv, tap, n)
+    return best[1], best[2], best[3]
+
+
 class HuskyPCTrace:
     """Record periodic PC samples with a Husky (``scope.trace``) while the target runs one command."""
 
-    def __init__(self, scope, target, swo_div: int = 8, acpr: int = 0, cyctap: int = 0, postinit: int = 1):
+    def __init__(self, scope, target, swo_div: int = 8, acpr: int = 0, cyctap: int = 0, postinit: int = 1, postreset: int = 0):
         self.scope, self.target = scope, target
-        self.swo_div, self.acpr, self.cyctap, self.postinit = swo_div, acpr, cyctap, postinit
+        self.swo_div, self.acpr, self.cyctap, self.postinit, self.postreset = swo_div, acpr, cyctap, postinit, postreset
 
     def setup(self) -> None:
         tr = self.scope.trace
@@ -106,7 +119,7 @@ class HuskyPCTrace:
         tr.capture.mode = "while_trig"
         tr.capture.raw = True
         tr.capture.use_husky_arm = True
-        tr.set_periodic_pc_sampling(enable=1, cyctap=self.cyctap, postinit=self.postinit)
+        tr.set_periodic_pc_sampling(enable=1, cyctap=self.cyctap, postinit=self.postinit, postreset=self.postreset)
 
     def capture(self, key: bytes, pt: bytes) -> Dict[str, Any]:
         import chipwhisperer as cw

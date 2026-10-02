@@ -227,7 +227,7 @@ def test_notebook_ui_regressions(studio):
         before = _api(studio, "GET", "/api/status")["traces"]["count"]
         right.locator(".nb-doc:visible .nb-cell.code textarea").first.click()
         page.keyboard.press("Escape")
-        assert page.evaluate("document.activeElement.tagName") == "BODY"
+        assert page.evaluate("document.activeElement.id") == "nb-view"  # the cell is left, the notebook keeps the focus
         page.keyboard.press("r")
         right.locator(".nb-doc:visible button", has_text="Clear outputs").focus()
         page.keyboard.press("s")
@@ -322,5 +322,47 @@ def test_tabs_follow_changes_from_other_windows_and_runs(studio):
         _api(studio, "DELETE", "/api/notebooks/file?path=sync/run.ipynb")
         expect(b.locator(".nb-pane[data-pane='0'] .nb-tab .nb-tab-name")).to_have_text(["edit", "moved"])
         expect(a.locator(".nb-pane[data-pane='0'] .nb-tab .nb-tab-name")).to_have_text(["edit", "moved"])
+        assert not errors, errors
+        browser.close()
+
+
+def test_tutorial_download_asks_before_replacing_edits(studio):
+    """Download tutorials asks before replacing tutorial files the user changed, and sends the chosen answer back."""
+    from playwright.sync_api import Error, expect, sync_playwright
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Error as e:
+            pytest.skip(f"Chromium for Playwright is not installed: {e}")
+        page = browser.new_page(viewport={"width": 1400, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        bodies = []
+        base = {"installed": {"repo": "newaetech/chipwhisperer-jupyter", "commit": "a" * 40}, "folder": "chipwhisperer-jupyter", "firmware_linked": True}
+
+        def fetch(route):
+            body = json.loads(route.request.post_data or "{}")
+            bodies.append(body)
+            if body.get("on_modified"):
+                job = {"state": "installed", "done": 1, "total": 1, "error": None, "kept": [], "backups": ["courses/lab1.local-20261002-120000.ipynb"]}
+            else:
+                job = {"state": "confirm", "done": 1, "total": 1, "error": None, "conflicts": ["courses/lab1.ipynb", "courses/lab2.ipynb"]}
+            route.fulfill(json=dict(base, job=job))
+        page.route("**/api/notebooks/tutorials/fetch", fetch)
+        page.goto(studio)
+        page.click("#tabs .tab[data-tab=notebook]")
+        ask = page.locator(".nb-tut-ask")
+        expect(ask).to_be_hidden()
+        page.get_by_role("button", name="Download tutorials").click()
+        expect(ask).to_be_visible()
+        expect(ask).to_contain_text("You changed 2 tutorial files")
+        expect(ask.locator("li")).to_have_text(["courses/lab1.ipynb", "courses/lab2.ipynb"])
+        ask.get_by_role("button", name="Cancel").click()
+        expect(ask).to_be_hidden()
+        page.get_by_role("button", name="Download tutorials").click()
+        ask.get_by_role("button", name="Update, back up mine").click()
+        expect(ask).to_be_hidden()
+        expect(page.locator(".toast", has_text="lab1.local-20261002-120000.ipynb")).to_be_visible()
+        assert bodies == [{}, {}, {"on_modified": "backup"}]
         assert not errors, errors
         browser.close()

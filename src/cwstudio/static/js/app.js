@@ -206,7 +206,7 @@ async function boot() {
   document.addEventListener('keydown', (e) => {
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    // S and R work from every tab, like the Single and Run buttons. The Logic tab has its own keys (zoom, pan, cursors, Esc to stop its capture); the waveform keys act only while the waveform is shown (not in the Notebook and Logic tabs).
+    // S and R work from every tab, like the Single and Run buttons, except while a notebook has the focus (notebook.js stops them there). The Logic tab has its own keys (zoom, pan, cursors, Esc to stop its capture); the waveform keys act only while the waveform is shown (not in the Notebook and Logic tabs).
     if (e.key === 's' || e.key === 'S') ctx.capture.single();
     else if (e.key === 'r' || e.key === 'R') ctx.capture.start();
     else if (ctx.activeTab === 'logic') return;

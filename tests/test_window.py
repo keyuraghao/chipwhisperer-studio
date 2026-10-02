@@ -273,3 +273,32 @@ def test_macos_process_serial_number_is_ignored(monkeypatch):
     monkeypatch.setattr(cli, "desktop_entry", lambda install=True: seen.setdefault("install", install) and 0)
     cli.main(["-psn_0_12345", "--install-desktop"])
     assert seen == {"install": True}
+
+
+def test_fallback_message_depends_on_the_console(monkeypatch):
+    """When the window is unavailable and Studio opens the browser, only a run with a console is told to close the console; without one (windowed exe, macOS app, menu launcher) it says how to quit instead."""
+    import io
+
+    class Tty(io.StringIO):
+        def isatty(self):
+            return True
+
+    url = "http://127.0.0.1:8765/?simulate=1"
+    monkeypatch.setattr(cli, "_streams_redirected", False)
+    monkeypatch.setattr(sys, "stdout", Tty())
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert cli.has_console()
+    assert "close this console window" in cli.fallback_message(url)
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert "close this terminal" in cli.fallback_message(url)
+    for platform, monitor in (("win32", "Task Manager"), ("darwin", "Activity Monitor"), ("linux", "system monitor")):
+        monkeypatch.setattr(sys, "platform", platform)
+        monkeypatch.setattr(sys, "stdout", io.StringIO())
+        monkeypatch.setattr(sys, "stderr", io.StringIO())
+        msg = cli.fallback_message(url)
+        assert not cli.has_console() and "console window" not in msg and monitor in msg, msg
+        assert "http://127.0.0.1:8765/api/shutdown" in msg
+    # the windowed Windows executable: output redirected to studio.log, even if something reports a tty
+    monkeypatch.setattr(sys, "stdout", Tty())
+    monkeypatch.setattr(cli, "_streams_redirected", True)
+    assert not cli.has_console()

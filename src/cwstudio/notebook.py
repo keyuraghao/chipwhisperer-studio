@@ -10,6 +10,7 @@ import ast
 import base64
 import builtins
 import ctypes
+import hashlib
 import io
 import json
 import logging
@@ -1686,25 +1687,77 @@ class Tutorials:
     def status(self) -> Dict[str, Any]:
         info = None
         try:
-            with open(os.path.join(self.dest, ".cwstudio-source.json"), "r", encoding="utf-8") as f:
+            with open(os.path.join(self.dest, self.MANIFEST), "r", encoding="utf-8") as f:
                 info = json.load(f)
+            info.pop("files", None)
         except (OSError, ValueError):
             pass
         link = os.path.join(self.store.root, "firmware", "mcu")
         return {"installed": info, "folder": self.DIR, "firmware_linked": os.path.isfile(os.path.join(link, "Makefile.inc")), "job": {k: v for k, v in self.job.items() if k != "cancel"} or None}
 
-    def fetch(self, wait: bool = False) -> Dict[str, Any]:
+    MANIFEST = ".cwstudio-source.json"
+    MODES = ("backup", "keep")
+
+    def fetch(self, wait: bool = False, on_modified: Optional[str] = None) -> Dict[str, Any]:
+        """Download (or update) the tutorials. Files changed or added locally since the last download are never lost: if any of them would be replaced by a different upstream version, the job stops in state ``confirm`` listing them under ``conflicts`` until it is called again with ``on_modified`` = ``backup`` (install the new version, keep the local copy renamed to ``<name>.local-<timestamp><ext>``) or ``keep`` (leave the local copy in place, update everything else)."""
+        if on_modified is not None and on_modified not in self.MODES:
+            raise ValueError(f"on_modified must be one of {', '.join(self.MODES)}")
         if self.job.get("state") in ("resolving", "downloading", "extracting"):
             return self.status()
         from cwstudio.toolchains import Cancelled  # noqa: F401
         self.job = {"state": "resolving", "done": 0, "total": 0, "error": None, "cancel": threading.Event()}
-        th = threading.Thread(target=self._fetch, name="fetch-tutorials", daemon=True)
+        th = threading.Thread(target=self._fetch, args=(on_modified,), name="fetch-tutorials", daemon=True)
         th.start()
         if wait:
             th.join()
         return self.status()
 
-    def _fetch(self):
+    @staticmethod
+    def _hash(path: str) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for buf in iter(lambda: f.read(1 << 20), b""):
+                h.update(buf)
+        return h.hexdigest()
+
+    @classmethod
+    def _files(cls, root: str) -> Dict[str, str]:
+        """Relative path (with ``/``) to SHA-256 of every regular file under ``root``, without following links (``firmware`` links and the manifest are skipped)."""
+        out: Dict[str, str] = {}
+        for d, dirs, files in os.walk(root):
+            dirs[:] = [x for x in dirs if not os.path.islink(os.path.join(d, x))]
+            for n in files:
+                full = os.path.join(d, n)
+                rel = os.path.relpath(full, root).replace(os.sep, "/")
+                if rel == cls.MANIFEST or os.path.islink(full) or not os.path.isfile(full):
+                    continue
+                out[rel] = cls._hash(full)
+        return out
+
+    def local_changes(self, new: str) -> Dict[str, Any]:
+        """Compare the installed tutorials with a freshly extracted tree ``new``. Returns the files changed or added locally (``carry``, kept as they are) and those of them that upstream ships differently (``conflicts``). Installs from before Studio recorded hashes count a file as changed when it differs from the new version."""
+        try:
+            with open(os.path.join(self.dest, self.MANIFEST), "r", encoding="utf-8") as f:
+                known = json.load(f).get("files")
+        except (OSError, ValueError, AttributeError):
+            known = None
+        new_files = self._files(new)
+        carry, conflicts = [], []
+        if not os.path.isdir(self.dest):
+            return {"carry": carry, "conflicts": conflicts, "new": new_files}
+        for rel, h in sorted(self._files(self.dest).items()):
+            if known is not None and known.get(rel) == h:
+                continue  # unchanged since it was downloaded
+            if known is None and (rel not in new_files or new_files[rel] == h):
+                continue  # old install without hashes: only files that differ from upstream count
+            if new_files.get(rel) == h:
+                continue  # the local edit matches the new upstream file
+            carry.append(rel)
+            if rel in new_files:
+                conflicts.append(rel)
+        return {"carry": carry, "conflicts": conflicts, "new": new_files}
+
+    def _fetch(self, on_modified: Optional[str] = None):
         from cwstudio.toolchains import download, extract
         job = self.job
         tmp = self.dest + ".tmp"
@@ -1716,23 +1769,46 @@ class Tutorials:
                 ref = self.fm.resolve()["commit"]
             sha = self.fm._gh(f"/repos/{self.fm.sources_cfg['repo']}/contents/jupyter?ref={ref}")["sha"]
             job["state"] = "downloading"
-            archive = os.path.join(self.store.root, ".downloads", f"chipwhisperer-jupyter-{sha[:12]}.tar.gz")
-            log.info("Downloading ChipWhisperer tutorial notebooks at %s", sha[:7])
+            downloads = os.path.join(self.store.root, ".downloads")
+            archive = os.path.join(downloads, f"chipwhisperer-jupyter-{sha[:12]}.tar.gz")
+            if not os.path.isfile(archive):  # kept while waiting for a confirm, so the second call does not download again
+                log.info("Downloading ChipWhisperer tutorial notebooks at %s", sha[:7])
 
-            def progress(done, total):
-                job["done"], job["total"] = done, total
-            download(f"https://codeload.github.com/{self.REPO}/tar.gz/{sha}", archive, None, progress, job["cancel"])
+                def progress(done, total):
+                    job["done"], job["total"] = done, total
+                download(f"https://codeload.github.com/{self.REPO}/tar.gz/{sha}", archive, None, progress, job["cancel"])
             job["state"] = "extracting"
             self._publish("tutorials", self.status())
             shutil.rmtree(tmp, ignore_errors=True)
             extract(archive, tmp, members=lambda n: n.split("/", 1)[1] if "/" in n and n.split("/", 1)[1] else None, cancel=job["cancel"])
-            with open(os.path.join(tmp, ".cwstudio-source.json"), "w", encoding="utf-8") as f:
-                json.dump({"repo": self.REPO, "commit": sha, "firmware_commit": ref, "installed": time.time()}, f)
+            ch = self.local_changes(tmp)
+            if ch["conflicts"] and on_modified is None:
+                shutil.rmtree(tmp, ignore_errors=True)
+                job["state"], job["conflicts"] = "confirm", ch["conflicts"]
+                log.warning("%d tutorial file(s) were changed locally and differ in the new download; choose whether to back them up or keep them", len(ch["conflicts"]))
+                return
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            backups = []
+            for rel in ch["carry"]:
+                local = os.path.join(self.dest, *rel.split("/"))
+                target = os.path.join(tmp, *rel.split("/"))
+                if rel in ch["conflicts"] and on_modified == "backup":
+                    stem, ext = os.path.splitext(target)
+                    target = f"{stem}.local-{stamp}{ext}"
+                    backups.append(os.path.relpath(target, tmp).replace(os.sep, "/"))
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copy2(local, target)
+            with open(os.path.join(tmp, self.MANIFEST), "w", encoding="utf-8") as f:
+                json.dump({"repo": self.REPO, "commit": sha, "firmware_commit": ref, "installed": time.time(), "files": ch["new"]}, f)
             shutil.rmtree(self.dest, ignore_errors=True)
             os.replace(tmp, self.dest)
-            shutil.rmtree(os.path.join(self.store.root, ".downloads"), ignore_errors=True)
+            shutil.rmtree(downloads, ignore_errors=True)
             self.link_firmware()
             job["state"] = "installed"
+            job["kept"] = [r for r in ch["carry"] if r not in ch["conflicts"] or on_modified == "keep"]
+            job["backups"] = backups
+            if backups:
+                log.info("Kept your edited tutorial files as backups: %s", ", ".join(backups))
             log.info("Tutorial notebooks ready in %s", self.dest)
         except Exception as e:  # noqa: BLE001
             job["state"], job["error"] = "error", f"{type(e).__name__}: {e}"

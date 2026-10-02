@@ -116,7 +116,7 @@ def register_interface_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]
 
     @mcp.tool(annotations=HW)
     def openocd_mpsse(enable: bool = True, transport: Literal["jtag", "swd"] = "jtag", header: Literal["target", "userio"] = "target") -> Dict[str, Any]:
-        """Switch the scope into MPSSE mode for JTAG or SWD (header 'userio' routes it to the Husky USERIO header) or back to normal mode (enable=false, which reconnects the scope). While MPSSE is on, Studio has no scope connection, USB-CDC serial and the native programmers are unavailable. Not on the simulator."""
+        """Switch the scope into MPSSE mode for JTAG or SWD (header 'userio' routes it to the Husky USERIO header) or back to normal mode (enable=false, which reconnects the scope; it also restores a scope Studio found already in MPSSE mode, for example after a restart, shown as mpsse.detected in openocd_status). While MPSSE is on, Studio has no scope connection, USB-CDC serial and the native programmers are unavailable. Not on the simulator."""
         return call("POST", "/api/interfaces/openocd/mpsse", {"enable": enable, "transport": transport, "header": header}, timeout=120)
 
     @mcp.tool(annotations=HW)
