@@ -4,6 +4,18 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-02
+
+Studio is now on PyPI: `pip install chipwhisperer-studio`. No changes to the application itself.
+
+### Added
+
+- **PyPI package.** Every release is now also published to [PyPI](https://pypi.org/project/chipwhisperer-studio/) by CI, with trusted publishing (no stored token). The package description is the README with its screenshots, clips and links pointing at the release tag (`tools/pypi_readme.py`), and the package lists keywords, classifiers for the supported systems and Python versions, and links to the documentation, issues, changelog and video tour.
+
+### Changed
+
+- The README and the Installation wiki page install with `pip install chipwhisperer-studio` and update with `pip install --upgrade chipwhisperer-studio` (the Installation page still pointed at the 0.4.5 wheel).
+
 ## [0.5.0] - 2026-10-02
 
 This release adds five large features: Studio's own application window, several notebooks at once, an Interfaces tab for everything that talks to the target, a logic analyser for every ChipWhisperer, and firmware code mapped onto the waveform. The MCP server grows from 68 to 106 tools to cover them.
@@ -263,7 +275,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.3...v0.4.4
