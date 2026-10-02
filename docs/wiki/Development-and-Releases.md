@@ -119,10 +119,11 @@ python packaging/build.py --no-venv
 | Job | What it does |
 |-----|--------------|
 | Tests | pytest on Ubuntu (Python 3.10 and 3.12), Windows and macOS (Python 3.12). The Python 3.10 job installs only the `test` extra; the others install `test-mcp` and also run the official MCP client test. The Playwright UI tests run locally (they are skipped without Playwright). |
-| Docs | Checks that links and images in README, DESIGN, CHANGELOG and the bundle README resolve, that no em dashes appear anywhere, and that every screenshot uses the light and dark `<picture>` format (`tools/theme_images.py --check`). |
+| Docs | Checks that links and images in README, DESIGN, CHANGELOG and the bundle README resolve, that no em dashes appear anywhere, that every screenshot uses the light and dark `<picture>` format (`tools/theme_images.py --check`) and that the README can be converted for PyPI (`tools/pypi_readme.py --check`). |
 | Firmware build | On all three operating systems: installs Arm GCC, AVR GCC, clang (and Windows make) through Studio, downloads the firmware sources from GitHub (failing if it had to use the fallback commit), and builds simpleserial-aes for CWLITEARM and CWLITEXMEGA with GCC and clang, and for CWHUSKY with GCC. |
 | Bundle | Builds both bundles (window and Web) on each operating system (Linux on Ubuntu 22.04) and smoke tests them: the contents (the Linux window helper, Unicorn, pywebview only in the window build, the Windows icon and WebView2 library, the macOS `.app` and its signature), `mcp --help`, the compiler wrapper, `--install-desktop` on Linux, a simulator capture over the API, the toolchain list, a notebook cell that plots with matplotlib and `import unicorn`. The Linux window build opens its window under Xvfb and must close it on `/api/shutdown`; on Windows and macOS the window build must start and stop cleanly. |
-| GitHub release | Only for tags `v*`, after all other jobs pass: extracts the release notes from `CHANGELOG.md`, builds the wheel and source package, and publishes a GitHub release with the six bundles attached. |
+| GitHub release | Only for tags `v*`, after all other jobs pass: extracts the release notes from `CHANGELOG.md`, points the README's images and links at the tag (`tools/pypi_readme.py`, since PyPI has no copy of the repository), builds and checks the wheel and source package, and publishes a GitHub release with them and the six bundles attached. |
+| Publish to PyPI | After the GitHub release: uploads the wheel and source package to [PyPI](https://pypi.org/project/chipwhisperer-studio/) with trusted publishing, so no token is stored. PyPI trusts the `ci.yml` workflow of this repository in the `pypi` environment (set once under Publishing in the PyPI project settings). |
 
 ## Releasing a version
 
@@ -130,7 +131,7 @@ python packaging/build.py --no-venv
 2. Set `__version__ = "X.Y.Z"` in `src/cwstudio/__init__.py`.
 3. Check that the notes and version agree: `python tools/release_notes.py --check X.Y.Z`.
 4. Commit, push to `main` and wait for CI to pass.
-5. Tag and push: `git tag -a vX.Y.Z -m "ChipWhisperer Studio X.Y.Z"` then `git push origin vX.Y.Z`. CI publishes the release when every job passes.
+5. Tag and push: `git tag -a vX.Y.Z -m "ChipWhisperer Studio X.Y.Z"` then `git push origin vX.Y.Z`. CI publishes the GitHub release and the PyPI package when every job passes. PyPI never accepts the same version twice, so a fix after that needs a new version.
 
 ## Updating the toolchain registry
 

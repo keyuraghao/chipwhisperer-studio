@@ -52,6 +52,7 @@ jobs:
               sys.exit(1)
           EOF
           python3 tools/theme_images.py --check
+          python3 tools/pypi_readme.py --check
 
   firmware:
     # Exercises the real toolchain downloads and ChipWhisperer makefiles on every OS.
@@ -226,9 +227,36 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Build Python packages
-        run: pip install build && python -m build --outdir artifacts
+        run: |
+          python tools/pypi_readme.py  # PyPI has no copy of the repository: images and links point at this tag
+          pip install build twine
+          python -m build --outdir python-dist
+          python -m twine check --strict python-dist/*
+          cp python-dist/* artifacts/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: python-dist/
       - uses: softprops/action-gh-release@v2
         with:
           name: ChipWhisperer Studio ${{ github.ref_name }}
           body_path: release-notes.md
           files: artifacts/*
+
+  pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release]
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI trusts this workflow and environment (configured once on pypi.org), so no token is stored anywhere
+    environment:
+      name: pypi
+      url: https://pypi.org/project/chipwhisperer-studio/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

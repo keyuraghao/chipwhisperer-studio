@@ -67,13 +67,13 @@ The window uses the system's web engine (Edge WebView2 on Windows, WebKit on mac
 ### With Python
 
 ```bash
-pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.5.0/chipwhisperer_studio-0.5.0-py3-none-any.whl
+pip install chipwhisperer-studio
 cw-studio              # opens Studio in its own window
 cw-studio-web          # or in your web browser
 cw-studio --simulate   # try it without hardware
 ```
 
-The wheel is attached to every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases) (Studio is not on PyPI yet). Use Python 3.10 to 3.12: `chipwhisperer` 6.0.0 on PyPI pins numpy 1.26, which has no wheels for newer Pythons.
+Studio is on [PyPI](https://pypi.org/project/chipwhisperer-studio/); the wheel is also attached to every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases). Use Python 3.10 to 3.12: `chipwhisperer` 6.0.0 on PyPI pins numpy 1.26, which has no wheels for newer Pythons.
 
 Options: `--simulate` (pre-select the simulator), `--port 8765`, `--host 0.0.0.0` (remote access), `--browser` (use the web browser), `--app-window` (use Studio's window even with `cw-studio-web`), `--no-browser` (server only), `--data-dir DIR` (exports, firmware, toolchains, notebooks and notes; default `~/ChipWhispererStudio`), `--log-level debug|info|warning|error`.
 
@@ -320,7 +320,7 @@ Pinned toolchain versions and checksums live in `src/cwstudio/resources/toolchai
 
 ## Releases
 
-Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). To cut a release, move the Unreleased notes under a new version heading, bump `__version__` in `src/cwstudio/__init__.py` and push a tag such as `v0.5.0`. CI then runs the tests and firmware builds on all three operating systems, builds the standalone bundles (window and Web builds for each OS) and the Python packages, and publishes a GitHub release using the matching CHANGELOG section as its description.
+Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). To cut a release, move the Unreleased notes under a new version heading, bump `__version__` in `src/cwstudio/__init__.py` and push a tag such as `v0.5.0`. CI then runs the tests and firmware builds on all three operating systems, builds the standalone bundles (window and Web builds for each OS) and the Python packages, publishes a GitHub release using the matching CHANGELOG section as its description, and uploads the Python packages to [PyPI](https://pypi.org/project/chipwhisperer-studio/).
 
 ## License
 

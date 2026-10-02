@@ -92,18 +92,18 @@ The command copies the rule, creates a `chipwhisperer` group, adds you to it and
 
 Use this if you already work with Python. Studio needs **Python 3.10, 3.11 or 3.12**. The reason for the upper limit is that `chipwhisperer` 6.0.0 on PyPI requires numpy 1.26 or older, and numpy 1.26 has no ready-made packages for Python 3.13 and newer.
 
-Studio is not on PyPI yet. Install the wheel from the latest GitHub release instead:
+Install it from [PyPI](https://pypi.org/project/chipwhisperer-studio/), preferably in a virtual environment:
 
 ```bash
 python -m venv studio-env
 source studio-env/bin/activate            # Windows: studio-env\Scripts\activate
-pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.4.5/chipwhisperer_studio-0.4.5-py3-none-any.whl
+pip install chipwhisperer-studio
 cw-studio
 ```
 
 This installs the `chipwhisperer` library from PyPI together with Studio's other dependencies (Starlette, uvicorn, websockets, numpy, matplotlib, pyelftools and Unicorn for the code map, pywebview on Windows and macOS, and a few small ones) and adds the `cw-studio` and `cw-studio-web` commands. Run `cw-studio --simulate` to try it without hardware.
 
-You can also install straight from the repository: `pip install git+https://github.com/keyuraghao/chipwhisperer-studio`
+The wheel is also attached to every [GitHub release](https://github.com/keyuraghao/chipwhisperer-studio/releases), and you can install the latest development version straight from the repository: `pip install git+https://github.com/keyuraghao/chipwhisperer-studio@dev`
 
 The USB driver (Windows) and udev rule (Linux) steps above apply to the Python package too.
 
@@ -161,7 +161,7 @@ You can remove any toolchain again from the Firmware tab. See [Toolchains](Toolc
 ## Updating
 
 - **Standalone bundle:** delete the old `ChipWhispererStudio` application folder and extract the new zip in its place (extracting over the old folder can leave stale files behind). Your data folder is separate, so notebooks, notes, compilers, builds and firmware sources are kept.
-- **Python package:** `pip install --upgrade` with the new release's wheel URL, or `git pull` in a source checkout.
+- **Python package:** `pip install --upgrade chipwhisperer-studio`, or `git pull` in a source checkout.
 
 Firmware sources and the list of available compilers can be updated from inside Studio without a new release. See [Firmware Sources](Firmware-Sources) and [Toolchains](Toolchains).
 
