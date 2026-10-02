@@ -2,7 +2,7 @@
 
 This page takes you from a fresh install to a recovered AES key in a few minutes. Walkthrough 1 uses the built-in simulator, so you can follow it on any computer; walkthrough 2 does the same with a real ChipWhisperer-Lite ARM.
 
-Before you start, [install Studio](Installation) and start it. Your browser should show the Studio window with the **Connect** tab open.
+Before you start, [install Studio](Installation) and start it. Studio opens in its own window (or in your browser with the Web build) with the **Connect** tab open.
 
 ## Walkthrough 1: the simulator (no hardware)
 
@@ -11,10 +11,10 @@ The [simulator](Simulator) behaves like a ChipWhisperer scope attached to an unp
 ### 1. Connect to the simulator
 
 1. In the left navigation, click **Connect**.
-2. Under **Scope**, set **Device** to **Simulator (no hardware)**. The target **Protocol** switches to **Simulated AES target** automatically.
+2. Under **Scope**, set **Device** to **Simulator (no hardware)**. The target **Protocol** switches to **Simulated AES target** automatically. Leave **Simulate as** on **Husky**.
 3. Leave **default_setup()** ticked and click **Connect scope**.
 
-Studio connects the simulated scope, then connects the simulated target for you, and switches to the **Scope** tab. The chips in the top bar now read **ChipWhisperer-Simulator · SIM000001** and **SimTarget** with green dots.
+Studio connects the simulated scope, then connects the simulated target for you, and switches to the **Scope** tab. The chips in the top bar now read **ChipWhisperer-Simulator (Husky) · SIM000001** and **SimTarget** with green dots.
 
 > **Tip:** Starting Studio with `--simulate` (or `ChipWhispererStudio-simulator.bat` on Windows) preselects the simulator in the Connect tab.
 

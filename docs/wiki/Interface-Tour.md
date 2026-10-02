@@ -1,6 +1,6 @@
 # Interface Tour
 
-This page explains every part of the Studio window: the top bar, the navigation, the panels, the main area, the log drawer, themes and keyboard shortcuts. Studio runs as a local web page, so the same interface works in any modern browser and even from another computer.
+This page explains every part of the Studio window: the top bar, the navigation, the panels, the main area, the log drawer, themes and keyboard shortcuts. Studio opens in its own application window (or in your web browser with the Web build, `cw-studio-web` or `--browser`); either way the interface is a local web page served by Studio, so it looks the same everywhere and also works from another computer.
 
 ![The Studio window in the dark theme](images/overview.png)
 *The Studio window: top bar, navigation on the left, the panel of the current tab, the main area with the waveform, and the log drawer at the bottom.*
@@ -12,9 +12,9 @@ This page explains every part of the Studio window: the top bar, the navigation,
 | Area | Where | What it is for |
 |------|-------|----------------|
 | Top bar | Across the top | Connection status, quick capture buttons, trace count, theme switch |
-| Navigation | Left edge | Switches between tabs (Connect, Scope, Target, Firmware, Capture, Analysis, Notebook, Glitch, Notes, Calc, Help) |
+| Navigation | Left edge | Switches between tabs (Connect, Scope, Target, Interfaces, Firmware, Capture, Code, Analysis, Notebook, Logic, Glitch, Notes, Calc, Help) |
 | Panel | Left, next to the navigation | The controls of the current tab |
-| Main area | Right | The live waveform, or the notebook editor when the Notebook tab is open |
+| Main area | Right | The live waveform (with the code band under it when it is on), the notebook editor in the Notebook tab, or the logic view in the Logic tab |
 | Log drawer | Bottom right | Messages from Studio and the ChipWhisperer library, plus live selection statistics |
 
 ## Top bar
@@ -37,11 +37,14 @@ Each tab has an icon and a short label. Hover over a tab to see a description. S
 |-----|----------------|------|
 | Connect | Choose and connect the scope and target, see drivers and status | [Connecting Hardware](Connecting-Hardware) |
 | Scope | Every scope setting with documentation, plus default_setup, test trigger and FPGA reset | [Scope Settings](Scope-Settings) |
-| Target | Program firmware, serial console, SimpleSerial commands, target settings | [Target and Programming](Target-and-Programming) |
+| Target | Program firmware, serial terminal, SimpleSerial commands, target settings | [Target and Programming](Target-and-Programming) |
+| Interfaces | UART and terminal, SimpleSerial, SPI, GPIO, USERIO, triggers, bit-banger and 1-Wire, JTAG/SWD through OpenOCD, gated by the connected model | [Protocols and Interfaces](Protocols-and-Interfaces) |
 | Firmware | Build ChipWhisperer firmware, manage firmware sources and compilers | [Firmware Builds](Firmware-Builds) |
 | Capture | Capture traces, export and import trace sets | [Capturing Traces](Capturing-Traces) |
+| Code | Which firmware functions and source lines run when, on the waveform | [Code on the Waveform](Code-on-the-Waveform) |
 | Analysis | CPA key recovery and its plots | [Quick Start](Quick-Start#4-recover-the-key-with-cpa) |
-| Notebook | Python notebooks that share Studio's hardware connection | [Notebooks](Notebooks) |
+| Notebook | Python notebooks that share Studio's hardware connection, as tabs and side by side | [Notebooks](Notebooks) |
+| Logic | Logic analyser: capture digital signals and decode UART, SPI, I2C, 1-Wire, JTAG, SWD, CAN and SimpleSerial | [Logic Analyser](Logic-Analyser) |
 | Glitch | Glitch parameter sweeps and their results | [Scope Settings](Scope-Settings#glitch-the-fault-injection-module) |
 | Notes | A text pad that saves automatically | [Notes and Calculator](Notes-and-Calculator) |
 | Calc | Calculator and statistics of the current selection | [Notes and Calculator](Notes-and-Calculator) |
@@ -58,7 +61,9 @@ The panel is the scrollable column between the navigation and the main area. Eac
 
 ## Main area
 
-When any tab other than Notebook is open, the main area shows the [Waveform Viewer](Waveform-Viewer): a toolbar at the top, the plot, and a footer with statistics of the displayed trace. When the **Notebook** tab is open, the main area shows the notebook editor instead; switching to any other tab brings the waveform back. Traces captured from a notebook appear in the waveform as well.
+When any tab other than Notebook and Logic is open, the main area shows the [Waveform Viewer](Waveform-Viewer): a toolbar at the top, the plot, the [code band](Code-on-the-Waveform#the-code-band) under it when **code** is ticked, and a footer with statistics of the displayed trace. The **Notebook** tab shows the notebook editor instead, and the **Logic** tab the logic view; switching to any other tab brings the waveform back. Traces captured from a notebook appear in the waveform as well.
+
+In a narrow window the layout adapts: below about 900 pixels the panel gets narrower, the status chips hide and notebook panes stack; below about 720 pixels the panel moves above the main area. Nothing scrolls sideways.
 
 ## Log drawer
 
@@ -81,7 +86,7 @@ Short messages pop up in the bottom right corner for a few seconds: green for su
 
 ## Themes
 
-Studio has a dark and a light theme. By default it follows your operating system's setting. Click the theme button (sun or moon icon) at the right end of the top bar to switch; your choice is remembered in the browser. Plots and charts switch colours with the theme.
+Studio has a dark and a light theme. By default it follows your operating system's setting. Click the theme button (sun or moon icon) at the right end of the top bar to switch; your choice is remembered (in Studio's own window as well as in a browser), like the last tab, the notebook layout and the other view settings. Plots and charts switch colours with the theme.
 
 ![The Studio window in the light theme](images/overview-light.png)
 *The same window in the light theme.*
@@ -92,14 +97,28 @@ These work when the cursor is not in a text field:
 
 | Key | Action |
 |-----|--------|
-| S | Capture a single trace |
-| R | Run a capture with the Capture tab settings |
-| Esc | Stop the running capture or glitch sweep |
+| S | Capture a single trace (from every tab, except while a notebook has the focus) |
+| R | Run a capture with the Capture tab settings (from every tab, except while a notebook has the focus) |
+| Esc | Stop the running capture or glitch sweep (in the Logic tab: stop the logic capture) |
 | Space | Pause or resume the waveform display (capturing continues) |
 | Left / Right arrow | Previous or next stored trace, when the waveform Source is "Browse stored traces" |
 | + / - | Zoom the waveform in or out by a factor of two, around cursor A or the middle of the view |
 
-In the waveform plot: drag to zoom into a range, double-click to fit, click to place cursor A, Shift+click to place cursor B. See [Waveform Viewer](Waveform-Viewer).
+Space, the arrows and + and - act on the waveform, so they do nothing in the Notebook and Logic tabs, which hide it.
+
+In the waveform plot: drag to zoom into a range, double-click to fit, click to place cursor A, Shift+click to place cursor B, and Ctrl+drag (Cmd+drag on macOS, or Alt+drag) to pick a region for the [code map](Code-on-the-Waveform). See [Waveform Viewer](Waveform-Viewer).
+
+In the Logic tab, with a capture shown:
+
+| Key | Action |
+|-----|--------|
+| + / - (or the mouse wheel) | Zoom in or out around the mouse |
+| Left / Right, Home / End | Pan, or go to the start or end of the capture |
+| F | Fit the whole capture |
+| A / B | Place cursor A or B at the mouse |
+| Esc | Stop the logic capture |
+
+See [Logic Analyser](Logic-Analyser#the-view).
 
 In the notebook editor:
 
@@ -124,11 +143,11 @@ Studio is a small web server. By default it only accepts connections from the sa
 
 > **Note:** Studio has no login. Anyone who can reach the port can control the hardware and run code in the notebook. Only use `--host 0.0.0.0` on a trusted network, or tunnel the port over SSH (`ssh -L 8765:localhost:8765 lab-machine`) instead.
 
-Several browser windows can be open at the same time; they all show the same live session.
+Several windows (Studio's own and browser windows) can be open at the same time; they all show the same live session, and a notebook open in more than one of them stays in sync (see [Notebooks](Notebooks#changes-from-other-windows-and-agents)).
 
 ## Help tab
 
-The **Help** tab repeats the quick start, lists the keyboard shortcuts, explains remote use and the HTTP API, and shows ready-to-copy configuration for connecting AI agents through MCP.
+The **Help** tab repeats the quick start, lists the keyboard shortcuts, explains remote use and the HTTP API, and shows ready-to-copy configuration for connecting AI agents through MCP, with the command that fits your installation (`cw-studio.exe` in the Windows window build, the bundle's own executable otherwise, `cw-studio` for a pip install).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/help-light.png"><img alt="The Help tab" src="images/help.png"></picture>
 *The Help tab with quick start steps and shortcuts.*

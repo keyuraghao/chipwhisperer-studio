@@ -12,11 +12,11 @@ Not yet. Studio has been tested with its built-in simulator and in automated bui
 
 ### Which hardware is supported?
 
-The scopes supported by the `chipwhisperer` library: ChipWhisperer-Nano, Lite, Pro (CW1200), Husky and Husky Plus, with SimpleSerial v1 and v2 targets, the CW305 FPGA board, and the programmers for STM32F, XMEGA, AVR, SAM4S and NEORV32 targets. Firmware builds cover the 38 platforms in ChipWhisperer's firmware tree (see [Firmware Builds](Firmware-Builds)).
+The scopes supported by the `chipwhisperer` library: ChipWhisperer-Nano, Lite, Pro (CW1200), Husky and Husky Plus, with SimpleSerial v1 and v2 targets, the CW305 FPGA board, and the programmers for STM32F, XMEGA, AVR, SAM4S and NEORV32 targets and iCE40 and XC7A35T FPGA bitstreams. The models differ in what else they can do (SPI, JTAG/SWD, triggers, logic analyser); Studio offers exactly what the connected one supports, see [Protocols and Interfaces](Protocols-and-Interfaces#capability-matrix). Firmware builds cover the 38 platforms in ChipWhisperer's firmware tree (see [Firmware Builds](Firmware-Builds)).
 
 ### Does it work with the ChipWhisperer-Husky?
 
-Yes, Husky and Husky Plus are among the supported scope types, their extra settings appear in the settings tree, and the Husky's built-in target is built with platform `CWHUSKY` and programmed with the SAM4S programmer.
+Yes, Husky and Husky Plus are among the supported scope types, their extra settings appear in the settings tree, and the Husky's built-in target is built with platform `CWHUSKY` and programmed with the SAM4S programmer. Their extras have their own controls: the logic analyser in the [Logic](Logic-Analyser) tab, the USERIO header, UART pattern trigger, edge counter, trigger sequencer and bit-banger in the [Interfaces](Protocols-and-Interfaces) tab, and SWO program counter sampling in the [Code](Code-on-the-Waveform#exact-mode-husky-swo) tab.
 
 ### Do I need Python installed?
 
@@ -26,9 +26,21 @@ No, if you use the standalone bundle from the releases page: it contains its own
 
 For most everyday work, yes: connecting, configuring, programming, capturing, CPA and glitch sweeps need no code at all. When you want code, the Notebook tab runs Python cell by cell against the same hardware, and it runs NewAE's tutorial notebooks unmodified. Notebooks are standard `.ipynb` files, so you can keep using Jupyter for anything Studio does not do. See [Notebooks](Notebooks).
 
+### Do I need a Husky for the logic analyser?
+
+No. The Husky's built-in logic analyser is one source; any ChipWhisperer can record one digital line through its analog input, external analysers work through sigrok, and you can import VCD, CSV and sigrok files from other tools. The decoders work on all of them. See [Logic Analyser](Logic-Analyser).
+
+### Can Studio talk I2C or CAN to my target?
+
+No ChipWhisperer has I2C or CAN hardware, so Studio cannot send on these buses, but the [Logic Analyser](Logic-Analyser) decodes them (and UART, SPI, 1-Wire, JTAG, SWD and SimpleSerial) from a capture.
+
+### Can I see which code runs at a point in the trace?
+
+Yes. The [Code](Code-on-the-Waveform) tab emulates your firmware's ELF for the inputs of a captured trace and shows the functions and source lines on the waveform. It supports Arm Cortex-M, RISC-V RV32 and AVR/XMEGA firmware.
+
 ### Can I use my own firmware?
 
-Yes. Program any `.hex` or `.bin` from the Target tab, build your own projects by pointing Studio at your ChipWhisperer checkout (**Use my own firmware folder**), or run `make` from a notebook. See [Target and Programming](Target-and-Programming) and [Firmware Sources](Firmware-Sources).
+Yes. Program any `.hex` or `.bin` from the Target tab, build your own projects by pointing Studio at your ChipWhisperer checkout (**Use my own firmware folder**), or run `make` from a notebook. The simulator even runs your firmware's ELF in an emulator. See [Target and Programming](Target-and-Programming), [Firmware Sources](Firmware-Sources) and [Simulator](Simulator#running-your-own-firmware).
 
 ### Can I build firmware without installing compilers?
 
@@ -48,11 +60,15 @@ Open the Firmware tab and press **Check for updates**, then **Update now**. Stud
 
 ### Can I try it without hardware?
 
-Yes. Set **Device** to **Simulator (no hardware)** on the Connect tab or start with `--simulate`. The simulator behaves like a CW-Lite with an unprotected AES target, so capture, CPA and glitching all work. See [Simulator](Simulator).
+Yes. Set **Device** to **Simulator (no hardware)** on the Connect tab or start with `--simulate`, and choose which ChipWhisperer it should pose as under **Simulate as**. The simulated target is an unprotected AES implementation (or your own firmware, run in an emulator), so capture, CPA and glitching all work. See [Simulator](Simulator).
 
 ### Can two people use it at the same time?
 
-Several browser windows can open the same Studio and see the same live session, which is handy for demonstrations. They share one scope and one set of traces, so coordinate who starts captures. Only one hardware job (capture or glitch sweep) runs at a time.
+Several windows can open the same Studio and see the same live session, which is handy for demonstrations. They share one scope and one set of traces, so coordinate who starts captures. Only one hardware job (capture, glitch sweep or logic capture) runs at a time, and notebooks open in several windows stay in sync.
+
+### Does it open in a browser or in its own window?
+
+In its own window, using the operating system's web engine (Edge WebView2 on Windows, WebKit on macOS, WebKitGTK on Linux). The ChipWhisperer Studio Web build, `cw-studio-web` and `--browser` open it in your web browser instead. See [Installation](Installation#standalone-bundle).
 
 ### Can I use it from another computer?
 
@@ -68,11 +84,11 @@ Yes. Every feature is available through the [HTTP API](HTTP-API), and AI agents 
 
 ### Can AI assistants control it?
 
-Yes, through the MCP server (`cw-studio mcp`), which offers 68 tools covering every feature. The agent can share your browser session so you watch what it does. See [MCP Server](MCP-Server).
+Yes, through the MCP server (`cw-studio mcp`), which offers 106 tools covering every feature, from capture and CPA to the hardware interfaces, the logic analyser and the code map. The agent can share your browser session so you watch what it does. See [MCP Server](MCP-Server).
 
 ### Why are the downloads so large?
 
-The standalone bundles contain a complete Python runtime, numpy, matplotlib, the `chipwhisperer` library (with its FPGA bitstreams) and libusb, so they run without anything installed. Compilers are not included; they are downloaded only when you need them.
+Each download is about 72 MB. The standalone bundles contain a complete Python runtime, numpy, matplotlib, the `chipwhisperer` library (with its FPGA bitstreams), libusb and the Unicorn CPU emulator, so they run without anything installed. Compilers and OpenOCD are not included; they are downloaded only when you need them.
 
 ### Why does clang fail for some platforms?
 

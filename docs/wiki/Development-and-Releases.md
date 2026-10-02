@@ -14,7 +14,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[test]"
 ```
 
-The editable install puts the `cw-studio` command on your PATH and uses the code in `src/cwstudio` directly.
+The editable install puts the `cw-studio` and `cw-studio-web` commands on your PATH and uses the code in `src/cwstudio` directly. For the UI tests and the screenshot tools also install Playwright: `pip install playwright && playwright install chromium`.
 
 ## Running from source
 
@@ -28,10 +28,10 @@ cw-studio --simulate --log-level debug
 
 | Path | Contents |
 |------|----------|
-| `src/cwstudio/` | The Python package (see the module table on [Architecture](Architecture)). |
+| `src/cwstudio/` | The Python package (see the module table on [Architecture](Architecture)), with the `logic/` (logic analyser) and `codemap/` (code map) sub-packages. |
 | `src/cwstudio/static/` | The web UI: `index.html`, `css/app.css`, `js/*.js` (including `markdown.js`, the Markdown renderer and sanitiser), `vendor/` (uPlot). |
-| `src/cwstudio/resources/` | `toolchains.json` (pinned compilers and firmware source settings) and `50-newae.rules`. |
-| `tests/` | pytest suite. |
+| `src/cwstudio/resources/` | `toolchains.json` (pinned compilers, OpenOCD and firmware source settings), `50-newae.rules`, `cw_openocd.cfg` (the ChipWhisperer interface for OpenOCD), `gtk_window.py` (the Linux window) and the window icons. |
+| `tests/` | pytest suite, with small firmware projects for the code map tests in `tests/fw_projects`. |
 | `tools/` | `screenshots.py` (wiki and README screenshots), `theme_images.py` (light and dark `<picture>` references), `demo_video.py` (the video tour and feature clips), `benchmark.py` (stress tests and the [Performance](Performance) page), `release_notes.py` (release notes from `CHANGELOG.md`) and `make_icon.py` (the application icon). |
 | `packaging/` | PyInstaller spec, `build.py`, `launcher.py`, the application icons and the README placed inside bundles. |
 | `docs/wiki/` | Source of this wiki. |
@@ -45,7 +45,7 @@ cw-studio --simulate --log-level debug
 python -m pytest
 ```
 
-The suite runs against the simulator and needs no hardware or network access. It covers:
+The suite runs against the simulator and needs no hardware or network access (the code map tests that build firmware use the toolchains when they are installed and skip otherwise). It covers:
 
 | File | What it tests |
 |------|---------------|
@@ -53,7 +53,12 @@ The suite runs against the simulator and needs no hardware or network access. It
 | `test_units.py` | Settings introspection on the simulated scope, value conversion, the hardware worker's short and long jobs, the trace store and its running statistics, `.npz` export round trips, key and text generation, simulated glitch outcomes, and the event history. |
 | `test_toolchains.py` | Toolchain registry pinning, install with checksum verification, mirror fallback, path traversal protection, aliases, custom toolchains, the clang wrapper's flag translation, platform parsing, firmware folder checks. |
 | `test_net.py` | HTTPS certificate source selection and the error shown when verification fails. |
-| `test_notebook.py` | Notebook kernel: results and errors, tutorial-style capture loops reaching the trace store, shell and cell magics, `%run`, simulated programming, matplotlib figures, notebook files API, interrupt and restart, notes, calculator and statistics. |
+| `test_notebook.py` | Notebook kernels: results and errors, one kernel per notebook, tutorial-style capture loops reaching the trace store, shell and cell magics, `%run`, simulated programming, matplotlib figures, notebook files API with conflict checks, interrupt, cancel and restart, notes, calculator and statistics. |
+| `test_interfaces.py`, `test_interfaces_hw.py` | Capabilities per model (every entry of the capability matrix for each simulated model), the Interfaces API and MCP tools against the simulator, and the library calls Studio makes against recorded fakes of every scope model (triggers, SAD, decode IO, USERIO, SPI, bit-banger, MPSSE), plus OpenOCD with its dummy adapter. |
+| `test_logic_sources.py`, `test_logic_decoders.py`, `test_logic_realworld.py`, `test_logic_perf.py` | Logic analyser sources, every decoder (including clock error, glitches, clock stretching, overdrive, CAN FD), PulseView, Saleae and sigrok files, exports that open back identically, worker-process decoding, and view speed on 10 million samples. |
+| `test_codemap.py`, `test_codemap_robust.py` | ELF and DWARF parsing, Arm, RISC-V and AVR emulation and cycle counts, the mapping and alignment, simulator firmware with CPA and instruction-skip glitches, and firmware that halts, sleeps or misbehaves. |
+| `test_window.py` | Choosing window or browser, the pywebview and GTK windows (with fakes), shutdown closing the window, desktop entries, ports and locales. |
+| `test_ui_*.py` | Browser tests with Playwright (skipped when it is not installed): interfaces, the logic view, the code band and Code tab, multiple notebooks and panes, shortcuts, narrow windows and digits in other locales. |
 | `test_mcp.py` | Unit tests of the MCP protocol layer, a raw stdio session and the streamable HTTP transport, then (when the `mcp` package is installed, as with `pip install -e ".[test-mcp]"`) starts `cw-studio mcp` over stdio with the official MCP client and runs a full session: connect, settings, capture, CPA key recovery, glitch sweep, notebook code, calculator, notes and notebook runs. |
 
 Real compiler downloads and firmware builds are exercised in CI rather than in the unit tests.
@@ -64,7 +69,7 @@ There is no build step: edit files under `src/cwstudio/static/` and reload the b
 
 ## Screenshots
 
-`tools/screenshots.py` regenerates every image used in the wiki and README from a scripted simulator session: it starts a temporary Studio, captures traces, runs CPA, sweeps glitches, builds firmware with clang, creates a sample notebook and notes, then photographs each view with Playwright twice: `name.png` in the dark theme and `name-light.png` in the light theme. `tools/theme_images.py` then turns every screenshot reference in the README and the wiki into a `<picture>` that shows the variant matching the reader's GitHub theme (run it after adding a new screenshot; `--check` reports anything left to convert).
+`tools/screenshots.py` regenerates every image used in the wiki and README from a scripted simulator session: it starts a temporary Studio, captures traces, runs CPA, sweeps glitches, builds firmware with clang, creates sample notebooks and notes, then photographs each view with Playwright (including the Interfaces tab for a simulated Husky and Nano, the UART terminal, the Logic tab with decoded UART, SPI and I2C, the Code tab with a selected region running the clang build in the simulator, two notebooks side by side and the Simulate as choice) twice: `name.png` in the dark theme and `name-light.png` in the light theme. `tools/theme_images.py` then turns every screenshot reference in the README and the wiki into a `<picture>` that shows the variant matching the reader's GitHub theme (run it after adding a new screenshot; `--check` reports anything left to convert).
 
 ```bash
 pip install playwright
@@ -105,7 +110,7 @@ pip install -e . "pyinstaller>=6.0" libusb-package
 python packaging/build.py --no-venv
 ```
 
-`build.py` runs PyInstaller with `packaging/cwstudio.spec`, copies the udev rule, a README, LICENSE, NOTICE and the application icon next to the executable and zips `dist/ChipWhispererStudio-<os>-<arch>.zip`. Without `--no-venv` it first creates an isolated virtual environment; `--out` changes the output folder and `--skip-zip` leaves the unzipped folder only. `packaging/launcher.py` is the bundle's entry point: it handles the `--ccwrap` compiler wrapper mode quickly and points python-libusb1 at the bundled libusb before starting Studio.
+`build.py` runs PyInstaller with `packaging/cwstudio.spec`, copies the udev rule, a README, LICENSE, NOTICE and the application icon next to the executable and zips the result. `--variant app` (the default) builds ChipWhisperer Studio, which opens in its own window, as `dist/ChipWhispererStudio-<os>-<arch>.zip`; `--variant web` builds ChipWhisperer Studio Web, which opens in the browser, as `dist/ChipWhispererStudio-Web-<os>-<arch>.zip`. On macOS each is a `.app`; on Windows the window build has a windowed `ChipWhispererStudio.exe` plus a console `cw-studio.exe`. The build fails if the Unicorn library is missing. Without `--no-venv` it first creates an isolated virtual environment; `--out` changes the output folder and `--skip-zip` leaves the unzipped folder only. `packaging/launcher.py` is the bundle's entry point: it handles the `--ccwrap` compiler wrapper mode quickly, gives child processes (compilers, OpenOCD, the Linux window) the user's own library path rather than the bundle's, points python-libusb1 at the bundled libusb on Windows, and supports the logic decoder's worker process.
 
 ## Continuous integration
 
@@ -113,11 +118,11 @@ python packaging/build.py --no-venv
 
 | Job | What it does |
 |-----|--------------|
-| Tests | pytest on Ubuntu (Python 3.10 and 3.12), Windows and macOS (Python 3.12). The Python 3.10 job installs only the `test` extra; the others install `test-mcp` and also run the official MCP client test. |
-| Docs | Checks that links and images in README, DESIGN and CHANGELOG resolve, that no em dashes appear anywhere, and that every screenshot uses the light and dark `<picture>` format (`tools/theme_images.py --check`). |
+| Tests | pytest on Ubuntu (Python 3.10 and 3.12), Windows and macOS (Python 3.12). The Python 3.10 job installs only the `test` extra; the others install `test-mcp` and also run the official MCP client test. The Playwright UI tests run locally (they are skipped without Playwright). |
+| Docs | Checks that links and images in README, DESIGN, CHANGELOG and the bundle README resolve, that no em dashes appear anywhere, and that every screenshot uses the light and dark `<picture>` format (`tools/theme_images.py --check`). |
 | Firmware build | On all three operating systems: installs Arm GCC, AVR GCC, clang (and Windows make) through Studio, downloads the firmware sources from GitHub (failing if it had to use the fallback commit), and builds simpleserial-aes for CWLITEARM and CWLITEXMEGA with GCC and clang, and for CWHUSKY with GCC. |
-| Bundle | Builds the standalone bundle on each operating system (Linux on Ubuntu 22.04) and smoke tests it: `mcp --help`, the compiler wrapper, a simulator capture over the API, the toolchain list, and a notebook cell that plots with matplotlib. |
-| GitHub release | Only for tags `v*`, after all other jobs pass: extracts the release notes from `CHANGELOG.md`, builds the wheel and source package, and publishes a GitHub release with the three bundles attached. |
+| Bundle | Builds both bundles (window and Web) on each operating system (Linux on Ubuntu 22.04) and smoke tests them: the contents (the Linux window helper, Unicorn, pywebview only in the window build, the Windows icon and WebView2 library, the macOS `.app` and its signature), `mcp --help`, the compiler wrapper, `--install-desktop` on Linux, a simulator capture over the API, the toolchain list, a notebook cell that plots with matplotlib and `import unicorn`. The Linux window build opens its window under Xvfb and must close it on `/api/shutdown`; on Windows and macOS the window build must start and stop cleanly. |
+| GitHub release | Only for tags `v*`, after all other jobs pass: extracts the release notes from `CHANGELOG.md`, builds the wheel and source package, and publishes a GitHub release with the six bundles attached. |
 
 ## Releasing a version
 

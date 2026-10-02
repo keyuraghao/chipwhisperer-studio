@@ -36,7 +36,13 @@ To see two notebooks at once, split the notebook area into a left and a right pa
 | Resize | Drag the bar between the panes; double-click it to make both panes equal. |
 | Unsplit | Close or move away the last tab of a pane; the other pane takes the whole area. |
 
-The pane you last clicked or typed in is the *focused* pane; its current tab is underlined in green. Notebooks you open from the list open there, the **Variables** card shows that notebook's variables, and Ctrl+S saves it. Keyboard shortcuts in a cell always act on the notebook the cell belongs to. In a narrow window (below about 900 pixels) the panes are stacked, one above the other, and narrow panes show their toolbar buttons as icons only (hover a button for its name).
+<picture><source media="(prefers-color-scheme: light)" srcset="images/notebook-split-light.png"><img alt="Two notebooks side by side, each with its own kernel" src="images/notebook-split.png"></picture>
+
+*Two notebooks side by side: each pane has its own tabs, and each notebook its own kernel and variables.*
+
+![Opening a second notebook and splitting the view (animated)](images/clips/notebooks-side-by-side.webp)
+
+The pane you last clicked or typed in is the *focused* pane; its current tab is marked with a green line. Notebooks you open from the list open there, the **Variables** card shows that notebook's variables, and Ctrl+S saves it. Keyboard shortcuts in a cell always act on the notebook the cell belongs to. In a narrow window (below about 900 pixels) the panes are stacked, one above the other, and narrow panes show their toolbar buttons as icons only (hover a button for its name).
 
 ## Cells
 
@@ -59,12 +65,14 @@ Hover a cell (or select it) to see its tools on the right: run, move up, move do
 | Esc | Leave the editor (and format a text cell). |
 | Ctrl+S (Cmd+S) | Save the notebook in the focused pane. |
 
+Studio's single-key shortcuts (S, R, Esc, Space, + and -) do nothing while a notebook has the focus (you are in a cell or clicked in the notebook), so a key pressed after leaving a cell never starts a capture by accident; use the **Single** and **Run** buttons in the top bar.
+
 ## Running code
 
 | Toolbar button | What it does |
 |----------------|--------------|
 | **Run** | Runs the selected cell and moves on (like Shift+Enter). |
-| **Run all** | Runs every code cell from the top, in order. If a cell fails, the remaining queued cells are cancelled, as in Jupyter. |
+| **Run all** | Runs every code cell from the top, in order. If a cell fails, the remaining queued cells are cancelled, as in Jupyter (they keep their previous execution count). |
 | **Stop** | Interrupts this notebook's running cell (it ends with `KeyboardInterrupt`) and clears its queued cells. Other notebooks keep running. |
 | **Restart** | After confirmation, clears this notebook's variables. Other notebooks are not affected and Studio stays connected to the hardware. |
 | Power button | **Shut down kernel**: after confirmation, frees this notebook's variables and memory. A new, empty kernel starts when you run a cell. |
@@ -85,7 +93,7 @@ When you close a notebook in every Studio window, its kernel is shut down about 
 
 | Output | How it is shown |
 |--------|-----------------|
-| `print()` and other text | Streamed while the cell runs. Progress bars (tqdm) update in place; colour codes are removed. Text written to stderr has an amber background. |
+| `print()` and other text | Streamed while the cell runs. Progress bars (tqdm) update in place; colour codes are removed. Text written to stderr has an amber background. Very long outputs show their last 100,000 characters (download the notebook for all of it). |
 | The value of the last line | Shown like in Jupyter, unless it is `None` (or a matplotlib object). |
 | Errors | The traceback in red. |
 | matplotlib figures | Every open figure is shown as an image when the cell finishes, and `plt.show()` shows the current figures immediately, so output before and after it stays in order. |
@@ -95,6 +103,16 @@ When you close a notebook in every Studio window, its kernel is shut down about 
 ### Variables
 
 The **Variables** card lists the variables defined in the focused notebook (its name is shown next to the title): name, type (with the shape of arrays) and a short value. It refreshes after every cell of that notebook and when you focus another notebook; press **Refresh** to update it by hand.
+
+### Changes from other windows and agents
+
+A notebook can be open in several Studio windows, and the [HTTP API](HTTP-API) and [MCP](MCP-Server) can run or rewrite it while it is open. Every save is announced to all windows:
+
+- A tab without unsaved edits reloads the new version by itself (keeping its scroll position), for example after `notebook_run` saved its outputs.
+- A tab with unsaved edits shows a notice instead of being overwritten: *This notebook was changed outside this tab ... Nothing is saved until you choose.* Choose **Reload from disk** or **Keep my version**.
+- If the notebook was deleted or renamed elsewhere, a tab with edits offers **Save it again** or **Close**; a tab without edits closes. A rename in one window renames the tab in the others.
+
+Saves never overwrite a newer version silently, and autosave never re-creates a deleted notebook.
 
 ## Using the hardware from a notebook
 
@@ -109,7 +127,7 @@ Cells run on the same thread that talks to the ChipWhisperer, in turn with the r
 | `cw.scope()` | Returns Studio's connected scope. If none is connected, Studio connects one first: the simulator when Studio was started with `--simulate`, otherwise auto-detect. `name=` (for example `"Husky"`) and `sn=` are honoured when connecting. |
 | `cw.target(scope, target_type)` | Returns Studio's connected target, connecting it if needed (SimpleSerial v2 by default, the type you pass otherwise, the simulated target when the scope is the simulator). |
 | `cw.capture_trace(scope, target, text, key)` | Captures as usual and also stores the trace in Studio. |
-| `cw.program_target(scope, prog, path)` | Programs the target. With the simulator it only checks that the file exists and prints *Simulator: pretending to program ...*. |
+| `cw.program_target(scope, prog, path)` | Programs the target. With the simulator, an ELF (or a `.hex` Studio built, which has its `.elf` next to it) runs in the [emulator](Simulator#running-your-own-firmware) from then on (*Simulator: ... runs in the emulator*); any other file is only checked to exist (*Simulator: pretending to program ...*). |
 | `cw.plot(trace)` | Returns a plot that is drawn inline with matplotlib and also shows the trace in Studio's waveform view. Like ChipWhisperer's holoviews version, plots combine with `*` or `+` (`cw.plot(a) * cw.plot(b)`), `cw.plot()` with no data starts an empty plot to add to, and `.opts(title=..., width=..., height=...)` is accepted. |
 | everything else | Unchanged: `cw.ktp`, `cw.targets`, `cw.programmers`, `cw.analyzer` and so on. |
 
@@ -148,7 +166,7 @@ print(waves.shape, waves.mean())
 
 ## IPython features
 
-Studio supports the IPython syntax that ChipWhisperer's notebooks use. Magics work anywhere in a cell, including inside loops and `if` blocks.
+Studio supports the IPython syntax that ChipWhisperer's notebooks use. Line magics and `!` commands work wherever a statement starts, including inside loops and `if` blocks (but not inside brackets or strings, so `%` and `!` keep their Python meaning there). Cell magics must be the first line of the cell.
 
 | Syntax | What it does |
 |--------|--------------|
@@ -159,18 +177,19 @@ Studio supports the IPython syntax that ChipWhisperer's notebooks use. Magics wo
 | `files = !ls` | Runs the command and stores its output lines in a list. |
 | `%%bash` (or `%%sh`) | Runs the whole cell with bash (or sh). `%%bash -s "$PLATFORM" "{x}"` passes the values as `$1`, `$2`, ... |
 | `%%script name` | Runs the cell with the given interpreter. |
-| `%cd folder`, `%pwd` | Change and show the working directory. |
+| `%cd folder`, `%pwd` | Change (and print) and show the working directory. A `%cd` lasts until the kernel restarts. |
 | `%env`, `%env NAME`, `%env NAME=value` | Show all environment variables, one, or set one. |
 | `%time statement`, `%%time` | Time one statement or the whole cell. |
 | `%timeit statement` | Run a statement 7 times and print the average time. |
 | `%who`, `%whos` | List variables. |
-| `%pip ...` | Runs pip in Studio's Python. Not available in the standalone downloads. |
+| `%pip ...`, `%conda ...` | Run pip in Studio's Python (`%conda` runs pip too). Not available in the standalone downloads. |
 | `%sx command`, `%system command` | Run a command and return its output lines. |
 | `%%capture [name]` | Run the cell without showing its output; store the output text in `name`. |
 | `%%writefile [-a] file` | Write (or append) the cell's text to a file. |
 | `%%html`, `%%markdown` | Show the cell as HTML or formatted Markdown. |
 | `name?` or `name??` | Show help for an object. |
-| `%matplotlib`, `%load_ext`, `%reload_ext`, `%autoreload`, `%config`, and similar | Accepted and ignored, so notebooks written for Jupyter run unchanged. |
+| `%config InlineBackend.figure_format = 'svg'` | Shows figures as SVG instead of PNG (`retina`, `jpeg` and `pdf` give PNG). Other `%config` settings are ignored. |
+| `%matplotlib`, `%load_ext`, `%reload_ext`, `%autoreload`, `%aimport`, `%precision`, `%xmode`, and similar | Accepted and ignored, so notebooks written for Jupyter run unchanged. |
 
 Other magics raise *UsageError: ... is not supported in Studio notebooks*. `!` commands run in your system's shell (cmd.exe on Windows). `%%bash` uses bash, or sh if bash is missing; on Windows install **GNU make + sh** on the [Toolchains](Toolchains) card to get sh.
 
@@ -183,7 +202,7 @@ The **ChipWhisperer tutorials** card downloads NewAE's tutorial notebooks, the [
 - Studio downloads the version of chipwhisperer-jupyter that matches your [firmware sources](Firmware-Sources): the commit the ChipWhisperer repository pins for its `jupyter` submodule. If you have no firmware sources yet, it uses your channel's current commit.
 - The notebooks go into `<data dir>/notebooks/chipwhisperer-jupyter/` and appear in the **Notebooks** list.
 - Studio links `<data dir>/notebooks/firmware/mcu` to the firmware sources (a symbolic link, or a directory junction on Windows), because the tutorials build firmware from `../../../firmware/mcu`. If the firmware sources are not downloaded yet, the card reminds you to download them first.
-- Downloading again replaces the folder. Save changes you make to a tutorial under a new name (or in another folder) first.
+- Downloading again updates the tutorials and keeps your work: files you edited or added are left alone. If a file you edited also changed upstream, Studio lists them and asks: **Update, back up mine** installs the new version and keeps yours next to it as `<name>.local-YYYYMMDD-HHMMSS.ipynb`, **Keep mine** leaves your copies as they are and updates everything else, and **Cancel** changes nothing.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/notebook-tutorial-light.png"><img alt="A NewAE tutorial notebook running in Studio" src="images/notebook-tutorial.png"></picture>
 
@@ -206,7 +225,7 @@ NewAE's labs come in parts: a *(MAIN)* notebook with the exercise (it contains `
    ```
 6. Press **Run all**.
 
-What happens: `%run "../../Setup_Scripts/Setup_Generic.ipynb"` connects through Studio, the `%%bash` cell builds `simpleserial-aes` with Studio's compiler, `cw.program_target` flashes it (simulated with the simulator), and the capture loop records 2500 traces with a progress bar. The traces appear in the Capture tab with their plaintexts and keys; you can run Studio's own CPA attack on them. To do the full exercise, work through the MAIN notebook, which uses `trace_array` and `textin_array` from the capture.
+What happens: `%run "../../Setup_Scripts/Setup_Generic.ipynb"` connects through Studio, the `%%bash` cell builds `simpleserial-aes` with Studio's compiler, `cw.program_target` flashes it (with the simulator, the firmware then runs in the emulator), and the capture loop records 2500 traces with a progress bar. The traces appear in the Capture tab with their plaintexts and keys; you can run Studio's own CPA attack on them. To do the full exercise, work through the MAIN notebook, which uses `trace_array` and `textin_array` from the capture.
 
 ## Limitations
 
@@ -241,6 +260,6 @@ The data folder is `~/ChipWhispererStudio` unless you start Studio with `--data-
 | Variables, interrupt, restart | `GET /api/kernel/variables`, `POST /api/kernel/interrupt`, `POST /api/kernel/restart`, each with an optional `kernel` | `kernel_variables`, `kernel_interrupt`, `kernel_restart`, each with an optional `notebook_path` |
 | List and shut down kernels | `GET /api/kernels`, `POST /api/kernels/shutdown` | `kernel_list`, `kernel_shutdown` |
 | Rename a notebook (its kernel follows) | `POST /api/notebooks/rename` | |
-| Download the tutorials | `POST /api/notebooks/tutorials/fetch` | `tutorials_fetch` |
+| Download or update the tutorials | `POST /api/notebooks/tutorials/fetch` (`on_modified`: `backup` or `keep` after a `confirm`) | `tutorials_fetch` |
 
 A notebook's kernel id is its path relative to the notebooks folder. Without a kernel id, the API and MCP tools use a shared **default** kernel that no notebook tab uses, as before. See [HTTP API](HTTP-API) and [MCP Server](MCP-Server).

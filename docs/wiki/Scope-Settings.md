@@ -151,7 +151,11 @@ The Husky's glitch module works differently in the details (it uses a PLL and di
 
 ### Husky extras
 
-The ChipWhisperer-Husky exposes extra groups, such as its logic analyzer, trace interface, user IO header and ADC mode settings. They all appear in the tree and can be edited like any other setting, but Studio has no special controls for them. See the ChipWhisperer documentation for what each one does.
+The ChipWhisperer-Husky exposes extra groups, such as its logic analyzer, trace interface, user IO header and ADC mode settings. They all appear in the tree and can be edited like any other setting. Several have their own controls as well: the logic analyser in the [Logic](Logic-Analyser) tab, the USERIO header, the UART trigger, edge counter, ADC level trigger, sequencer and bit-banger in the [Interfaces](Protocols-and-Interfaces) tab, and SWO trace in the [Code](Code-on-the-Waveform#exact-mode-husky-swo) tab's exact mode. See the ChipWhisperer documentation for what each setting does.
+
+### Choices the model does not have
+
+The tree offers only what the connected ChipWhisperer supports: choices it lacks appear as *(not available)* with the reason, and writing them is refused. For example TIO4 cannot be `serial_rx` on any model, the CW-Lite has no trigger module choice, `clock.adc_mul` exists only on the Husky (the CW-Lite and Pro use `clock.adc_src`), and the Nano triggers on a rising edge of TIO4 only. See [Protocols and Interfaces](Protocols-and-Interfaces#capability-matrix).
 
 ## Changing settings from code
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record a captioned walkthrough video of every ChipWhisperer Studio feature.
 
-Starts a Studio with the simulator, then drives the real UI with Playwright: connecting, scope settings, target I/O, capture, the waveform view (overlay, mean, cursors, zoom), CPA, a glitch sweep, a firmware build, notebooks, notes, the calculator, the MCP setup and both themes. A caption bar explains each step and a pointer shows where the mouse goes. The recording is converted to MP4 (H.264), and every chapter is also cut into a short looping animated WebP clip (``clips/<chapter>.webp``) that plays by itself in the README and the wiki, which cannot play MP4 files inline. A chapter list with timestamps is written next to them.
+Starts a Studio with the simulator, then drives the real UI with Playwright: connecting, scope settings, target I/O, the Interfaces tab (and Simulate as), capture, the waveform view (overlay, mean, cursors, zoom), CPA, a glitch sweep, a firmware build, code on the waveform, notebooks (also side by side), the logic analyser, notes, the calculator, the MCP setup and both themes. A caption bar explains each step and a pointer shows where the mouse goes. The recording is converted to MP4 (H.264), and every chapter is also cut into a short looping animated WebP clip (``clips/<chapter>.webp``) that plays by itself in the README and the wiki, which cannot play MP4 files inline. A chapter list with timestamps is written next to them.
 
     pip install -e ".[test]" playwright imageio-ffmpeg && playwright install chromium
     python tools/demo_video.py --data-dir DIR [--out build/demo]
@@ -19,7 +19,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from screenshots import ROOT, Api, _free_port, _up, neutral_pythonpath  # noqa: E402
+from screenshots import KEY_CHECK, LOGIC_HIDDEN, ROOT, Api, _free_port, _up, connect_sim, neutral_pythonpath, newest_build  # noqa: E402
 
 KEY = "2b7e151628aed2a6abf7158809cf4f3c"
 
@@ -155,7 +155,15 @@ def prepare(api: Api):
         {"cell_type": "code", "source": "import matplotlib.pyplot as plt\nwaves = studio.traces.waves\nplt.figure(figsize=(10, 3))\nplt.plot(waves.mean(axis=0), lw=0.8)\nplt.title(f'Mean of {len(waves)} traces')\nplt.xlabel('sample'); plt.ylabel('power')\nplt.show()"},
     ]
     api("PUT", "/api/notebooks/file", {"path": "Studio tour.ipynb", "notebook": {"cells": tour}})
+    api("PUT", "/api/notebooks/file", {"path": "Key check.ipynb", "notebook": {"cells": KEY_CHECK}})
     api("PUT", "/api/notes/Lab%20notes.md", {"text": "# Lab notes\n\nTarget: CWLITEARM, simpleserial-aes\n\n- [x] capture 500 traces\n- [ ] glitch the password check next\n"})
+
+
+def mcp_tool_count() -> int:
+    """How many tools the MCP server offers, counted from the code so the caption never goes stale."""
+    sys.path.insert(0, os.path.join(ROOT, "src"))
+    from cwstudio import mcp_server
+    return len(mcp_server.build_server(mcp_server.StudioClient("http://127.0.0.1:1")).tools)
 
 
 def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
@@ -172,7 +180,7 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         pg = page
 
         d.chapter("Introduction")
-        d.card("ChipWhisperer Studio", ["A desktop app for NewAE ChipWhisperer hardware", "Live waveforms, capture, CPA, glitching, firmware builds, notebooks and an MCP server for AI agents", "This walkthrough uses the built-in simulator, so no hardware is needed"], 6)
+        d.card("ChipWhisperer Studio", ["A desktop app for NewAE ChipWhisperer hardware", "Live waveforms, capture, CPA, glitching, firmware builds, target interfaces, a logic analyser, code on the waveform, notebooks and an MCP server for AI agents", "This walkthrough uses the built-in simulator, so no hardware is needed"], 7)
 
         d.chapter("Connect")
         d.caption("Connect a scope and a target", "Nano, Lite, Pro and Husky are detected over USB; here we pick the built-in simulator")
@@ -185,7 +193,7 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.click(pg.locator("#panel-connect button", has_text="Connect scope"), 1.5)
         d.tab("connect")  # Studio moves on to the Scope tab after connecting; come back to show the result here
         d.point(pg.locator("#chip-target"))
-        d.caption("With the simulator the target connects too; both show in the top bar", "With real hardware, pick the target and press Connect target", 2.5)
+        d.caption("With the simulator the target connects too; both show in the top bar", "Simulate as picks which ChipWhisperer it stands in for: here a Husky", 2.5)
 
         d.chapter("Scope settings")
         d.tab("scope")
@@ -209,6 +217,31 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.click(pg.locator("#panel-target button", has_text="Send key"), 0.8)
         d.click(pg.locator("#panel-target .row:has-text('Command') button", has_text="Send").first, 1.2)
         d.wait(1.5)
+
+        d.chapter("Interfaces")
+        d.tab("interfaces")
+        d.caption("The Interfaces tab: UART, SPI, GPIO, triggers, JTAG/SWD and more", "Only what the connected ChipWhisperer supports is enabled; the rest says why", 2.5)
+        spi = pg.locator("#panel-interfaces .card.iface", has=pg.locator(".title", has_text="SPI")).first
+        spi.scroll_into_view_if_needed()
+        d.wait(0.5)
+        d.caption("An SPI master on the 20-pin header", "The simulated Husky has a W25Q128 SPI flash: read its JEDEC ID", 0.3)
+        d.click(spi.locator("button", has_text="Enable"), 0.8)
+        d.click(spi.locator("button", has_text="JEDEC ID"), 2)
+        d.caption("Simulate as another model: a ChipWhisperer-Nano", "", 0.3)
+        d.tab("connect")
+        sim_as = pg.locator("#panel-connect .row:has-text('Simulate as') select").first
+        d.point(sim_as)
+        sim_as.select_option("nano")
+        d.wait(0.6)
+        d.click(pg.locator("#panel-connect button", has_text="Connect scope"), 1.5)
+        d.tab("interfaces")
+        spi = pg.locator("#panel-interfaces .card.iface", has=pg.locator(".title", has_text="SPI")).first
+        spi.scroll_into_view_if_needed()
+        d.caption("The Nano has no SPI pins, so SPI is disabled with the reason", "Triggers, programmers and scope settings follow the model too", 3)
+        d.tab("connect")
+        sim_as = pg.locator("#panel-connect .row:has-text('Simulate as') select").first
+        sim_as.select_option("husky")
+        d.click(pg.locator("#panel-connect button", has_text="Connect scope"), 1.5)
 
         d.chapter("Capture")
         d.tab("capture")
@@ -300,6 +333,44 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.wait(1)
         d.caption("Build succeeded: Build & program flashes it to the connected target", "", 3)
 
+        d.chapter("Code on the waveform")
+        build = newest_build(api)
+        if build:
+            api("POST", "/api/target/program", {"programmer": "STM32F", "path": build})
+            api("POST", "/api/capture/start", {"count": 100, "clear": True, "key_mode": "fixed", "key": KEY})
+            d.idle()
+            mean = pg.locator("#wave-toolbar label", has_text="mean").locator("input")
+            if mean.is_checked():
+                mean.uncheck()  # the trace itself, not the mean of earlier chapters
+            d.tab("code")
+            d.caption("Code on the waveform", "Programmed into the simulator, the build runs in an emulator; the Code tab maps its code onto the trace", 0.3)
+            d.click(pg.locator("#cm-build"), 0.5)
+            api.wait("/api/codemap", lambda r: bool(r.get("built")), timeout=300)
+            d.wait(1.5)
+            toggle = pg.locator("#wave-code-toggle")
+            if not toggle.is_checked():
+                d.click(toggle, 0.5)
+            d.caption("The code band under the plot: functions and source lines", "Aligned automatically with the measured traces", 2.5)
+            b = d.plot_box()
+            d.caption("Ctrl+drag picks a region of the trace", "The Code tab lists the functions and source lines that ran there", 0.3)
+            d.move(b["x"] + b["width"] * 0.30, b["y"] + b["height"] * 0.5)
+            pg.keyboard.down("Control")
+            pg.mouse.down()
+            d.move(b["x"] + b["width"] * 0.38, b["y"] + b["height"] * 0.5, steps=20)
+            pg.mouse.up()
+            pg.keyboard.up("Control")
+            d.wait(1.5)
+            pg.locator("#panel-code h2", has_text="Selection").scroll_into_view_if_needed()
+            d.wait(0.8)
+            d.caption("Click a source line: every sample where it ran is shaded", "Its source and disassembly open in the side panel", 0.3)
+            d.click(pg.locator("#cm-lines > *").first, 2.5)
+            pg.locator("#panel-code h2", has_text="Source").last.evaluate("e => e.scrollIntoView({block: 'start', behavior: 'smooth'})")
+            d.wait(2.5)
+            pg.locator("#panel-code button", has_text="Clear").first.click()  # no region or shaded lines left on the waveform for later chapters
+            pg.locator("#wave-code-toggle").uncheck()
+            pg.dblclick("#wave-plot")
+            connect_sim(api, "husky")  # back to the built-in AES model
+
         d.chapter("Notebooks")
         d.tab("notebook")
         d.caption("Jupyter-style notebooks inside Studio", "cw.scope() and cw.target() use Studio's connection; NewAE's tutorials run unmodified", 0.5)
@@ -310,6 +381,49 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.wait(1.5)
         pg.locator(".nb-scroll").evaluate("e => e.scrollTo({top: e.scrollHeight, behavior: 'smooth'})")
         d.caption("Traces captured in a notebook land in the Capture tab too", "", 3)
+
+        d.chapter("Notebooks side by side")
+        d.caption("Open several notebooks as tabs, and two side by side", "Each notebook has its own kernel; their cells take turns on the hardware", 0.3)
+        d.click(pg.locator(".nb-file", has_text="Key check").first, 1)
+        d.click(pg.locator(".nb-split").first, 1.2)
+        right = pg.locator(".nb-pane[data-pane='1']")
+        d.click(right.locator("button", has_text="Run all").first, 0.5)
+        api.wait("/api/kernel?kernel=Key%20check.ipynb", lambda r: not r.get("busy") and not r.get("queued"), timeout=120, every=0.5)
+        d.wait(2.5)
+
+        d.chapter("Logic analyser")
+        d.tab("logic")
+        d.caption("A logic analyser for every ChipWhisperer", "Husky logic analyser, any scope's analog input, sigrok analysers, files, or the simulator's demo traffic", 0.3)
+        src = pg.locator("#la-source")
+        d.point(src)
+        src.select_option("sim")
+        d.wait(0.6)
+        for dd in api("GET", "/api/la/decoders")["decoders"]:
+            api("DELETE", f"/api/la/decoders/{dd['id']}")
+        d.click(pg.locator("#panel-logic button", has_text="Capture").first, 0.5)
+        api.wait("/api/la", lambda r: not r.get("running") and bool(r.get("capture")), timeout=60)
+        d.wait(1)
+        api("PUT", "/api/la/channels", {"channels": [{"channel": n, "hidden": True} for n in LOGIC_HIDDEN]})
+        d.caption("Add a decoder: UART, SPI, I2C, 1-Wire, JTAG, SWD, CAN or SimpleSerial", "Channels are guessed from their names", 0.3)
+        dt = pg.locator("#la-dec-type")
+        dt.scroll_into_view_if_needed()
+        d.point(dt)
+        dt.select_option("uart")
+        d.wait(0.8)
+        d.click(pg.locator("#panel-logic button", has_text="Add decoder").first, 1)
+        for kind in ("spi", "i2c"):
+            api("POST", "/api/la/decoders", {"type": kind})
+        d.wait(1)
+        cap = api("GET", "/api/la/capture")
+        ax = pg.locator(".la-axis-canvas").bounding_box()
+        xt = lambda t: ax["x"] + (t - cap["t_start"]) / (cap["t_end"] - cap["t_start"]) * ax["width"]  # noqa: E731
+        d.caption("Drag on the time axis to zoom in around the trigger", "Decoded bytes appear under each channel and in the results table", 0.3)
+        d.move(xt(-0.0002), ax["y"] + ax["height"] / 2)
+        pg.mouse.down()
+        d.move(xt(0.003), ax["y"] + ax["height"] / 2, steps=25)
+        pg.mouse.up()
+        d.wait(3)
+        d.caption("Search, cursors, measurements, buses and exports to VCD, CSV and sigrok", "", 2.5)
 
         d.chapter("Notes")
         d.tab("notes")
@@ -336,7 +450,7 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.chapter("AI agents (MCP)")
         d.tab("help")
         pg.locator("#sidebar").evaluate("e => e.scrollTo({top: 420, behavior: 'smooth'})")
-        d.caption("An MCP server lets AI agents drive everything", "Copy the configuration for Claude or another agent: 68 tools from connect to build and flash", 3.5)
+        d.caption("An MCP server lets AI agents drive everything", f"Copy the configuration for Claude or another agent: {mcp_tool_count()} tools, from capture to logic decoding and the code map", 3.5)
 
         d.chapter("Themes")
         d.tab("capture")

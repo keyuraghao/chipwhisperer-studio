@@ -15,6 +15,7 @@ ChipWhisperer Studio does not ship compilers inside its download, because they w
 | GNU RISC-V GCC (`riscv-none-elf`) | 15.2.0-1 | RISC-V: NEORV32, Ibex, FE310 | [xPack](https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/) | 401 to 465 MB | about 1.6 GB |
 | LLVM clang 21 (Zig 0.16.0 toolchain) | zig-0.16.0 | Arm, AVR and RISC-V, for [clang builds](Firmware-Builds#gcc-and-clang-builds) | [ziglang.org](https://ziglang.org/download/) and its mirrors | 51 to 97 MB | about 400 MB |
 | GNU make + sh | 4.4.1-3 | Windows only: the `make` and shell that ChipWhisperer's makefiles need | [xPack](https://xpack-dev-tools.github.io/windows-build-tools-xpack/) | 3 MB | a few MB |
+| OpenOCD | 0.12.0-7 | Not a compiler: the JTAG/SWD debugger and flasher for the [Interfaces](Protocols-and-Interfaces#jtag-and-swd-openocd) tab (id `openocd`) | [xPack](https://xpack-dev-tools.github.io/openocd-xpack/) | 2.4 to 3.2 MB | a few MB |
 
 Downloads exist for Linux (x64 and arm64), macOS (Intel and Apple Silicon) and Windows (x64). Exact download sizes per platform:
 
@@ -25,6 +26,7 @@ Downloads exist for Linux (x64 and arm64), macOS (Intel and Apple Silicon) and W
 | GNU RISC-V GCC | 433 MB | 425 MB | 406 MB | 401 MB | 465 MB |
 | LLVM clang (Zig) | 55 MB | 51 MB | 57 MB | 52 MB | 97 MB (also Windows arm64: 93 MB) |
 | GNU make + sh | not needed | not needed | not needed | not needed | 3 MB |
+| OpenOCD | 2.8 MB | 2.7 MB | 2.5 MB | 2.4 MB | 3.2 MB |
 
 > **Note:** The clang toolchain is Zig's bundled clang, used through its `zig clang` command. It is a complete clang 21 with the Arm, AVR and RISC-V back ends, in a much smaller download than an official LLVM release (which is 1 to 2 GB and has no Intel macOS build). A clang build also needs the GCC toolchain for the same architecture, which provides the C library and does the linking.
 

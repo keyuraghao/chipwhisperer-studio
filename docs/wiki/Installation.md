@@ -35,9 +35,9 @@ Each zip contains one folder (`ChipWhispererStudio` or `ChipWhispererStudio-Web`
 - `50-newae.rules` (Windows and Linux folders): NewAE's Linux udev rule for ChipWhisperer devices.
 - `README.md`, `LICENSE.txt` and `NOTICE.txt`.
 
-Everything Studio needs (its own Python runtime, the `chipwhisperer` library, `libusb` and all other dependencies) is inside the application.
+Everything Studio needs (its own Python runtime, the `chipwhisperer` library, `libusb`, the Unicorn CPU emulator for the [code map](Code-on-the-Waveform) and all other dependencies) is inside the application. Each zip is about 72 MB.
 
-With the window build, closing the window quits Studio. With the Web build, a console window shows Studio's address (normally `http://127.0.0.1:8765/`) and your browser opens it; keep the console open while you use Studio, closing it stops the application.
+With the window build, closing the window quits Studio. With the Web build, your browser opens Studio's address (normally `http://127.0.0.1:8765/`); on Windows and Linux a console window shows it, and closing the console stops the application (on macOS, quit the app).
 
 ### Windows
 
@@ -54,7 +54,7 @@ The window uses Microsoft Edge WebView2, which is part of Windows 10 and 11. On 
 ### macOS
 
 1. Download the zip of the build you want. Safari usually extracts it automatically; otherwise double-click the zip.
-2. Move `ChipWhisperer Studio.app` to your Applications folder (or anywhere you like).
+2. Move `ChipWhisperer Studio.app` (or `ChipWhisperer Studio Web.app`) to your Applications folder (or anywhere you like).
 3. The app is not notarized by Apple yet, so the first time, right-click (or Control-click) it and choose **Open**, then confirm **Open** in the dialog. After that it opens normally with a double-click.
 4. If macOS says the app "is damaged" or refuses to open it, remove the download quarantine flag in Terminal and try again: `xattr -dr com.apple.quarantine "/Applications/ChipWhisperer Studio.app"`
 5. Studio opens in its window (or your browser for the Web build).
@@ -101,7 +101,7 @@ pip install https://github.com/keyuraghao/chipwhisperer-studio/releases/download
 cw-studio
 ```
 
-This installs the `chipwhisperer` library from PyPI together with Studio's other dependencies (Starlette, uvicorn, websockets, numpy, matplotlib, pywebview on Windows and macOS, and a few small ones) and adds the `cw-studio` and `cw-studio-web` commands. Run `cw-studio --simulate` to try it without hardware.
+This installs the `chipwhisperer` library from PyPI together with Studio's other dependencies (Starlette, uvicorn, websockets, numpy, matplotlib, pyelftools and Unicorn for the code map, pywebview on Windows and macOS, and a few small ones) and adds the `cw-studio` and `cw-studio-web` commands. Run `cw-studio --simulate` to try it without hardware.
 
 You can also install straight from the repository: `pip install git+https://github.com/keyuraghao/chipwhisperer-studio`
 
@@ -137,12 +137,15 @@ Everything Studio creates goes into one data folder, `ChipWhispererStudio` in yo
 | `notes/` | Your notes, one Markdown file each. |
 | `imports/` | Trace files you uploaded for import. |
 | `exports/` and the folder itself | Trace and glitch exports. A relative file name in an export dialog is saved inside the data folder. |
+| `logic/` | Logic analyser files: `captures/` (copies kept on disk), `exports/`, `imports/` and `sigrok/`. See [Logic Analyser](Logic-Analyser#files). |
+| `codemap/uploads/` | ELF files uploaded in the Code tab. |
+| `studio.log` | Studio's messages when it runs without a console (the window build on Windows). It is always in `~/ChipWhispererStudio`, even with `--data-dir`. |
 
 Captured traces live in memory while Studio runs. Export them (see [Capturing Traces](Capturing-Traces)) if you want to keep them.
 
 ## Disk space
 
-The application itself needs about 150 to 300 MB once extracted. Compilers are only downloaded when you first build firmware for that architecture, and they are large:
+The download is about 72 MB and the application needs about 150 to 300 MB once extracted. Compilers are only downloaded when you first build firmware for that architecture, and they are large:
 
 | Toolchain | Download | On disk (approximately) |
 |-----------|----------|-------------------------|
@@ -151,6 +154,7 @@ The application itself needs about 150 to 300 MB once extracted. Compilers are o
 | GNU AVR GCC | about 35 to 55 MB | about 220 MB |
 | LLVM clang (Zig) | about 50 to 100 MB | about 400 MB |
 | GNU make + sh (Windows only) | about 3 MB | about 10 MB |
+| OpenOCD (only for [JTAG and SWD](Protocols-and-Interfaces#jtag-and-swd-openocd)) | about 3 MB | a few MB |
 
 You can remove any toolchain again from the Firmware tab. See [Toolchains](Toolchains).
 
@@ -166,6 +170,11 @@ Firmware sources and the list of available compilers can be updated from inside 
 1. Delete the `ChipWhispererStudio` application folder (standalone bundle), or run `pip uninstall chipwhisperer-studio` (Python package).
 2. If you also want to remove your notebooks, notes, builds and downloaded compilers, delete the data folder (`~/ChipWhispererStudio` by default). Export anything you want to keep first.
 3. On Linux you can remove the udev rule with `sudo rm /etc/udev/rules.d/50-newae.rules`, unless other ChipWhisperer software still needs it.
+
+## Optional extras
+
+- **sigrok-cli** lets the [Logic Analyser](Logic-Analyser#external-analysers-sigrok) capture from external logic analysers (Saleae clones, DSLogic and others). Studio's own decoders and file import work without it.
+- **OpenOCD** for [JTAG and SWD](Protocols-and-Interfaces#jtag-and-swd-openocd) installs from inside Studio with one click.
 
 ## Next steps
 

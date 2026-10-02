@@ -36,11 +36,13 @@ Studio talks to the hardware only through NewAE's `chipwhisperer` Python library
 | ChipWhisperer-Nano | Only connect to a ChipWhisperer-Nano. |
 | ChipWhisperer-Husky | Only connect to a ChipWhisperer-Husky. |
 | ChipWhisperer-Husky Plus | Only connect to a ChipWhisperer-Husky Plus. |
-| Simulator (no hardware) | Uses Studio's built-in simulated scope and AES target. See [Simulator](Simulator). |
+| Simulator (no hardware) | Uses Studio's built-in simulated scope and AES target. **Simulate as** then chooses which model it poses as (Husky, Husky Plus, Pro, Lite or Nano; default Husky), which decides what the Interfaces, Logic, Target and Scope tabs offer. See [Simulator](Simulator#simulate-as). |
 
 Choosing a specific model (instead of Auto-detect) is useful when several different ChipWhisperers are plugged in, or to get a clear error if the wrong one is connected.
 
-When the connection succeeds, a toast confirms it, the scope chip in the top bar turns green, and Studio switches to the **Scope** tab so you can check the settings. With the simulator, Studio also connects the simulated target for you.
+When the connection succeeds, a toast confirms it, the scope chip in the top bar turns green, and Studio switches to the **Scope** tab so you can check the settings. With the simulator, Studio also connects the simulated target for you. Connecting a different model (or the simulator as another model) stops any running capture first, and every tab follows the new model.
+
+What each model can do beyond capture (SPI, JTAG/SWD, triggers, logic analyser, programmers) is listed on [Protocols and Interfaces](Protocols-and-Interfaces#capability-matrix). Some of those features need newer scope firmware; when it is too old, Studio says so and suggests updating it with `scope.upgrade_firmware()` (for example in a Notebook cell, see [NewAE's firmware page](https://chipwhisperer.readthedocs.io/en/latest/firmware.html)).
 
 ## Target card
 

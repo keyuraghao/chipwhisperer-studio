@@ -32,6 +32,8 @@ The **Capture** tab of ChipWhisperer Studio records power traces: for each trace
 | Display fps | How many traces per second are sent to the waveform view (1 to 60). Capture itself runs as fast as the hardware allows; this only limits screen updates. | 25 |
 | Max cap/s | Limit the capture rate to this many traces per second. `0` means no limit. Useful for slow targets or to watch a capture step by step. | 0 |
 
+Under the progress bar, a line shows the trigger the scope is set to (module, pins and mode). Change it in the [Interfaces](Protocols-and-Interfaces#triggers) tab or the Scope tab; the line follows changes made anywhere.
+
 > **Tip:** For CPA on AES, the classic setup is a **fixed** key and **random** plaintexts, which is the default. Random keys are used for other experiments such as leakage assessment.
 
 ## Running a capture

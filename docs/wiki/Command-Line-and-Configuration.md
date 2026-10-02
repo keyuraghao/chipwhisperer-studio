@@ -8,7 +8,7 @@ This page lists every command line option of ChipWhisperer Studio, the environme
 |----------------------|---------|
 | pip | `cw-studio` (own window) or `cw-studio-web` (browser); `python -m cwstudio` also works |
 | Standalone bundle, Windows | `ChipWhispererStudio.exe`; from a terminal or for AI agents use `cw-studio.exe` (window build) |
-| Standalone bundle, macOS | `ChipWhisperer Studio.app`; from a terminal: `"ChipWhisperer Studio.app/Contents/MacOS/ChipWhispererStudio"` |
+| Standalone bundle, macOS | `ChipWhisperer Studio.app` (or `ChipWhisperer Studio Web.app`); from a terminal: `"ChipWhisperer Studio.app/Contents/MacOS/ChipWhispererStudio"` |
 | Standalone bundle, Linux | `./ChipWhispererStudio` or the `chipwhisperer-studio.sh` launcher next to it |
 
 All forms accept the same options. Studio starts a local web server (`http://127.0.0.1:8765/` by default) and shows it in its own window, or in your web browser for the Web build and `cw-studio-web`. See [Installation](Installation#standalone-bundle) for the two builds.
@@ -22,9 +22,16 @@ All forms accept the same options. Studio starts a local web server (`http://127
 | `--browser` | off | Open Studio in your web browser instead of its own window. |
 | `--app-window` | off | Open Studio in its own window even in the Web build or with `cw-studio-web`. If the window cannot be opened (for example WebKitGTK missing on Linux), Studio says why and uses the browser. |
 | `--no-browser` | off | Run only the server: no window and no browser. Useful for remote use, scripts and CI. |
+| `--window` | | Older spelling of `--app-window`, kept for existing shortcuts. |
 | `--simulate` | off | Preselect the built-in simulator on the Connect tab (the URL gets `?simulate=1`), and make `cw.scope()` in notebooks connect to the simulator. See [Simulator](Simulator). |
-| `--data-dir DIR` | `~/ChipWhispererStudio` | Folder for exports, firmware, compilers, notebooks and notes. |
+| `--data-dir DIR` | `~/ChipWhispererStudio` | Folder for exports, firmware, compilers, notebooks, notes and logic captures. |
 | `--log-level LEVEL` | `info` | `debug`, `info`, `warning` or `error` for the console log. |
+
+When both are given, `--no-browser` wins over `--browser`, which wins over `--app-window`. Without any of them Studio uses `CWSTUDIO_DEFAULT_UI` if it is set, then the build's default (the window, or the browser for the Web build and `cw-studio-web`).
+
+If the window cannot be opened, Studio prints why (for example *Studio cannot open its own window: WebKitGTK is not available ...*, with the package to install) and opens the browser instead. On a machine without a graphical display (over SSH) it opens neither and prints the address to open, with a hint to forward the port. Without a console (such as the window build's `ChipWhispererStudio.exe` on Windows), these messages go to `~/ChipWhispererStudio/studio.log`.
+
+Studio does not stop you from starting it twice: a second Studio takes the next free port, has its own session and competes for the same USB device. Close the first one, or use it from another window.
 
 Examples:
 
@@ -58,6 +65,7 @@ On Linux, `cw-studio --install-desktop` (or `./ChipWhispererStudio --install-des
 | `CWSTUDIO_DEFAULT_UI` | `window` or `browser`: how Studio opens when neither `--browser` nor `--app-window` is given (overrides the build's default). |
 | `CWSTUDIO_GTK_PYTHON` | Linux: the Python interpreter that runs Studio's window (it needs PyGObject and WebKitGTK). Default: the system `python3`. |
 | `CWSTUDIO_DEVTOOLS` | Linux window: set to `1` to enable the web inspector (right-click, Inspect Element) and print the page's console messages in the terminal. |
+| `CWSTUDIO_SIGROK_CLI` | Path to `sigrok-cli` for the [Logic Analyser](Logic-Analyser#external-analysers-sigrok), when it is not on `PATH`. |
 | `MPLBACKEND` | If it is not set, Studio sets it to its own inline backend so notebook figures render to images (shell commands run from a notebook get `Agg`). |
 | `CWSTUDIO_CC`, `CWSTUDIO_GCC` | Internal. Set by clang firmware builds for the compiler wrapper. |
 | `ZIG_GLOBAL_CACHE_DIR`, `ZIG_LOCAL_CACHE_DIR` | Internal. Clang builds point these at `toolchains/.zig-cache` in the data folder. |
@@ -87,10 +95,19 @@ ChipWhispererStudio/
 │   ├── imported/          notebooks imported through the browser
 │   ├── chipwhisperer-jupyter/  NewAE's tutorial notebooks, when downloaded
 │   └── firmware/mcu       link to firmware/chipwhisperer so tutorial build cells work
-└── notes/                 your notes as .md or .txt files
+├── logic/
+│   ├── captures/          logic captures kept on disk (.sr)
+│   ├── exports/           logic exports (VCD, CSV, .sr)
+│   ├── imports/           logic files uploaded through the browser
+│   └── sigrok/            captures made with sigrok-cli
+├── codemap/uploads/       ELF files uploaded in the Code tab
+├── notes/                 your notes as .md or .txt files
+└── studio.log             messages, when Studio runs without a console (always here, even with --data-dir)
 ```
 
 Relative paths you type in Studio (trace export names, glitch CSV names) are saved inside the data folder. Absolute paths are used as given.
+
+The interface's own settings (theme, last tab, notebook layout, waveform, Interfaces and Logic tab choices) are stored by the window or browser, not in the data folder. Studio's window keeps them between runs (on Windows in `%LOCALAPPDATA%\ChipWhispererStudio\WebView`); they are tied to the address, so they also follow the port Studio runs on.
 
 Disk usage: the ChipWhisperer firmware sources are about 250 MB. Installed compilers are the biggest items: Arm GCC about 1.1 GB, RISC-V GCC about 1.6 GB, AVR GCC about 215 MB and clang (Zig) about 400 MB unpacked. Remove the ones you do not need in the Firmware tab (see [Toolchains](Toolchains)).
 

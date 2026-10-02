@@ -23,6 +23,9 @@ Programming uses ChipWhisperer's own programmer classes, the same ones the `chip
 | AVR | ATmega targets such as the CW308 AVR board and the CW304 (ATmega328P). |
 | SAM4S | SAM4S targets: the CW308 and CW312 SAM4S boards and the `CWHUSKY` platform. |
 | NEORV32 | The NEORV32 RISC-V soft core on the iCE40 FPGA target. |
+| iCE40, XC7A35T | FPGA bitstreams for the CW312T iCE40 and Artix-7 (XC7A35T) targets, loaded over the SPI pins (CS on PDID, CRESET/PROG on nRST). |
+
+The list offers only the programmers the connected ChipWhisperer can drive; the others are shown as *(not available)* with the reason (for example the CW-Nano programs STM32F targets only). See [Protocols and Interfaces](Protocols-and-Interfaces#programming). JTAG/SWD targets can also be flashed through OpenOCD from the Interfaces tab.
 
 Other platforms (for example the NXP, Nordic or Silicon Labs CW308 boards) are not programmed by these built-in programmers; use the vendor's tools with the `.hex` Studio builds.
 
@@ -34,9 +37,9 @@ Other platforms (for example the NXP, Nordic or Silicon Labs CW308 boards) are n
 
 Programming can take a few seconds to a minute. The status line under the button says **Programming… (watch the log)** while it runs, and the log at the bottom of the window shows the programmer's messages. When it finishes you see **Done: N bytes written**.
 
-### What "simulated" means
+### Programming the simulator
 
-When the scope is the [Simulator](Simulator), nothing is programmed: Studio checks that the file exists, waits briefly and reports **Done: N bytes written (simulated)**. The simulated target always behaves like an AES target, whatever file you "program".
+When the scope is the [Simulator](Simulator), programming an ELF (or a `.hex` that Studio built, which keeps its `.elf` next to it) makes the simulated target run that firmware in an emulator: its responses and traces then come from your code. Any other file is only checked to exist, and the simulated target keeps behaving like its built-in AES target. The result says which of the two happened. See [Simulator](Simulator#running-your-own-firmware).
 
 ## SimpleSerial helper
 
@@ -50,13 +53,13 @@ ChipWhisperer's example firmware talks the **SimpleSerial** protocol: a one lett
 | Response length | How many bytes of reply to wait for. | 16 |
 | **Send** | Sends the command and shows the reply as `r <hex>`, or `(no response)` if nothing valid came back within about half a second. | |
 
-Both directions also appear in the serial console, so you can see exactly what went over the wire.
+Both directions also appear in the terminal, so you can see exactly what went over the wire. The [Interfaces](Protocols-and-Interfaces#simpleserial) tab has the same helper with a choice of protocol version.
 
 **SimpleSerial v1 or v2?** Studio talks to the target through ChipWhisperer's own target classes, which handle the protocol's framing for you, so the helper looks the same for both. What matters is that the protocol version you select on the **Connect** tab (**SimpleSerial v2** for current firmware, **SimpleSerial v1** for legacy firmware) matches the version your firmware was built with (**SimpleSerial** in the **Firmware** tab, see [Firmware Builds](Firmware-Builds#simpleserial-versions)). If replies never arrive, a version mismatch is the most common cause.
 
-## Serial console
+## Serial terminal
 
-The serial console shows everything the target sends, plus what you send.
+The terminal shows everything the target sends, plus what you send, including traffic from captures, notebooks and agents. It is the same terminal as in the [Interfaces](Protocols-and-Interfaces#uart-and-terminal) tab, where you also set the baud rate, parity, stop bits and pins.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/target-serial-light.png"><img alt="The serial console showing sent and received lines" src="images/target-serial.png"></picture>
 
@@ -64,13 +67,15 @@ The serial console shows everything the target sends, plus what you send.
 
 | Control | What it does | Default |
 |---------|--------------|---------|
-| Text box + **Send** (or Enter) | Sends the text to the target. | |
-| send hex | Treat the text as hex bytes (for example `70 00 11 22`) instead of characters. | off |
-| newline | Add a newline (`\n`) to text you send, unless it already ends with one. Not applied in hex mode. | on |
+| Text box + **Send** (or Enter) | Sends the text to the target. Up and Down recall what you sent before. Needs a connected target. | |
+| Send as | **text**, or **hex** bytes (for example `70 00 11 22`). | text |
+| Line ending | Added to text you send: no line end, LF, CR or CR LF. Not applied in hex mode. | LF |
+| History | The last 30 lines sent, to send again. | |
 | show hex | Show each line as hex bytes instead of text. Newlines in text mode appear as ⏎. | off |
-| clear | Empty the console view. | |
+| timestamps | Show the time of each line. | off |
+| clear | Empty the terminal view. | |
 
-Studio polls the serial port about ten times a second while no capture or glitch sweep is running (during those jobs the target's replies are consumed by the job itself). The console keeps the most recent 500 lines.
+Studio polls the serial port about ten times a second while no capture or glitch sweep is running (during those jobs the target's replies are consumed by the job itself). The terminal keeps the most recent 1000 lines; the send mode, line ending and history are remembered.
 
 > **Tip:** If your firmware prints a banner or debug messages, they appear here. If nothing ever appears, check that `io.tio1` and `io.tio2` are set to `serial_rx` and `serial_tx` in the **Scope** tab (see [Scope Settings](Scope-Settings#io-target-connections)), and that the baud rate in the target settings matches your firmware.
 

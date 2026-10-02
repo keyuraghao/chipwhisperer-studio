@@ -19,7 +19,8 @@ The viewer is visible on every tab except **Notebook**, which uses the main area
 | mean | Draws the average of all stored traces. | off |
 | min/max | Draws a shaded envelope between the lowest and highest value of all stored traces at every sample. | off |
 | auto Y | Rescales the vertical axis to fit each trace. Turn it off to keep the vertical scale fixed while traces update. | on |
-| time axis | Labels the horizontal axis in time units instead of sample numbers, using the ADC sample rate read from the scope's clock settings. If Studio does not know the sample rate, the axis keeps showing sample numbers. | off |
+| time axis | Labels the horizontal axis in time units instead of sample numbers, using the ADC sample rate read from the scope's clock settings (it follows clock changes made anywhere, including notebooks and agents). If Studio does not know the sample rate, the axis keeps showing sample numbers. | off |
+| code | Shows the [code band](Code-on-the-Waveform#the-code-band) under the plot: which firmware functions and source lines run when. Needs a code map (Code tab); it switches on by itself after a build. | off |
 | Pause / Resume | Freezes the display while captures continue in the background. Also on the **Space** key. | running |
 | Zoom in / Zoom out (magnifier buttons) | Halves or doubles the visible range of samples, centred on cursor A when it is in view, otherwise on the middle of the view. The **+** and **-** keys do the same. | |
 | Fit | Resets the zoom to show the whole trace. Double-clicking the plot does the same. | |
@@ -33,6 +34,7 @@ The mean and min/max statistics are computed over all stored traces. They are re
 - **Drag** horizontally across the plot to zoom into that range of samples.
 - Press the **zoom in** and **zoom out** buttons (or the **+** and **-** keys) to zoom in steps of two around cursor A or the middle of the view.
 - **Double-click** or press **Fit** to zoom back out.
+- **Ctrl+drag** (**Cmd+drag** on macOS, or **Alt+drag**) does not zoom: it picks a sample range for the [code map](Code-on-the-Waveform#picking-a-region).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/waveform-zoom-light.png"><img alt="Zoomed in around cursor A, with the zoom buttons next to Fit" src="images/waveform-zoom.png"></picture>
 
@@ -78,8 +80,8 @@ The footer under the plot describes the displayed trace:
 
 | Key | Action |
 |-----|--------|
-| S | Capture a single trace |
-| R | Run a capture |
+| S | Capture a single trace (not while a notebook has the focus) |
+| R | Run a capture (not while a notebook has the focus) |
 | Esc | Stop the running capture or sweep |
 | Space | Pause or resume the display |
 | Left / Right | Previous or next trace (in Browse mode) |

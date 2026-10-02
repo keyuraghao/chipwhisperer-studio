@@ -10,13 +10,14 @@ Everything the Studio window does goes through a local HTTP API and one WebSocke
 - **Responses:** JSON, except trace data, which uses the binary frame format below, and file downloads.
 - **Errors:** a non-2xx status with `{"detail": "ExceptionType: message"}`. Most failures (no scope connected, build failed to start) return status 400. A missing or malformed query, path or file parameter returns 422 with a list instead: `{"detail": [{"type": "missing", "loc": ["query", "path"], "msg": "Field required", "input": null}]}`.
 - **Long jobs:** captures, glitch sweeps, CPA, builds and downloads start in the background and return immediately. Poll the matching status endpoint or listen on the WebSocket.
-- **One hardware job at a time:** a capture and a glitch sweep cannot run together. Starting a second one returns an error.
+- **One hardware job at a time:** a capture, a glitch sweep and a logic analyser capture cannot run together. Starting a second one returns an error.
+- **Not found:** an unknown notebook, logic channel, decoder or code map item returns 404 with the same `{"detail": ...}` form.
 
 > **Note:** The API has no authentication. Anyone who can reach the port can control your hardware and run notebook code. Keep the default bind address `127.0.0.1` unless you are on a trusted network.
 
 ## Binary trace frames
 
-Trace data (`GET /api/traces/{index}`, `/api/traces/stats`, `/api/traces/block`, `/api/analysis/cpa/corr/{b}` and `trace` WebSocket messages) uses one compact format:
+Trace data (`GET /api/traces/{index}`, `/api/traces/stats`, `/api/traces/block`, `/api/analysis/cpa/corr/{b}`, `/api/codemap/model` and `trace` WebSocket messages) uses one compact format:
 
 | Bytes | Content |
 |-------|---------|
@@ -62,8 +63,13 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `firmware_sources` | text | Firmware source status changed (download progress, installed, update check). |
 | `build` | text | Firmware build state: `state` (running, ok, failed, cancelled), `hex`, `size`, `error`. |
 | `build_log` | text | New build output: `start` (line number) and `lines`. |
-| `nb` | text | Notebook kernels: `kind` (queued, running, output, done, cancelled, restarted, shutdown, renamed), `kernel` (the kernel id: the notebook's path, or `default`), `path` (the notebook path, or null for the default kernel), `cell`, `exec`, and `output`, or `ok`, `execution_count` and `outputs` when done. `restarted` carries the kernel status; `renamed` carries the new id in `kernel` and the previous one in `old`. Each event belongs to exactly one kernel, so a client showing several notebooks routes it by `kernel`. |
+| `nb` | text | Notebook kernels: `kind` (queued, running, output, done, cancelled, restarted, shutdown, renamed), `kernel` (the kernel id: the notebook's path, or `default`), `path` (the notebook path, or null for the default kernel), `cell`, `exec`, and `output`, or `ok`, `execution_count` and `outputs` when done. `restarted` carries the kernel status; `renamed` carries the new id in `kernel` and the previous one in `old`. Each event belongs to exactly one kernel, so a client showing several notebooks routes it by `kernel`. `kind: "file"` (with `action` `saved` or `deleted`, `path`, `mtime` and the saving window's `client`) announces changes to notebook files. |
 | `tutorials` | text | Tutorial notebook download status. |
+| `programmed` | text | A target was programmed: the file, and with the simulator whether its firmware runs in the emulator. |
+| `spi` | text | One SPI transfer from the Interfaces tab or the API: MOSI and MISO bytes. |
+| `openocd` | text | OpenOCD: `kind` `log` (a log line), `state` (`running`, `exit_code`) or `mpsse` (MPSSE mode on or off). |
+| `la` | text | Logic analyser: `kind` `job` (capture progress: `state`, `source`, `phase`), `capture` (a new capture), `select` (the current capture changed), `channels`, `decoders`, `decoded` (a background decode finished). |
+| `codemap` | text | The code map changed (same object as `GET /api/codemap`). |
 
 ## Endpoints
 
@@ -72,7 +78,8 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | Method and path | Purpose |
 |-----------------|---------|
 | `GET /api/status` | Scope and target info, running job, trace summary, CPA summary, uptime, data folder. |
-| `GET /api/meta` | Version, scope kinds, target kinds, programmers, CPA models, crypto targets, SimpleSerial versions, host platform, platform help (drivers, udev). |
+| `GET /api/meta` | Version, scope kinds, target kinds, programmers, CPA models, crypto targets, SimpleSerial versions, simulator models (`sim_models`), the command an MCP client should run for this installation (`mcp_command`: `{command, args}`), host platform, platform help (drivers, udev). |
+| `GET /api/capabilities` | What the connected scope supports: UART, SimpleSerial, SPI, JTAG, SWD, trace, GPIO, USERIO, bit-banger, 1-Wire, every trigger type, every programmer and the logic analyser sources, each as `{available, reason, ...details}`. For a scope type the Interfaces tab does not support, a top-level `reason` says so. See [Protocols and Interfaces](Protocols-and-Interfaces). |
 | `GET /api/devices` | Attached ChipWhisperer USB devices. |
 | `GET /api/logs?since=SEQ` | Log, capture and glitch events after a sequence number. |
 | `POST /api/shutdown` | Stops the Studio server. |
@@ -81,10 +88,10 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 
 | Method and path | Purpose |
 |-----------------|---------|
-| `POST /api/scope/connect` | Body: `kind` (auto, lite, pro, nano, husky, huskyplus, sim), `sn`, `force`, `default_setup`. |
+| `POST /api/scope/connect` | Body: `kind` (auto, lite, pro, nano, husky, huskyplus, sim), `sn`, `force`, `default_setup`, and for the simulator `sim_model` (husky, huskyplus, pro, lite, nano; default husky). Connecting again switches the model. |
 | `POST /api/scope/disconnect` | Disconnect the scope. |
-| `GET /api/scope/settings` | Settings tree (groups with `children`, leaves with `path`, `value`, `type`, `writable`, `doc`, `choices`). |
-| `PUT /api/scope/settings` | Body: `path`, `value`. Returns the read-back value. |
+| `GET /api/scope/settings` | Settings tree (groups with `children`, leaves with `path`, `value`, `type`, `writable`, `doc`, `choices`, and `disabled_choices` with the reason for choices the connected model does not have). |
+| `PUT /api/scope/settings` | Body: `path`, `value`. Returns the read-back value. Values the connected model does not support are refused with the reason. |
 | `POST /api/scope/action/{action}` | `default_setup`, `arm_capture`, `reset_fpga` or `glitch_disable`. |
 
 ### Target
@@ -94,9 +101,9 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `POST /api/target/connect` | Body: `kind` (SimpleSerial2, SimpleSerial, SimpleSerial2_CDC, CW305, sim) plus extra options for `chipwhisperer.target()`. |
 | `POST /api/target/disconnect` | Disconnect the target interface. |
 | `GET /api/target/settings` / `PUT /api/target/settings` | Target settings tree, set one setting. |
-| `POST /api/target/program` | Body: `programmer`, `path` (a file on the Studio machine). |
+| `POST /api/target/program` | Body: `programmer` (STM32F, XMEGA, AVR, SAM4S, NEORV32, iCE40, XC7A35T; refused with the reason when the model cannot use it), `path` (a file on the Studio machine). With the simulator the reply has `emulation`: whether the firmware runs in the emulator. |
 | `POST /api/target/program/upload?programmer=STM32F` | Multipart `file`: upload and program a firmware file. |
-| `POST /api/target/serial/write` | Body: `data`, `hex`, `newline`. |
+| `POST /api/target/serial/write` | Body: `data`, `hex`, and the line ending for text: `eol` (none, lf, cr, crlf) or the older `newline` (true adds LF). |
 | `GET /api/target/serial?since=T` | Serial traffic after timestamp `T`. |
 | `POST /api/target/simpleserial` | Body: `cmd`, `data` (hex), `read_cmd`, `read_len`. Returns `response`. |
 
@@ -161,14 +168,14 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | Method and path | Purpose |
 |-----------------|---------|
 | `GET /api/notebooks` | Notebook list and tutorial status. |
-| `GET /api/notebooks/file?path=` | Load a notebook (cells with string sources and ids). |
-| `PUT /api/notebooks/file` | Body: `path`, `notebook`. Save. |
-| `DELETE /api/notebooks/file?path=` | Delete. |
+| `GET /api/notebooks/file?path=` | Load a notebook (cells with string sources and ids) and its `mtime`. |
+| `PUT /api/notebooks/file` | Body: `path`, `notebook`, and optionally `base_mtime` (the `mtime` the editor loaded) and `client` (a window id, echoed in the `nb` `file` event). With `base_mtime`, the save is refused with 409 if the file changed since, and 410 if it was deleted. |
+| `DELETE /api/notebooks/file?path=` | Delete; its kernel is shut down. |
 | `POST /api/notebooks/new` | Body: `name`. Create from the starter template. |
 | `POST /api/notebooks/import` | Multipart `file`: import an `.ipynb` into `imported/`. |
 | `GET /api/notebooks/download?path=` | Download as `.ipynb`. |
 | `GET /api/notebooks/asset?path=` | An image referenced by notebook Markdown. |
-| `POST /api/notebooks/tutorials/fetch` | Download NewAE's tutorial notebooks. |
+| `POST /api/notebooks/tutorials/fetch` | Download or update NewAE's tutorial notebooks. Files you edited or added are kept; if some would be replaced by a changed upstream version, the job stops in state `confirm` with `conflicts` until you call again with `{"on_modified": "backup"}` (install, keep your copies as `<name>.local-<timestamp>`) or `{"on_modified": "keep"}`. The finished job reports what was `kept` and the `backups`. |
 | `POST /api/notebooks/run` | Body: `path`, `timeout`, `stop_on_error`, `kernel`. Run all cells in the notebook's own kernel (or `kernel`), save outputs, wait. |
 | `GET /api/kernel?kernel=` | Kernel status: `kernel`, `path`, `started` (false until the notebook first runs a cell), `busy` (a cell of this kernel is running), `cell`, `queued` (this kernel's queued cells), `execution_count`, `store_traces`, `running_kernel` (whose cell runs now, in any kernel), `queued_total`. |
 | `GET /api/kernel/variables?kernel=` | Variables defined in the kernel. |
@@ -183,6 +190,86 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `POST /api/notebooks/rename` | Body: `path`, `to`. Rename or move a notebook; its kernel moves with it. 409 if `to` exists. |
 
 Each notebook has its own kernel. The optional `kernel` parameter (query parameter for `GET`, body field or query parameter for `POST`) is a notebook path relative to the notebooks folder (the id the Notebook tab uses for that notebook), any other string as a temporary id, or empty for the shared **default** kernel. Requests without it behave as before, against the default kernel. Kernels are created by the first `execute` or `run` that names them; status and variables of a kernel that has not started report it as idle and empty without creating it. `POST /api/notebooks/run` runs in the notebook's own kernel unless its body names another `kernel`, and deleting a notebook shuts its kernel down. Cells of all kernels share one queue and run one at a time on the hardware thread.
+
+### Interfaces
+
+Everything in the [Interfaces](Protocols-and-Interfaces) tab. Requests for something the connected model does not support return 400 with the reason (`Unsupported: ...`). Booleans accept `true`/`false`, `1`/`0`, `yes`/`no` and `on`/`off`.
+
+| Method and path | Purpose |
+|-----------------|---------|
+| `GET /api/interfaces` | Capabilities plus the state of every interface: UART pins and settings, SimpleSerial version, SPI master, the trigger last applied, OpenOCD and MPSSE. |
+| `GET` / `PUT /api/interfaces/uart` | Body: `baud` (500 to 2,000,000), `parity` (none, odd, even, mark, space), `stop_bits` (1, 1.5, 2), `rx` and `tx` (tio1 to tio4, only modes valid for the model), `data_bits` (always 8). |
+| `POST /api/interfaces/simpleserial/connect` | Body: `version` (1.0, 1.1, 2.1 or cdc). Connects the matching SimpleSerial target. |
+| `POST /api/interfaces/simpleserial/send` | Body: `cmd`, `data` (hex), `read_cmd` (r), `read_len`, `timeout` (ms). Returns `response` (hex or null). Version 1.0 does not wait for an ack. |
+| `POST /api/interfaces/spi/enable` | Body: `speed` (Hz, 1 kHz to 20 MHz, default 1 MHz), `cs` (pdid, pdic, tio3, tio4). |
+| `POST /api/interfaces/spi/disable` | Turn the SPI master off. |
+| `POST /api/interfaces/spi/transfer` | Body: `data` (hex bytes for MOSI), `start`, `stop` (chip select framing), `writeonly`. Returns `miso`. |
+| `POST /api/interfaces/spi/toggle_sck` | Body: `cycles` (1 to 255). |
+| `GET` / `PUT /api/interfaces/gpio` | Pin modes and levels; PUT body: `pin`, `state` (high, low, high_z). |
+| `POST /api/interfaces/gpio/pulse` | Body: `pin` (nrst or pdic), `ms` (1 to 5000). |
+| `GET` / `PUT /api/interfaces/userio` | Husky USERIO header; PUT body: `direction` (bit mask, 1 = driven by the Husky), `drive` (bit mask), `mode` (normal). |
+| `GET` / `PUT /api/interfaces/trigger` | PUT body: `kind` (basic, uart_decode, uart_pattern, edge_counter, adc_level, sequencer, sad) plus its parameters (the same as the MCP tool `trigger_configure`). |
+| `POST /api/interfaces/bitbang` | Body: `bits` (`'0110...'`), `record` (same length, 1 = release and record that slot), `data_pin`, `clock_pin`, `clk_div`. Returns the recorded bits. |
+| `POST /api/interfaces/onewire` | Body: `action` (reset, read_rom), `data_pin`, `clk_div`. Returns the presence and the ROM (family, serial, CRC check). |
+| `GET /api/interfaces/openocd` | OpenOCD binary, scripts folder, server state, ports, MPSSE state and the newest log lines. `mpsse` carries `detected: true` (with `connected`, `sn` and `kind`) for a scope Studio found already in MPSSE mode, for example after a restart. |
+| `GET /api/interfaces/openocd/targets` | Target configurations in OpenOCD's scripts folder. |
+| `GET /api/interfaces/openocd/log?since=` | OpenOCD log lines. |
+| `POST /api/interfaces/openocd/mpsse` | Body: `enable`, `transport` (jtag, swd), `header` (target, userio). Enabling releases the scope; disabling restores normal mode and reconnects it, also for a scope that was found already in MPSSE mode. |
+| `POST /api/interfaces/openocd/start` | Body: `target_cfg` (for example `target/stm32f3x.cfg`), `transport`, `ports` (`{gdb, telnet, tcl}`), `extra` (a list of `-c` commands). |
+| `POST /api/interfaces/openocd/stop` | Stop the OpenOCD server. |
+| `POST /api/interfaces/openocd/command` | Body: `command`. Runs it on OpenOCD's TCL port; returns `ok` and the output. |
+| `POST /api/interfaces/openocd/program` | Body: `path` (.hex, .elf or .bin on the Studio machine), `verify`, `reset`, `address` (for .bin). |
+
+### Logic analyser
+
+The [Logic](Logic-Analyser) tab. Sample indices count from the start of the capture; times are in seconds from the trigger. Channels can be given by index or by name.
+
+| Method and path | Purpose |
+|-----------------|---------|
+| `GET /api/la` | State: the running job, the current capture, the captures in memory, decoders and buses. |
+| `GET /api/la/sources` | Capture sources with availability and reason (native, adc, sim, sigrok, files), the Husky LA triggers and clock sources, the decoders with their options, the default settings of each source (`defaults`, the same as the Logic tab and the MCP tools), and the scope's ADC and LA clock rates. |
+| `POST /api/la/capture` | Body: `source` (native, adc, sim, sigrok), `settings` (per source, as in the tab: native `group`, `clk_source`, `oversampling`, `downsample`, `depth`, `trigger`, `fire`, `with_analog`; adc `segments`, `samples`, `level`, `hysteresis`, `fire`, `invert`; sim `samplerate`, `duration_ms` or `samples`, `pretrigger`, `channels`, `jitter_ns`, `glitches_per_ms`; sigrok `device`, `samplerate`, `channels`, `samples` or `time_ms`, `triggers`, `config`; any source `persist` to keep a `.sr` copy), `wait`, `timeout`. |
+| `POST /api/la/stop` | Stop the running capture. |
+| `GET /api/la/captures`, `PUT /api/la/current`, `DELETE /api/la/captures/{cid}` | The captures in memory; choose the current one (body `id`); delete one. |
+| `GET /api/la/capture?capture=` | A capture's summary: channels, sample rate, trigger, duration, analog rows. |
+| `POST /api/la/view` | Body: `a`, `b` (sample range), `px` (width in pixels), `channels`, `buses`, `decoders`, `analog`. Returns the edges (or per-pixel summaries) of each channel and the decoded annotations in range, with `notices`. A bus whose channels are missing is returned `disabled` with the `missing` names; a decoder that fails on this capture returns `{id, type, name, error, rows: []}` while the rest of the view is drawn. This is what the tab draws from. |
+| `GET` / `PUT /api/la/channels` | Channels, analog rows, order and buses; PUT body: `channels` (`[{channel, name, color, hidden}]`: `channel` picks the channel by index or current name, `index` is an alias, `name` renames it), `order`, `buses` (`[{name, channels, format}]`; buses refer to channels by name and follow them into later captures), `analog` (`[{index, hidden, remove}]`). Responses list the channels with their `index`, and buses with `missing`, `disabled` and a `notice` when their channels are not in this capture. |
+| `POST /api/la/measure` | Body: `channel` (or `channels`; all when left out) and a range (`from`/`to` samples or `t0`/`t1` seconds). Returns edges, frequency, period, duty cycle and pulse widths. |
+| `POST /api/la/search` | Body: `kind` (edge, pattern, decoded), `channel`, `edge`, `pattern`, `edge_channel`, `text`, `decoder`, `from`, `direction` (next, prev). Returns `found`, `index` and `t`. |
+| `GET` / `POST /api/la/decoders` | The decoders shown in the tab; POST body: `type` (uart, spi, i2c, onewire, jtag, swd, can, simpleserial, sigrok), `channels` (`{role: index or name}`, guessed from the channel names when left out), `options`, `name`. |
+| `PUT` / `DELETE /api/la/decoders/{did}` | Change or remove a decoder. Adding or changing a decoder with invalid options returns 400 with the reason. |
+| `POST /api/la/decode` | Run a decoder once without adding it. Body: `type`, `channels`, `options`, `limit` (500). Invalid options return 400. |
+| `GET /api/la/annotations` | Decoded results: `decoder`, `q` (filter), `offset`, `limit`, `after`, `before`, `row`. |
+| `GET /api/la/annotations.csv` | The same as CSV. |
+| `POST /api/la/import` | Body: `path` (a .vcd, .csv or .sr file on the Studio machine), `format`, `samplerate` (for CSV files without a time column). |
+| `POST /api/la/import/upload` | Multipart `file` (query `format`, `samplerate`). |
+| `POST /api/la/export` | Body: `format` (vcd, csv, sr), `path` (default: the `logic/exports` folder), `channels`. Returns the path. |
+| `GET /api/la/download/{fmt}` | Export the current capture and download it. |
+| `GET /api/la/files` | Logic files in the data folder (captures, exports, imports, sigrok). |
+| `POST /api/la/analog/from_trace` | Body: `index` (stored trace, default the newest). Adds it as an analog row on the capture's time base. |
+| `POST /api/la/analog/to_waveform` | Body: `index`. Adds an analog row to the trace store, so it shows in the waveform view. |
+| `GET /api/la/sigrok?refresh=`, `GET /api/la/sigrok/scan`, `GET /api/la/sigrok/decoders` | sigrok-cli status and install help, the analysers it finds, its protocol decoders. |
+
+### Code map
+
+[Code on the Waveform](Code-on-the-Waveform). Sample indices are those of the stored traces.
+
+| Method and path | Purpose |
+|-----------------|---------|
+| `GET /api/codemap` | State: firmware (ELF, architecture, core, SimpleSerial version), the inputs it ran with, whether the emulated response is the correct AES and matches the stored trace, the cycle to sample mapping and the last alignment, and which emulators are available, and `pathsep` (the separator for several source folders). |
+| `GET /api/codemap/elfs` | ELF files to choose from: the one programmed in this session, then Studio's firmware builds. |
+| `POST /api/codemap/build` | Body: `elf` (path; default the programmed firmware or the newest build), `sources` (folder, or several separated by `pathsep`; `""` clears a folder set before and goes back to the paths in the ELF), `trace` (index; default the newest), `key`/`text` (hex, instead of a trace; `text: ""` sends the command without data), `cmd` (`p`), `raw` (hex serial bytes fed as they are, for firmware that is not SimpleSerial; `raw_text: true` for text), `core`, `protocol`, `wait_states`, `mapping` (`{adc_freq, target_freq, adc_offset, presamples, decimate, scale, shift}`), `align` (true, false or `auto`), `options` (`{skip, getch, putch, trigger_high, trigger_low, max_instructions}`). |
+| `POST /api/codemap/upload` | Multipart `file`: upload an ELF; returns its path for `build`. |
+| `GET /api/codemap/band` | The timeline the code band draws: function spans and source line runs in cycles from the trigger, and the mapping. |
+| `POST /api/codemap/region` | Body: `start`, `end` (samples), `limit`. The functions and source lines that ran there; code without line information is one line entry with `no_line_info: true`. |
+| `POST /api/codemap/lookup` | Body: `function`, or `file` and `line`. Where it ran: cycle and sample ranges. |
+| `POST /api/codemap/align` | Body: `source` (mean, trace), `trace`, `scale_min`, `scale_max`, `max_shift`, `apply` (true, false or `auto`: apply unless the confidence is low). |
+| `PUT /api/codemap/mapping` | Body: `shift`, `scale` (absolute), `dshift` (samples) or `dscale` (fraction) to nudge, `adc_offset`, `presamples`, `decimate`, `adc_freq`, `target_freq`, `reset`. |
+| `GET /api/codemap/source?file=` | A source file: text, lines with code, executed lines with their cycles. |
+| `GET /api/codemap/disasm` | Disassembly of a line (`file`, `line`), a `function` or an address range (`lo`, `hi`), with how often each instruction ran. |
+| `GET /api/codemap/at?sample=` | The instruction (address, function, file and line, cycle) at a sample. |
+| `GET /api/codemap/model?n=` | The emulated power model resampled to the trace's samples (binary frame). |
+| `POST /api/codemap/pctrace` | Exact mode: record program counter samples through the Husky's Arm trace port (SWO) and compare them with the emulation. Body: `interval` (rounded to the nearest the Arm DWT supports, 64 or 1024 cycles times 1 to 16; the reply has `interval` and `interval_requested`), `swo_div`. When no samples arrive the reply has a `message` with the likely cause. |
 
 ### Notes and calculator
 

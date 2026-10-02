@@ -68,7 +68,8 @@ A platform is greyed out and cannot be selected when it needs the extra HALs fro
 | `SS_VER_2_1` | v2.1 | Current ChipWhisperer firmware and the **SimpleSerial v2** target protocol on the Connect tab. Use this unless you have a reason not to. |
 | `SS_VER_1_1` | v1.1 | The legacy protocol, used by older tutorials. Connect the target as **SimpleSerial v1**. |
 | `SS_VER_1_0` | v1.0 | Older still. Rarely needed. |
-| `SS_VER_2_0` | v2.0 | Deprecated by NewAE; use v2.1 instead. |
+
+`SS_VER_2_0` is not offered: NewAE's firmware refuses to compile it (*deprecated! Use SS_VER_2_1*), so Studio rejects it before building.
 
 The SimpleSerial version of the firmware and the target protocol you connect with must match, otherwise captures time out.
 
