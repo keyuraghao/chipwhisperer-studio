@@ -248,7 +248,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [release]
     runs-on: ubuntu-latest
-    # Trusted publishing: PyPI trusts this workflow and environment (configured once on pypi.org), so no token is stored anywhere
+    # Uses the PYPI_API_TOKEN secret when it is set; without it, trusted publishing (PyPI trusts this workflow and environment, configured once on pypi.org)
     environment:
       name: pypi
       url: https://pypi.org/project/chipwhisperer-studio/
@@ -260,3 +260,5 @@ jobs:
           name: python-dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}

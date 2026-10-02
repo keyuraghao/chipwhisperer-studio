@@ -10,7 +10,7 @@ Studio is now on PyPI: `pip install chipwhisperer-studio`. No changes to the app
 
 ### Added
 
-- **PyPI package.** Every release is now also published to [PyPI](https://pypi.org/project/chipwhisperer-studio/) by CI, with trusted publishing (no stored token). The package description is the README with its screenshots, clips and links pointing at the release tag (`tools/pypi_readme.py`), and the package lists keywords, classifiers for the supported systems and Python versions, and links to the documentation, issues, changelog and video tour.
+- **PyPI package.** Every release is now also published to [PyPI](https://pypi.org/project/chipwhisperer-studio/) by CI. The package description is the README with its screenshots, clips and links pointing at the release tag (`tools/pypi_readme.py`), and the package lists keywords, classifiers for the supported systems and Python versions, and links to the documentation, issues, changelog and video tour.
 
 ### Changed
 
