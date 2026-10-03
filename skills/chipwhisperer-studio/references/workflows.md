@@ -94,6 +94,44 @@ Needs stored traces from firmware Studio knows (programmed in this session, or t
 3. Low alignment confidence: `code_map_align` refits, or set `shift`/`scale` by hand.
 4. Combine with CPA: the `sample` of the best guess in `cpa_result` can be passed to `code_map_region` to name the leaking function.
 
+## 11. Autonomous glitch campaign from source code ("glitch an instruction")
+
+Use this when the only instruction is something like "here is the firmware source, glitch an instruction" and you must choose the target, find the vulnerable instruction, run the attack and report the parameters yourself. The goal is a fault (usually an instruction skip) that changes the firmware's observable behaviour, plus the glitch parameters that caused it most reliably. Work on the simulator or the user's own board; confirm the board if hardware is implied.
+
+Report back at the end, not step by step, but keep the user posted with a short line when a phase finishes.
+
+### A. Understand the source and pick the target instruction
+1. Read the source the user gave you. Decide what observable success means: a password check that accepts a wrong password, a loop whose counter comes out wrong, a `return 0` / `return -1` that flips, an `if` that is taken when it should not be, an authentication or secure-boot gate that passes. That branch, compare or counter is the instruction (or few instructions) to skip.
+2. Identify the target: the MCU and board decide the platform, SimpleSerial version and glitch units. If the source is a ChipWhisperer example (`simpleserial-glitch`, `basic-passwdcheck`, ...), build it directly. If it is the user's own code, ask which board it runs on when it is not stated, or fall back to the simulator with an ELF.
+3. Decide the trigger and the SimpleSerial command that drives the code path (for `simpleserial-glitch` it is `'g'`; for a password check, the command that sends the guess). Note the expected "no fault" response so a different valid response counts as a success.
+
+### B. Build, flash and establish the baseline
+1. Build and flash the firmware (section 2), or program the ELF on the simulator. For your own non-example source, point `firmware_set_folder` at the project or `target_program`/`firmware_program` the built image.
+2. Confirm the un-glitched behaviour first: send the command with `simpleserial` (or `capture_single` with `mode="trigger_only"`) and record the normal response. This is the `expected` value for the sweep. If you cannot get a clean normal response, fix that before glitching; otherwise every point looks like a fault.
+3. Narrow where in time to glitch. The vulnerable instruction runs a bounded number of cycles after the trigger, so you do not have to sweep every offset blindly:
+   - If the ELF is known, `code_map_build` then `code_map_lookup(function=...)` or `code_map_region` gives the cycle range of the branch/compare; use it to bound `glitch.ext_offset`.
+   - Otherwise capture a trace and read `traces_stats` / the waveform to see roughly where the computation sits, or start with a wide coarse offset sweep.
+
+### C. Coarse sweep
+1. Configure glitching once (section 5): clock glitch `{"glitch.clk_src": "clkgen", "glitch.output": "clock_xor", "glitch.trigger_src": "ext_single", "io.hs2": "glitch"}`, or crowbar for voltage. Read the real `glitch.*` ranges and units for the connected model with `scope_get_settings(filter="glitch", include_docs=true)` (Lite/Pro widths are percentages, Husky uses `width`/`width_fine` phase steps).
+2. Coarse `glitch_start` over the three axes that matter, each wide with a large step: `glitch.ext_offset` (when: cover the bounded cycle range from step B3), `glitch.width` (how strong), and `glitch.offset` where the model has it. Set `command`, `data`, `output_len`, the `expected` normal response, `reset="nrst"`, `reset_on="reset"`, and `repeats` 2 to 3 so a point is not judged on one try. Use `wait=false` and poll `studio_status`/`glitch_results` for a long sweep.
+3. `glitch_results(only="success")`: these are the parameter regions that faulted. If there are none, widen `width`, extend the offset range, raise `repeat`, or reconsider the target instruction. If almost everything is `reset`, the glitch is too strong: lower `width`.
+
+### D. Fine sweep and consistency
+1. Around each success cluster, run a second `glitch_start` with small steps and `repeats` high (10 to 50). Reliability is the point now: for each parameter combination, success rate = successes / repeats.
+2. Rank the combinations by success rate, then by narrowness (a point whose neighbours also succeed is more robust than a lone spike). `glitch_results` returns every point's `values`, `result` and `response`; aggregate by identical `values` to get the rate. Prefer a combination with the fewest `reset` outcomes among its repeats, since resets mean the attack is destabilising the target.
+
+### E. Report
+Give the user:
+- The target instruction you chose and why (what observable behaviour it changes).
+- The platform, glitch type and the configuration settings used.
+- The single most reliable parameter set, with the exact values (`glitch.ext_offset`, `glitch.width`, `glitch.offset`, `repeat`), its success rate over N repeats, and the faulted response versus the normal one.
+- A short runner-up list, and the reset rate, so the user knows how destructive it is.
+- Save it: `note_write("glitch-campaign", <summary>, append=true)` and `glitch_export(path=...)` for the raw sweep.
+Turn glitching off at the end (`scope_set_settings({"io.hs2": "clkgen", "io.glitch_lp": false, "io.glitch_hp": false})`).
+
+On the simulator with emulated firmware a glitch is modelled as skipping the instruction at `glitch.ext_offset` cycles after the trigger (more with a larger `repeat`), with the outcome also depending on `width`, so a sweep finds genuinely vulnerable offsets rather than random ones; treat the result as a rehearsal of the method, not a hardware number.
+
 ## 10. Notes, calculator and exports
 
 - `note_write(name, text, append=true)` to record keys, settings and findings in Studio's notes pad (`notes_list`, `note_read`).
