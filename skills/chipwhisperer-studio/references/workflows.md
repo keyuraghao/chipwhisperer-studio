@@ -100,6 +100,17 @@ Use this when the only instruction is something like "here is the firmware sourc
 
 Report back at the end, not step by step, but keep the user posted with a short line when a phase finishes.
 
+### Orchestration: split the work across agents
+
+Do not run the whole campaign as one agent. It is several distinct jobs, some parallelisable, and keeping them separate stops a long sweep from crowding out the analysis. Act as the coordinator: spawn subagents with the Agent tool (one per role below), give each the specific files, tool names and the exact question to answer, collect their conclusions and decide the next phase. Keep this skill's instructions in the agents you spawn (tell them to read `references/workflows.md` section 11 and `references/tools.md`).
+
+- **Source analyst** (read only, no hardware): reads the firmware source, lists candidate vulnerable instructions with the observable success each one would produce, the SimpleSerial command that drives each path, and the expected un-glitched response. Returns a ranked shortlist.
+- **Assembly verifier** (phase C below): builds the code map and disassembles the candidates so the attack is aimed at real instructions, not a guess. Returns the exact instruction, its cycle offset from the trigger and the bounded `ext_offset` range.
+- **Sweep executor(s)** (phase D/E): run `glitch_start`. Only one hardware job runs at a time, so on real hardware there is a single executor running sweeps in sequence. On the simulator you may fan out: give each executor its own embedded Studio (a separate `cw-studio mcp --simulate` process, so a distinct session and port) and a disjoint slice of the parameter space, then merge. Never point two executors at one session.
+- **Results analyst** (read only): aggregates `glitch_results` across executors, computes per-combination success rates, ranks for reliability and consistency, and drafts the report.
+
+Match the number of agents to the size of the job: a small simulator rehearsal may only need one analyst plus one executor; a wide real-hardware campaign benefits from separating analysis, execution and result-crunching. If the user explicitly opts into multi-agent orchestration (for example "use a workflow"), the same role split can run as a Workflow; otherwise use the Agent tool directly. Hold the actual hardware safety decisions (flashing, voltage glitching) at the coordinator, not inside a subagent.
+
 ### A. Understand the source and pick the target instruction
 1. Read the source the user gave you. Decide what observable success means: a password check that accepts a wrong password, a loop whose counter comes out wrong, a `return 0` / `return -1` that flips, an `if` that is taken when it should not be, an authentication or secure-boot gate that passes. That branch, compare or counter is the instruction (or few instructions) to skip.
 2. Identify the target: the MCU and board decide the platform, SimpleSerial version and glitch units. If the source is a ChipWhisperer example (`simpleserial-glitch`, `basic-passwdcheck`, ...), build it directly. If it is the user's own code, ask which board it runs on when it is not stated, or fall back to the simulator with an ELF.
@@ -108,20 +119,26 @@ Report back at the end, not step by step, but keep the user posted with a short 
 ### B. Build, flash and establish the baseline
 1. Build and flash the firmware (section 2), or program the ELF on the simulator. For your own non-example source, point `firmware_set_folder` at the project or `target_program`/`firmware_program` the built image.
 2. Confirm the un-glitched behaviour first: send the command with `simpleserial` (or `capture_single` with `mode="trigger_only"`) and record the normal response. This is the `expected` value for the sweep. If you cannot get a clean normal response, fix that before glitching; otherwise every point looks like a fault.
-3. Narrow where in time to glitch. The vulnerable instruction runs a bounded number of cycles after the trigger, so you do not have to sweep every offset blindly:
-   - If the ELF is known, `code_map_build` then `code_map_lookup(function=...)` or `code_map_region` gives the cycle range of the branch/compare; use it to bound `glitch.ext_offset`.
-   - Otherwise capture a trace and read `traces_stats` / the waveform to see roughly where the computation sits, or start with a wide coarse offset sweep.
 
-### C. Coarse sweep
+### C. Verify the code in the assembly before glitching
+
+Do not glitch on a guess from the C source. The compiler may inline, reorder, fold or unroll the branch you picked, so confirm what the CPU actually executes and exactly when, so you know how, where and what you are skipping.
+
+1. `code_map_build` for the captured trace with this firmware (give `cmd`/`text` for the command that drives the path, e.g. `cmd="g"`). Check the emulated result matches the real behaviour and the alignment confidence is not low; refit with `code_map_align` if needed.
+2. Pin the instruction: `code_map_disassemble(function=...)` (or `file=..., line=...`) shows the function's instructions with how often each ran in the trace. Find the branch/compare/counter you chose (`cmp`, `beq`/`bne`, the conditional return, the loop test) and confirm it is one instruction the firmware really runs, not optimised away. If it was optimised out, go back to the source analyst for another candidate.
+3. Map that instruction to time: `code_map_lookup(function=...)` or `code_map_region(start, end)` gives its cycle range after the trigger and the matching sample range. This bounds `glitch.ext_offset` to a few candidate cycles instead of a blind full-range sweep, and tells you which specific cycle a successful skip corresponds to.
+4. Write down, for the report: the instruction (mnemonic and source line), the cycle offset(s) to target, and what skipping it should change. Without an ELF/code map (your own opaque binary), fall back to bounding the window from `traces_stats`/the waveform, and say in the report that the offset is empirical, not confirmed against disassembly.
+
+### D. Coarse sweep
 1. Configure glitching once (section 5): clock glitch `{"glitch.clk_src": "clkgen", "glitch.output": "clock_xor", "glitch.trigger_src": "ext_single", "io.hs2": "glitch"}`, or crowbar for voltage. Read the real `glitch.*` ranges and units for the connected model with `scope_get_settings(filter="glitch", include_docs=true)` (Lite/Pro widths are percentages, Husky uses `width`/`width_fine` phase steps).
-2. Coarse `glitch_start` over the three axes that matter, each wide with a large step: `glitch.ext_offset` (when: cover the bounded cycle range from step B3), `glitch.width` (how strong), and `glitch.offset` where the model has it. Set `command`, `data`, `output_len`, the `expected` normal response, `reset="nrst"`, `reset_on="reset"`, and `repeats` 2 to 3 so a point is not judged on one try. Use `wait=false` and poll `studio_status`/`glitch_results` for a long sweep.
+2. Coarse `glitch_start` over the three axes that matter, each wide with a large step: `glitch.ext_offset` (when: cover the bounded cycle range from phase C), `glitch.width` (how strong), and `glitch.offset` where the model has it. Set `command`, `data`, `output_len`, the `expected` normal response, `reset="nrst"`, `reset_on="reset"`, and `repeats` 2 to 3 so a point is not judged on one try. Use `wait=false` and poll `studio_status`/`glitch_results` for a long sweep.
 3. `glitch_results(only="success")`: these are the parameter regions that faulted. If there are none, widen `width`, extend the offset range, raise `repeat`, or reconsider the target instruction. If almost everything is `reset`, the glitch is too strong: lower `width`.
 
-### D. Fine sweep and consistency
+### E. Fine sweep and consistency
 1. Around each success cluster, run a second `glitch_start` with small steps and `repeats` high (10 to 50). Reliability is the point now: for each parameter combination, success rate = successes / repeats.
 2. Rank the combinations by success rate, then by narrowness (a point whose neighbours also succeed is more robust than a lone spike). `glitch_results` returns every point's `values`, `result` and `response`; aggregate by identical `values` to get the rate. Prefer a combination with the fewest `reset` outcomes among its repeats, since resets mean the attack is destabilising the target.
 
-### E. Report
+### F. Report
 Give the user:
 - The target instruction you chose and why (what observable behaviour it changes).
 - The platform, glitch type and the configuration settings used.
