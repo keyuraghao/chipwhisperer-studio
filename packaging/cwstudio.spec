@@ -43,7 +43,11 @@ try:
         raise SystemExit("libusb-package has no libusb library for this platform; the bundle would not reach the hardware")
 except Exception as e:  # noqa: BLE001
     print("WARNING: libusb-package not available, relying on system libusb:", e)
-binaries += collect_dynamic_libs("usb1")
+_usb1_libs = collect_dynamic_libs("usb1")
+if any(os.path.basename(b[0]).lower().startswith("libusb") for b in binaries):
+    # Both would land at usb1/libusb-1.0.dll on Windows and which one wins is undefined (the 0.5.1 app and Web builds shipped different libusb versions): keep only libusb-package's.
+    _usb1_libs = [b for b in _usb1_libs if not os.path.basename(b[0]).lower().startswith("libusb")]
+binaries += _usb1_libs
 # Unicorn (code map emulation of Arm and RISC-V firmware): only its shared library, not the 33 MB static archive next to it
 # The default patterns (lib*.so) miss the versioned libunicorn.so.2 of the Linux wheel, which left the code map without its emulator.
 binaries += collect_dynamic_libs("unicorn", search_patterns=["*.dll", "*.dylib", "lib*.so", "lib*.so.*"])

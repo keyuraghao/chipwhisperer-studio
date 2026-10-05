@@ -47,10 +47,17 @@ def _listening(host: str, port: int) -> bool:
 
 
 def _free_port(host: str, preferred: int) -> int:
+    """The preferred port, or the next free one after it; when all 50 are taken (Windows with Hyper-V, WSL2 or Docker reserves whole blocks of ports, where binding fails with WinError 10013), any port the operating system gives out."""
     for port in [preferred] + list(range(preferred + 1, preferred + 50)):
         if _port_free(host, port):
             return port
-    return preferred
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.bind((host, 0))
+            return s.getsockname()[1]
+    except OSError:
+        return preferred  # uvicorn will report why it cannot listen
 
 
 def _wait_ready(host: str, port: int, timeout: float = 20.0) -> bool:
@@ -121,6 +128,9 @@ def desktop_entry(install: bool = True) -> int:
     return 0
 
 
+DEFAULT_PORT = 8765
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     argv = [a for a in argv if not a.startswith("-psn_")]  # macOS process serial number that Finder may pass to an application it opens
@@ -132,9 +142,20 @@ def main(argv=None):
     if argv[:1] == ["--ccwrap"]:
         from cwstudio.ccwrap import main as ccwrap_main
         return ccwrap_main(argv[1:])
+    try:
+        return _run(argv)
+    except Exception as e:  # noqa: BLE001 (a crash while starting: without a console nobody would see the traceback)
+        import traceback
+        traceback.print_exc()
+        last = (traceback.format_exception_only(type(e), e) or [repr(e)])[-1].strip()
+        _startup_failed(f"ChipWhisperer Studio stopped because of an error: {last}")
+        return 1
+
+
+def _run(argv):
     ap = argparse.ArgumentParser(prog="cw-studio", description="ChipWhisperer Studio: opens in its own window. Use --browser to use your web browser instead, or --no-browser to run only the server (remote use, scripts).", epilog="Run 'cw-studio mcp --help' for the Model Context Protocol server. On Linux, 'cw-studio --install-desktop' adds Studio with its icon to the applications menu ('--remove-desktop' takes it out again).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address (use 0.0.0.0 for remote access)")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--browser", action="store_true", help="open the UI in your web browser instead of Studio's own window")
     ap.add_argument("--no-browser", action="store_true", help="run only the server: open no window and no browser")
     ap.add_argument("--window", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so older shortcuts still work
@@ -152,6 +173,15 @@ def main(argv=None):
     for noisy in ("uvicorn.access",):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
+    # One Studio at a time: starting it again (a second click on the icon) opens the one that is running instead of a second server on the next port, which would compete for the hardware.
+    if mode in ("window", "browser") and args.port == DEFAULT_PORT:
+        running = _running_studio(local_host(args.host), args.port)
+        if running is not None:
+            url = studio_url(args.host, args.port, args.simulate)
+            print(f"ChipWhisperer Studio {running} is already running at {url}: opening it.", flush=True)
+            open_browser(url)
+            return 0
+
     import uvicorn
     from cwstudio.app import create_app
     from cwstudio.session import Session
@@ -159,16 +189,14 @@ def main(argv=None):
     session = Session(simulate=args.simulate, data_dir=args.data_dir)
     app = create_app(session)
     port = _free_port(args.host, args.port)
-    url_host = local_host(args.host)
-    url = f"http://{'[' + url_host + ']' if ':' in url_host else url_host}:{port}/"
-    if args.simulate:
-        url += "?simulate=1"
+    url = studio_url(args.host, port, args.simulate)
 
     # One line per HTTP request only with --log-level debug: the UI polls, so at info level the access log buries Studio's own messages.
     config = uvicorn.Config(app, host=args.host, port=port, log_level=args.log_level, ws_max_size=64 * 1024 * 1024,
                             timeout_graceful_shutdown=3, access_log=args.log_level == "debug")
     server = uvicorn.Server(config)
     app.state.server = server
+    _tee_logging()
 
     if mode != "window":
         def opener():
@@ -181,6 +209,11 @@ def main(argv=None):
             server.run()
         except KeyboardInterrupt:
             pass
+        except SystemExit:  # uvicorn exits when it cannot open the port; it has logged why
+            if getattr(server, "started", False):
+                raise
+            _startup_failed(f"ChipWhisperer Studio did not start: it could not listen on port {port} of {args.host} (is the port in use or reserved?).")
+            return 1
         return 0
 
     # Own window: the server runs in the background and the window owns the main thread (macOS requires that); closing the window quits Studio, and shutting Studio down (/api/shutdown, Ctrl+C, SIGTERM) closes the window.
@@ -192,15 +225,15 @@ def main(argv=None):
     thread = threading.Thread(target=serve, name="studio-server", daemon=True)
     thread.start()
     if not _wait_started(server, alive=thread.is_alive):
-        print(f"ChipWhisperer Studio did not start (is port {port} on {args.host} in use?)", file=sys.stderr, flush=True)
         server.should_exit = True
         thread.join(10)
+        _startup_failed(f"ChipWhisperer Studio did not start (is port {port} on {args.host} in use?)")
         return 1
     print(f"ChipWhisperer Studio running at {url}", flush=True)
     _sigterm_as_interrupt()
     from cwstudio import window
     try:
-        window.open_window(url, should_close=lambda: not thread.is_alive())
+        window.open_window(url, should_close=lambda: not thread.is_alive(), loaded=app.state.page_served.is_set)
     except window.WindowUnavailable as e:
         print(f"Studio cannot open its own window: {e}", flush=True)
         if has_display():
@@ -216,6 +249,69 @@ def main(argv=None):
     server.should_exit = True
     thread.join(10)
     return 0
+
+
+def _running_studio(host: str, port: int, timeout: float = 1.0):
+    """The version of the ChipWhisperer Studio that answers on host:port, or None when the port is free or another program holds it."""
+    if _port_free(host, port):
+        return None
+    import json
+    import urllib.request
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # straight to this machine, never through a system or corporate proxy
+        with opener.open(f"http://{'[' + host + ']' if ':' in host else host}:{port}/api/meta", timeout=timeout) as r:
+            meta = json.loads(r.read(1 << 20).decode("utf-8"))
+    except Exception:  # noqa: BLE001 (not an HTTP server, not JSON, too slow: not a Studio to hand over to)
+        return None
+    if isinstance(meta, dict) and isinstance(meta.get("version"), str) and "scope_kinds" in meta and "mcp_command" in meta:
+        return meta["version"]
+    return None
+
+
+def _wants_dialog() -> bool:
+    """Whether errors need a dialog to be seen: Studio runs without a console (the windowed Windows executable, the macOS app, a menu launcher) and its output goes to studio.log or nowhere."""
+    return not has_console() and (_streams_redirected or bool(getattr(sys, "frozen", False)))
+
+
+def error_dialog(title: str, message: str) -> None:
+    """Show an error in a native dialog (Windows message box, macOS alert, zenity or notify-send on Linux); does nothing when none is available."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, message, title, 0x10 | 0x10000)  # MB_ICONERROR | MB_SETFOREGROUND
+            return
+        from cwstudio.window import system_env
+        import shutil
+        if sys.platform == "darwin":
+            def q(t):
+                return '"' + t.replace("\\", "\\\\").replace('"', '\\"') + '"'
+            subprocess.run(["osascript", "-e", f"display alert {q(title)} message {q(message)} as critical"], env=system_env(), capture_output=True)
+        elif shutil.which("zenity"):
+            subprocess.run(["zenity", "--error", "--no-markup", "--title", title, "--text", message], env=system_env(), capture_output=True)
+        elif shutil.which("notify-send"):
+            subprocess.run(["notify-send", "-u", "critical", title, message], env=system_env(), capture_output=True, timeout=10)
+    except Exception:  # noqa: BLE001 (no dialog is possible: the message is in the log)
+        pass
+
+
+def _startup_failed(message: str) -> None:
+    """Report that Studio could not start or stopped with an error where the user will see it: the console, studio.log, a dialog when there is no console, and on Windows a console window that stays open until Enter is pressed."""
+    print(message, file=sys.stderr, flush=True)
+    log_file = _log_file if _log_file and not _streams_redirected else None  # with a console, studio.log gets only the logging records: add the message
+    if log_file:
+        try:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(message + "\n")
+        except OSError:
+            pass
+    if _wants_dialog():
+        where = f"\n\nDetails are in {_log_file}" if _log_file else ""
+        error_dialog("ChipWhisperer Studio", message + where)
+    elif sys.platform == "win32" and getattr(sys, "frozen", False) and has_console():  # the Web build's console window would close right away
+        try:
+            input("Press Enter to close this window.")
+        except (EOFError, OSError, RuntimeError, KeyboardInterrupt):
+            pass
 
 
 def has_console() -> bool:
@@ -275,6 +371,12 @@ def open_browser(url: str) -> None:
                 os.environ[k] = v
 
 
+def studio_url(host: str, port: int, simulate: bool = False) -> str:
+    """The address of the UI of a Studio listening on host:port."""
+    url_host = local_host(host)
+    return f"http://{'[' + url_host + ']' if ':' in url_host else url_host}:{port}/" + ("?simulate=1" if simulate else "")
+
+
 def local_host(host: str) -> str:
     """The address this machine uses to reach a server bound to host (a wildcard address means every interface, so use loopback)."""
     return {"0.0.0.0": "127.0.0.1", "": "127.0.0.1", "::": "::1"}.get(host, host)
@@ -331,24 +433,75 @@ def main_web(argv=None):
 
 
 _streams_redirected = False  # set when output goes to studio.log because there is no console
+_log_file = None  # path of studio.log when this run writes one
+_log_stream = None  # studio.log, when it is written beside a console (frozen builds): logging records are copied there
+LOG_MAX_BYTES = 2 * 1024 * 1024  # a larger studio.log is moved to studio.log.1 at the next start
+
+
+def log_path() -> str:
+    return os.path.join(os.path.expanduser("~"), "ChipWhispererStudio", "studio.log")
+
+
+def _open_log():
+    """Open studio.log for this run (after moving a large one to studio.log.1) and write a header line; None when it cannot be written."""
+    global _log_file
+    path = log_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            if os.path.getsize(path) > LOG_MAX_BYTES:
+                os.replace(path, path + ".1")
+        except OSError:
+            pass
+        f = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
+    except OSError:
+        return None
+    import platform
+    from cwstudio import __version__
+    f.write(f"===== ChipWhisperer Studio {__version__} started {time.strftime('%Y-%m-%d %H:%M:%S')} | {platform.platform()} | Python {platform.python_version()} | frozen={bool(getattr(sys, 'frozen', False))} | pid {os.getpid()} =====\n")
+    _log_file = path
+    return f
+
+
+def _no_output(stream) -> bool:
+    """Whether output to stream reaches nobody: no stream (the windowed Windows executable, pythonw) or the null device (an application opened from the macOS Finder)."""
+    if stream is None:
+        return True
+    try:
+        return os.path.samestat(os.fstat(stream.fileno()), os.stat(os.devnull))
+    except (AttributeError, ValueError, OSError):
+        return False
 
 
 def _ensure_streams() -> None:
-    """Without a console (the windowed Windows executable, pythonw) sys.stdout and sys.stderr are None; send output to a log file so logging and uvicorn work and errors are kept."""
-    global _streams_redirected
-    if sys.stdout is not None and sys.stderr is not None:
+    """Without a console sys.stdout and sys.stderr are None (the windowed Windows executable, pythonw) or the null device (the macOS app): send output to studio.log so logging and uvicorn work and errors are kept. A frozen build always writes studio.log, also beside a console or terminal (see _tee_logging)."""
+    global _streams_redirected, _log_stream
+    frozen = bool(getattr(sys, "frozen", False))
+    missing = [s is None or (frozen and _no_output(s)) for s in (sys.stdout, sys.stderr)]
+    if not frozen and not any(missing):
         return
-    _streams_redirected = True
-    folder = os.path.join(os.path.expanduser("~"), "ChipWhispererStudio")
-    try:
-        os.makedirs(folder, exist_ok=True)
-        f = open(os.path.join(folder, "studio.log"), "a", encoding="utf-8", buffering=1)
-    except OSError:
-        f = open(os.devnull, "w")
-    if sys.stdout is None:
-        sys.stdout = f
-    if sys.stderr is None:
-        sys.stderr = f
+    f = _open_log()
+    if any(missing):
+        _streams_redirected = True
+        target = f or open(os.devnull, "w")
+        if missing[0]:
+            sys.stdout = target
+        if missing[1]:
+            sys.stderr = target
+    if f is not None and not missing[1]:  # logging goes to the console (stderr): copy it to studio.log too
+        _log_stream = f
+
+
+def _tee_logging() -> None:
+    """Copy Studio's and uvicorn's log records to studio.log when the log is written beside a console. Called once uvicorn has set up its loggers, which do not pass records on to the root logger."""
+    if _log_stream is None:
+        return
+    handler = logging.StreamHandler(_log_stream)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    for name in ("", "uvicorn"):
+        lg = logging.getLogger(name)
+        if not any(getattr(h, "stream", None) is _log_stream for h in lg.handlers):
+            lg.addHandler(handler)
 
 
 if __name__ == "__main__":

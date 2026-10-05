@@ -236,8 +236,9 @@ def test_shutdown_from_the_ui_closes_the_window(monkeypatch, tmp_path):
     port = _studio_port()
     seen = {}
 
-    def fake_open_window(url, width=1500, height=950, should_close=None):
+    def fake_open_window(url, width=1500, height=950, should_close=None, loaded=None):
         seen["url"] = url
+        seen["loaded"] = loaded()  # the window can tell whether it loaded the page (nothing has requested it here)
         threading.Thread(target=lambda: urllib.request.urlopen(urllib.request.Request(url + "api/shutdown", method="POST"), timeout=10).read(), daemon=True).start()
         end = time.time() + 20
         while not should_close():
@@ -247,7 +248,7 @@ def test_shutdown_from_the_ui_closes_the_window(monkeypatch, tmp_path):
     monkeypatch.setattr(window, "open_window", fake_open_window)
     monkeypatch.delenv("CWSTUDIO_DEFAULT_UI", raising=False)
     assert cli.main(["--port", str(port), "--data-dir", str(tmp_path), "--log-level", "warning"]) == 0
-    assert seen == {"url": f"http://127.0.0.1:{port}/", "closed": True}
+    assert seen == {"url": f"http://127.0.0.1:{port}/", "loaded": False, "closed": True}
     assert cli._port_free("127.0.0.1", port)
 
 

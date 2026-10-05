@@ -94,6 +94,45 @@
   <div id="toasts"></div>
 </div>
 <script src="/static/vendor/uPlot.iife.min.js"></script>
+<script>
+// If the interface does not come up (a module failed to load or parse, for example a browser too old for its JavaScript, or a script served with the wrong type), say so instead of leaving an empty page. Plain ES5 on purpose, so it runs where the modules cannot.
+(function () {
+  var shown = false, errors = [];
+  function show(detail) {
+    if (shown || window.__studioReady) return;
+    shown = true;
+    var box = document.createElement('div');
+    box.setAttribute('role', 'alert');
+    box.id = 'studio-load-error';
+    box.style.cssText = 'position:fixed;left:50%;top:15%;transform:translateX(-50%);z-index:2147483647;max-width:640px;width:calc(100% - 32px);box-sizing:border-box;padding:18px 20px;border:2px solid #b42318;border-radius:8px;background:#fff4f2;color:#1f1f1f;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35)';
+    var title = document.createElement('div');
+    title.style.cssText = 'font-weight:600;margin-bottom:6px;color:#8a1c12';
+    title.textContent = "Studio's interface could not load.";
+    var text = document.createElement('div');
+    text.textContent = 'Try restarting Studio; if this keeps happening, see studio.log (in the ChipWhispererStudio folder in your home folder) or the terminal Studio was started from.';
+    box.appendChild(title);
+    box.appendChild(text);
+    if (detail) {
+      var pre = document.createElement('pre');
+      pre.style.cssText = 'margin:10px 0 0;padding:8px;background:#fff;color:#1f1f1f;border:1px solid #e3b5ae;border-radius:4px;white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace';
+      pre.textContent = detail;
+      box.appendChild(pre);
+    }
+    (document.body || document.documentElement).appendChild(box);
+  }
+  window.__studioFail = function (detail) { show(String(detail || '')); };
+  window.addEventListener('error', function (e) {
+    if (window.__studioReady) return;
+    var el = e && e.target;
+    if (el && el !== window && el.tagName === 'SCRIPT') { show('Could not load ' + (el.src || 'a script')); return; }  // a script that failed to load (resource errors only reach window in the capture phase)
+    if (e && e.message) {
+      errors.push(e.message + (e.filename ? ' (' + e.filename.replace(/^.*\/static\//, '') + (e.lineno ? ':' + e.lineno : '') + ')' : ''));
+      if (/SyntaxError|Unexpected|Invalid/i.test(e.message)) show(errors.join('\n'));
+    }
+  }, true);
+  setTimeout(function () { if (!window.__studioReady) show(errors.join('\n')); }, 6000);
+})();
+</script>
 <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

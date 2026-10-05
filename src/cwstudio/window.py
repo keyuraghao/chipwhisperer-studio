@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from typing import Callable, List, Optional
 
 log = logging.getLogger("cwstudio.window")
@@ -32,13 +33,16 @@ class WindowUnavailable(RuntimeError):
     pass
 
 
-def open_window(url: str, width: int = 1500, height: int = 950, should_close: Optional[Callable[[], bool]] = None) -> None:
-    """Show Studio at url in its own window and return when the user closes it, or close it once should_close() returns true."""
+LOAD_TIMEOUT = 20.0  # seconds the pywebview window gets to request Studio's page before Studio gives up on it
+
+
+def open_window(url: str, width: int = 1500, height: int = 950, should_close: Optional[Callable[[], bool]] = None, loaded: Optional[Callable[[], bool]] = None) -> None:
+    """Show Studio at url in its own window and return when the user closes it, or close it once should_close() returns true. loaded() tells whether the window has requested the page: with pywebview, a window that has not within LOAD_TIMEOUT seconds is closed and WindowUnavailable raised."""
     should_close = should_close or (lambda: False)
     if sys.platform.startswith("linux"):
         _open_gtk(url, width, height, should_close)
     else:
-        _open_pywebview(url, width, height, should_close)
+        _open_pywebview(url, width, height, should_close, loaded)
 
 
 # ----- Linux: GTK helper run by the system Python ---------------------------------------
@@ -140,7 +144,7 @@ def pywebview_start_kwargs(start) -> dict:
     return {k: v for k, v in kw.items() if k in params}
 
 
-def _open_pywebview(url: str, width: int, height: int, should_close: Callable[[], bool]) -> None:
+def _open_pywebview(url: str, width: int, height: int, should_close: Callable[[], bool], loaded: Optional[Callable[[], bool]] = None) -> None:
     try:
         import webview  # type: ignore
     except ImportError as e:
@@ -154,10 +158,17 @@ def _open_pywebview(url: str, width: int, height: int, should_close: Callable[[]
             pass
     win = webview.create_window(TITLE, url, width=width, height=height, min_size=(900, 600), text_select=True)
     done = threading.Event()
+    never_loaded = threading.Event()
 
-    def watch():  # runs beside the GUI loop: close the window when Studio was shut down from the UI, an agent or a script
+    def watch():  # runs beside the GUI loop: close the window when Studio was shut down from the UI, an agent or a script, or when it never loaded the page (pywebview 6 on Windows only logs "WebView2 initialization failed" and leaves a blank window)
+        deadline = time.monotonic() + LOAD_TIMEOUT if loaded is not None else None
         while not done.wait(0.25):
-            if should_close():
+            if deadline is not None and loaded():
+                deadline = None  # the page loaded: no more checks
+            elif deadline is not None and time.monotonic() > deadline:
+                log.warning("window: the page was not loaded within %.0f s; closing the window", LOAD_TIMEOUT)
+                never_loaded.set()
+            if should_close() or never_loaded.is_set():
                 try:
                     win.destroy()
                 except Exception:  # noqa: BLE001 (the window is already gone)
@@ -175,6 +186,9 @@ def _open_pywebview(url: str, width: int, height: int, should_close: Callable[[]
         raise WindowUnavailable(f"the system web view could not start ({type(e).__name__}: {e})") from None
     finally:
         done.set()
+    if never_loaded.is_set():
+        engine = "Microsoft Edge WebView2" if sys.platform == "win32" else "WebKit"
+        raise WindowUnavailable(f"the window did not load Studio's page within {LOAD_TIMEOUT:.0f} s (the system web view, {engine}, may have failed to start)")
 
 
 def available() -> Optional[str]:

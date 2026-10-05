@@ -11,7 +11,8 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{name = "Keyur Aghao"}]
 keywords = ["chipwhisperer", "side-channel", "power-analysis", "fault-injection", "glitching", "cpa", "hardware-security", "logic-analyzer", "protocol-decoder", "jtag", "swd", "oscilloscope", "embedded", "firmware", "mcp"]
-requires-python = ">=3.10"
+# Below 3.13: chipwhisperer 6.0.0, the newest on PyPI, pins numpy<=1.26.4, which has no wheels for 3.13+, so pip would try to compile numpy and fail on most machines; a clear "requires a different Python" from pip is better than a compiler error.
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "chipwhisperer>=6.0",
     "numpy>=1.24",

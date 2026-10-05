@@ -39,7 +39,7 @@ def _run(args: List[str], timeout: float = 30, check: bool = True) -> subprocess
     cmd = [exe] + args
     if exe.endswith(".py"):
         cmd = [sys.executable] + cmd
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))  # no console window flashing up from the windowed Windows executable
     if check and r.returncode != 0:
         msg = (r.stderr or r.stdout or "").strip().splitlines()
         raise RuntimeError(f"sigrok-cli failed: {msg[-1] if msg else 'exit code %d' % r.returncode}")
@@ -143,7 +143,7 @@ def start_capture(args: List[str]) -> subprocess.Popen:
     if not exe:
         raise RuntimeError("sigrok-cli is not installed")
     cmd = ([sys.executable] if exe.endswith(".py") else []) + [exe] + args
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def check_spec(spec: str) -> str:

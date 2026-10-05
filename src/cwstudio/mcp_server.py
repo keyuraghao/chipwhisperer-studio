@@ -44,6 +44,9 @@ class StudioClient:
     def __init__(self, base_url: str, timeout: float = 120.0):
         self.base = base_url.rstrip("/")
         self.timeout = timeout
+        host = (urllib.parse.urlparse(self.base).hostname or "").lower()
+        # A Studio on this machine is reached directly: a system or corporate proxy (Windows takes it from the Internet settings) would otherwise get the request and the agent could not attach.
+        self._open = urllib.request.build_opener(urllib.request.ProxyHandler({})).open if host in ("127.0.0.1", "localhost", "::1") else urllib.request.urlopen
 
     def _request(self, method: str, path: str, body: Any = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None):
         url = self.base + path
@@ -56,7 +59,7 @@ class StudioClient:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
+            with self._open(req, timeout=timeout or self.timeout) as r:
                 raw = r.read()
                 ctype = r.headers.get("Content-Type", "")
         except urllib.error.HTTPError as e:

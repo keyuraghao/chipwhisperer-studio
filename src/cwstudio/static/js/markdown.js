@@ -19,12 +19,14 @@ const HTML_TAG = /^ {0,3}(?:<[a-z][\w-]*(?:\s+[a-z_:][\w.:-]*(?:\s*=\s*(?:"[^"]*
 const INLINE = new RegExp([
   /(?<tick>`+)(?<code>[\s\S]*?[^`])\k<tick>(?!`)/, /(?<ticks>`+)/,
   /(?<math>\$\$(?:[^\\]|\\[\s\S])+?\$\$|\$(?:[^$\\]|\\[\s\S])+?\$(?!\d))/,
-  /\\(?<esc>[!-/:-@[-`{-~]|\n)/,
+  /\\(?<escw>[/_])(?<escrun>[\w/]*)/, /\\(?<esc>[!-/:-@[-`{-~]|\n)/,
   /<(?<auto>[a-z][a-z\d+.-]{1,31}:[^\s<>]*|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)>/,
   /(?<html><\/?[a-z][\w-]*(?:\s+[a-z_:][\w.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>|<!--[\s\S]*?-->)/,
   /(?<img>!?)\[(?<text>(?:\\.|[^[\]\\]|\[(?:\\.|[^[\]\\])*\])*)\](?:\(\s*(?<dest><[^<>\n]*>|(?:[^\s()\\]|\\.|\((?:[^\s()\\]|\\.)*\))*)(?:\s+(?<title>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?\s*\)|\[(?<ref>(?:\\.|[^[\]\\])*)\])?/,
   /(?<ent>&(?:#\d{1,7}|#x[\da-f]{1,6}|[a-z][a-z\d]{1,31});)/,
-  /(?<url>(?<![\w/])(?:https?:\/\/|www\.)[^\s<]*[^\s<?!.,:;*_~)'"\]])/,
+  /(?<url>(?:https?:\/\/|www\.)[^\s<]*[^\s<?!.,:;*_~)'"\]])/,
+  // A bare URL only starts after a character other than a letter, digit, _ or /. Without lookbehind (a syntax error in Safari before 16.4, which would stop the whole UI from loading): a run of those characters is matched (and left as it is) so no URL can start inside it, and \/ and \_ take the run that follows them.
+  /(?<wc>[\w/]+)/,
 ].map((r) => r.source).join('|'), 'gi');
 
 let refs = {};
@@ -39,6 +41,8 @@ function inline(s, inLink) {
       if (/^ [\s\S]* $/.test(c) && c.trim()) c = c.slice(1, -1);
       return ph(`<code>${esc(c)}</code>`);
     }
+    if (g.wc !== undefined) return m;
+    if (g.escw !== undefined) return ph(g.escw) + g.escrun;
     if (g.ent) return ph(m);
     if (g.ticks || g.math || (inLink && (g.auto || g.url))) return ph(esc(m));
     if (g.esc !== undefined) return ph(g.esc === '\n' ? '<br>\n' : esc(g.esc));
@@ -67,7 +71,15 @@ function inline(s, inLink) {
     .replace(/\u0001(\d+)\u0002/g, (_, i) => keep[i]);
 }
 
-const cells = (r) => r.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+// Split a table row at each | not preceded by a backslash (written without lookbehind, which Safari before 16.4 cannot parse).
+const splitPipes = (s) => {
+  const out = [];
+  let start = 0;
+  for (let i = 0; i < s.length; i++) if (s[i] === '|' && s[i - 1] !== '\\') { out.push(s.slice(start, i)); start = i + 1; }
+  out.push(s.slice(start));
+  return out;
+};
+const cells = (r) => splitPipes(r.trim().replace(/^\|/, '').replace(/(^|[^\\])\|$/, '$1')).map((c) => c.trim().replace(/\\\|/g, '|'));
 const isTable = (lines, i) => i + 1 < lines.length && lines[i].includes('|') && lines[i + 1].includes('|') && DELIM.test(lines[i + 1]) && cells(lines[i]).length === cells(lines[i + 1]).length;
 // Lines that end a paragraph (and lazy continuation in quotes and list items) without a blank line.
 function interrupts(lines, i) {

@@ -172,6 +172,11 @@ jobs:
           # The code map's emulator and ELF reader are in the bundle and load (the Unicorn shared library was once missing from the Linux build)
           curl -sf -X POST -H 'Content-Type: application/json' -d '{"code":"import unicorn, elftools.elf.elffile\nunicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_THUMB)\nprint(unicorn.__version__)"}' http://127.0.0.1:8799/api/kernel/run > uc.json
           python -c "import json; r = json.load(open('uc.json')); assert r['ok'], r; print('unicorn ok', r['outputs'])"
+          # The bundled libusb loads and USB enumeration works (an empty list on the runner, but no library error): without it no ChipWhisperer ever shows up
+          curl -sf -X POST -H 'Content-Type: application/json' -d '{"code":"import usb1\nctx = usb1.USBContext(); ctx.open(); ctx.getDeviceList(); ctx.close()\nprint(usb1.getVersion())"}' http://127.0.0.1:8799/api/kernel/run > usb.json
+          python -c "import json; r = json.load(open('usb.json')); assert r['ok'], r; print('libusb ok', r['outputs'])"
+          curl -sf http://127.0.0.1:8799/api/devices > devices.json
+          python -c "import json; d = json.load(open('devices.json')); assert not any(isinstance(x, dict) and x.get('error') for x in (d if isinstance(d, list) else d.get('devices', []))), d; print('devices ok', d)"
           kill $PID || true
       - name: Window smoke test (Linux, WebKitGTK)
         # Studio's own window from the frozen app: the page renders without JavaScript errors, and /api/shutdown from the page closes the window and quits Studio

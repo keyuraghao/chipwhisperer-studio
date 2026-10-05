@@ -20,7 +20,7 @@ from cwstudio.tools import NotesStore
 from cwstudio.glitch import GlitchJob
 from cwstudio.toolchains import ToolchainManager
 from cwstudio.traces import TraceStore
-from cwstudio.worker import HardwareWorker
+from cwstudio.worker import HardwareBusy, HardwareTimeout, HardwareWorker
 
 log = logging.getLogger("cwstudio.session")
 
@@ -47,11 +47,20 @@ class Session:
         self.bus = EventBus()
         self.worker = HardwareWorker()
         self.worker.on_long_job_done = self._on_long_job_done
+        self.worker.on_error = self._on_hardware_error
         self.store = TraceStore()
         self.scope = None
         self.target = None
         self.scope_kind: Optional[str] = None
         self.target_kind: Optional[str] = None
+        self._scope_info: Dict[str, Any] = {"connected": False}  # what status() reports about the scope, read from it once on the hardware thread at connect (its name, type and firmware are USB reads)
+        self._scope_info_for = None  # the scope object _scope_info describes
+        self._scope_info_pending = False
+        self.scope_lost: Optional[str] = None  # why the scope went away (unplugged), until the next connect or disconnect
+        self._connect_lock = threading.Lock()
+        self._connect_gen = 0
+        self._connect_done = 0  # the newest connect attempt whose scope was attached
+        self._connect_abandoned: set = set()  # connect attempts whose caller gave up (timed out): a scope they open later is let go, not attached
         self.simulate_default = simulate
         self.data_dir = data_dir or os.path.join(os.path.expanduser("~"), "ChipWhispererStudio")
         os.makedirs(self.data_dir, exist_ok=True)
@@ -88,6 +97,7 @@ class Session:
         self.kernel = self.kernels.default  # the shared default kernel (API and MCP calls without a notebook)
         self.worker.add_periodic("serial-poll", self._poll_serial, 0.1, only_idle=True)
         self.worker.add_periodic("status", self._push_status, 2.0, only_idle=False)
+        self.worker.add_periodic("scope-alive", self._check_scope_alive, 3.0, only_idle=True)
 
     # --- lifecycle --------------------------------------------------------
     def close(self):
@@ -120,13 +130,14 @@ class Session:
             except Exception:  # noqa: BLE001
                 pass
             self.scope = None
+        self._scope_info, self._scope_info_for = {"connected": False}, None
 
     # --- status -------------------------------------------------------------
     def status(self) -> Dict[str, Any]:
         job = self.worker.long_job or self.last_job
         busy = job is not None and not job.finished.is_set()
         st = {
-            "scope": hardware.scope_info(self.scope),
+            "scope": self.scope_info(),
             "target": hardware.target_info(self.target),
             "scope_kind": self.scope_kind,
             "target_kind": self.target_kind,
@@ -137,10 +148,60 @@ class Session:
             "simulate_default": self.simulate_default,
             "data_dir": self.data_dir,
             "clients": self.bus.subscriber_count,
+            "hardware_stuck": self.worker.stuck(),
         }
         if st["cpa"]:
             st["cpa"] = {k: v for k, v in st["cpa"].items() if k in ("model", "traces_used", "total", "done", "error")}
         return st
+
+    def scope_info(self) -> Dict[str, Any]:
+        """The connected scope's name, type, serial number and firmware from the cache filled on the hardware thread; never touches USB from the calling thread."""
+        sc = self.scope
+        if sc is None:
+            return {"connected": False, "lost": self.scope_lost} if self.scope_lost else {"connected": False}
+        if self._scope_info_for is sc:
+            return dict(self._scope_info)
+        # a scope attached without connect_scope (OpenOCD, tests): read it on the hardware thread, report the basics until then
+        if self.worker.is_worker_thread:
+            self._refresh_scope_info()
+            return dict(self._scope_info)
+        if not self._scope_info_pending:
+            self._scope_info_pending = True
+            self.worker.submit(self._refresh_scope_info, True)
+        return {"connected": True, "type": type(sc).__name__, "name": type(sc).__name__, "pending": True}
+
+    def _refresh_scope_info(self, push: bool = False):
+        """Re-read the scope's info into the cache. Hardware thread only."""
+        self._scope_info_pending = False
+        sc = self.scope
+        self._scope_info, self._scope_info_for = hardware.scope_info(sc), sc
+        if push:
+            self._push_status()
+
+    def _on_hardware_error(self, e: BaseException):
+        """Every exception a hardware job raised (on the hardware thread): a USB device that went away marks the scope lost."""
+        sc = self.scope
+        if sc is None or self._scope_info.get("simulated") or not hardware.is_device_lost(e):
+            return
+        self._mark_scope_lost(f"{type(e).__name__}: {e}")
+
+    def _check_scope_alive(self):
+        """Notice an unplugged scope while nothing else talks to it: one firmware-version read (a USB control transfer) every few seconds when idle."""
+        sc = self.scope
+        if sc is None or self._scope_info_for is not sc or self._scope_info.get("simulated"):
+            return
+        sc.fw_version  # noqa: B018  a failure reaches _on_hardware_error through the worker
+
+    def _mark_scope_lost(self, reason: str):
+        name = self._scope_info.get("name") or "scope"
+        log.warning("The %s was unplugged or stopped responding (%s); Studio disconnected it. Plug it back in and connect again.", name, reason)
+        self._disconnect_all()
+        from cwstudio.capabilities import invalidate_gates
+        invalidate_gates()
+        self.scope_kind = None
+        self.target_kind = None
+        self.scope_lost = f"the {name} was unplugged or stopped responding ({reason})"
+        self._push_status()
 
     def _push_status(self):
         self.bus.publish("status", self.status(), droppable=True)
@@ -159,24 +220,84 @@ class Session:
             if sim_model not in SIM_MODELS:  # refuse before the connected scope is let go
                 raise ValueError(f"sim_model must be one of {', '.join(SIM_MODELS)}")
         self._stop_job_before_reconnect()
+        with self._connect_lock:
+            self._connect_gen += 1
+            gen = self._connect_gen
 
         def _do():
             from cwstudio.capabilities import invalidate_gates
             invalidate_gates()  # what the settings tree offers follows the new scope
             if self.scope is not None:
                 self._disconnect_all()
-            self.scope = hardware.connect_scope(kind, sn=sn, force=force, sim_model=sim_model)
-            self.scope_kind = kind
+            self.scope_kind = self.target_kind = None  # nothing is attached until this attempt succeeds
+            self.scope_lost = None
+            sc = hardware.connect_scope(kind, sn=sn, force=force, sim_model=sim_model)
+            old = None if kind == "sim" else hardware.firmware_outdated(sc)
+            if old:
+                try:
+                    sc.dis()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise hardware.ScopeConnectError(old)
+            warnings: List[str] = []
             if default_setup:
                 try:
-                    self.scope.default_setup()
+                    sc.default_setup()
                 except Exception as e:  # noqa: BLE001
+                    warnings.append(f"default_setup() failed: {type(e).__name__}: {e}")
                     log.warning("default_setup failed: %s", e)
-            log.info("Connected to %s", hardware.scope_info(self.scope).get("name"))
-            return hardware.scope_info(self.scope)
-        info = self.worker.call(_do, timeout=180)
+            info = hardware.scope_info(sc)
+            with self._connect_lock:
+                if gen in self._connect_abandoned:
+                    # the caller was told this connect failed (timed out): do not attach a scope the UI shows as not connected, and leave the device free for the next attempt
+                    self._connect_abandoned.discard(gen)
+                    try:
+                        sc.dis()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    log.warning("The %s answered after Studio had given up on connecting to it; it was released. Connect again.", info.get("name") or "scope")
+                    self._push_status()
+                    return None
+                self.scope, self.scope_kind = sc, kind
+                self._scope_info, self._scope_info_for = info, sc
+                self._connect_done = gen
+            log.info("Connected to %s", info.get("name"))
+            return {**info, "warnings": warnings}
+        try:
+            res = self.worker.call(_do, timeout=180, job_name="connecting to a ChipWhisperer" if kind == "auto" else f"connecting to the {hardware.SCOPE_KINDS.get(kind, {}).get('label', kind)}")
+        except HardwareTimeout as e:
+            with self._connect_lock:
+                if self._connect_done == gen:  # it finished just as the wait ran out
+                    res = {**self.scope_info(), "warnings": []}
+                else:
+                    self._connect_abandoned.add(gen)
+                    res = None
+            if res is None:
+                log.warning("Scope connect failed: %s", e)
+                self._push_status()
+                raise
+        except HardwareBusy as e:
+            log.warning("Scope connect failed: %s", e)
+            raise
+        except Exception as e:  # noqa: BLE001
+            if self.scope is None:
+                self.scope_kind = None
+            msg = f"{type(e).__name__}: {e}"
+            if kind != "sim" and not isinstance(e, hardware.ScopeConnectError):
+                try:
+                    hint = hardware.connect_failure_hint(kind, sn, e, hardware.list_devices())  # its own libusb context: safe off the hardware thread with no scope open
+                except Exception as le:  # noqa: BLE001
+                    hint = ""
+                    log.debug("listing devices after a failed connect: %s", le)
+                if hint:
+                    log.warning("Scope connect failed: %s %s", msg, hint)
+                    self._push_status()
+                    raise hardware.ScopeConnectError(f"{e} {hint}".strip()) from e
+            log.warning("Scope connect failed: %s", msg)
+            self._push_status()
+            raise
         self._push_status()
-        return info
+        return res
 
     def _stop_job_before_reconnect(self, wait: float = 15.0) -> None:
         """Stop a running capture, glitch sweep or logic capture before the scope it uses is replaced, so it ends as stopped instead of failing on a disconnected scope."""
@@ -188,11 +309,12 @@ class Session:
 
     def disconnect_scope(self):
         self._stop_job_before_reconnect()
-        self.worker.call(self._disconnect_all)
+        self.worker.call(self._disconnect_all, job_name="disconnecting the scope")
         from cwstudio.capabilities import invalidate_gates
         invalidate_gates()
         self.scope_kind = None
         self.target_kind = None
+        self.scope_lost = None
         self._push_status()
 
     def scope_settings(self) -> List[Dict[str, Any]]:
@@ -246,7 +368,14 @@ class Session:
             self.target_kind = kind
             log.info("Target connected: %s", kind)
             return hardware.target_info(self.target)
-        info = self.worker.call(_do, timeout=60)
+        try:
+            info = self.worker.call(_do, timeout=60, job_name=f"connecting the {kind} target")
+        except Exception as e:  # noqa: BLE001
+            log.warning("Target connect failed: %s: %s", type(e).__name__, e)  # reaches the Log panel and /api/logs, not only the caller
+            if self.target is None:
+                self.target_kind = None
+            self._push_status()
+            raise
         self._push_status()
         return info
 
@@ -258,7 +387,7 @@ class Session:
                 except Exception:  # noqa: BLE001
                     pass
             self.target = None
-        self.worker.call(_do)
+        self.worker.call(_do, job_name="disconnecting the target")
         self.target_kind = None
         self._push_status()
 
@@ -278,7 +407,11 @@ class Session:
         if self.scope is None:
             raise RuntimeError("connect a scope first")
         log.info("Programming target with %s using %s", os.path.basename(fw_path), programmer)
-        res = self.worker.call(hardware.program_target, self.scope, programmer, fw_path, timeout=600, **kwargs)
+        try:
+            res = self.worker.call(hardware.program_target, self.scope, programmer, fw_path, timeout=600, job_name=f"programming the target ({programmer})", **kwargs)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Programming failed: %s: %s", type(e).__name__, e)
+            raise
         log.info("Programming complete")
         self.note_programmed(fw_path, res.get("emulation"))
         return res

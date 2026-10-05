@@ -243,6 +243,7 @@ async function boot() {
   let tab = 'connect';
   try { tab = localStorage.getItem('cw.tab') || 'connect'; } catch (e) { /* ignore */ }
   ctx.showTab(tab);
+  window.__studioReady = true;  // the interface is up: index.html's load-failure notice stays hidden
   await ctx.refreshStatus();
   // Show the newest stored trace so a reload does not start with an empty plot.
   if (ctx.status && ctx.status.traces && ctx.status.traces.count > 0) {
@@ -251,4 +252,4 @@ async function boot() {
   // Recent log history for late joiners
   try { (await get('/api/logs')).slice(-200).forEach((ev) => { if (ev.type === 'log') addLog(ev, true); }); } catch (e) { /* ignore */ }
 }
-boot().catch((e) => { console.error(e); toast('Failed to start UI: ' + e.message, 'err', 10000); });
+boot().catch((e) => { console.error(e); toast('Failed to start UI: ' + e.message, 'err', 10000); if (!window.__studioReady && window.__studioFail) window.__studioFail(`${e.name}: ${e.message}`); });

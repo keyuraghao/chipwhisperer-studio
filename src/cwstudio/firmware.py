@@ -99,7 +99,7 @@ def gcc_include_dirs(gcc: str, env: Optional[Dict[str, str]] = None) -> List[str
     """The C library include directories a GCC cross compiler uses (not its private builtins)."""
     try:
         r = subprocess.run([gcc, "-xc", "-E", "-v", "-"], input="", capture_output=True, text=True, timeout=30,
-                           env=env)
+                           env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError):
         return []
     dirs, on = [], False
@@ -604,7 +604,7 @@ class FirmwareManager:
         if not tool or not os.path.isfile(plan["elf"]):
             return None
         try:
-            r = subprocess.run([tool, plan["elf"]], capture_output=True, text=True, timeout=20)
+            r = subprocess.run([tool, plan["elf"]], capture_output=True, text=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             nums = r.stdout.strip().splitlines()[-1].split()
             return {"text": int(nums[0]), "data": int(nums[1]), "bss": int(nums[2])}
         except (OSError, ValueError, IndexError, subprocess.SubprocessError):

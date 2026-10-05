@@ -648,7 +648,7 @@ _OBJ_LINE = re.compile(r"^\s*([0-9a-f]+):\s+((?:[0-9a-f]{2,8}\s)+)\s*(.*)$")
 
 def _objdump(objdump: str, elf: str, lo: int, hi: int, arch: str) -> List[Dict[str, Any]]:
     args = [objdump, "-d", f"--start-address=0x{lo:x}", f"--stop-address=0x{hi:x}", elf]
-    r = subprocess.run(args, capture_output=True, text=True, timeout=20)
+    r = subprocess.run(args, capture_output=True, text=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))  # no console window flashing up from the windowed Windows executable
     out = []
     for ln in r.stdout.splitlines():
         m = _OBJ_LINE.match(ln)

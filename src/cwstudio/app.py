@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import os
+import threading
 from typing import Any, Dict, Optional
 
 from starlette.staticfiles import StaticFiles
@@ -24,6 +26,20 @@ from cwstudio.session import Session
 
 log = logging.getLogger("cwstudio.app")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# The types of the UI's files, whatever the system says: on Windows the registry can map .js to text/plain, and browsers then refuse to run the ES modules (an empty window).
+for _type, _ext in (("text/javascript", ".js"), ("text/javascript", ".mjs"), ("text/css", ".css"), ("text/html", ".html"), ("application/json", ".json"),
+                    ("image/svg+xml", ".svg"), ("application/wasm", ".wasm"), ("application/json", ".map")):
+    mimetypes.add_type(_type, _ext)
+
+
+class _RevalidatedStaticFiles(StaticFiles):
+    """Static files the browser must revalidate (ETag, Last-Modified) before each use, so after an upgrade the web view never mixes cached modules of the old version with new ones."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def create_app(session: Session) -> App:
@@ -54,6 +70,11 @@ def create_app(session: Session) -> App:
         return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
 
     def err(e: Exception, code: int = 400):
+        from cwstudio.worker import HardwareBusy, HardwareTimeout
+        if isinstance(e, HardwareBusy):
+            code = 503  # the hardware thread is occupied or stuck: retrying later can work
+        elif isinstance(e, HardwareTimeout):
+            code = 504
         log.debug("API error", exc_info=True)
         raise HTTPException(status_code=code, detail=f"{type(e).__name__}: {e}")
 
@@ -98,7 +119,10 @@ def create_app(session: Session) -> App:
 
     @app.get("/api/devices")
     async def devices():
-        return await run(session.worker.call, hardware.list_devices, timeout=30)
+        try:
+            return await run(hardware.list_devices, session.scope_info())  # its own libusb context, so a busy or stuck hardware thread does not hold it up; the open scope is reported from Studio's cache, not opened again
+        except Exception as e:  # noqa: BLE001
+            err(e, 500)
 
     @app.get("/api/logs")
     async def logs(since: int = 0):
@@ -126,7 +150,10 @@ def create_app(session: Session) -> App:
 
     @app.post("/api/scope/disconnect")
     async def scope_disconnect():
-        await run(session.disconnect_scope)
+        try:
+            await run(session.disconnect_scope)
+        except Exception as e:  # noqa: BLE001
+            err(e, 500)
         return {"ok": True}
 
     @app.get("/api/scope/settings")
@@ -164,7 +191,10 @@ def create_app(session: Session) -> App:
 
     @app.post("/api/target/disconnect")
     async def target_disconnect():
-        await run(session.disconnect_target)
+        try:
+            await run(session.disconnect_target)
+        except Exception as e:  # noqa: BLE001
+            err(e, 500)
         return {"ok": True}
 
     @app.get("/api/target/settings")
@@ -801,9 +831,12 @@ def create_app(session: Session) -> App:
             session.bus.unsubscribe(sub)
 
     # ----- static -------------------------------------------------------------
+    app.state.page_served = threading.Event()  # set once the UI page was requested: Studio's own window waits for it to tell a web view that never loaded (WebView2 failing to start) from one that is working
+
     @app.get("/")
     async def index():
-        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+        app.state.page_served.set()
+        return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers={"Cache-Control": "no-cache"})
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", _RevalidatedStaticFiles(directory=STATIC_DIR), name="static")
     return app
