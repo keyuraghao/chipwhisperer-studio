@@ -410,7 +410,7 @@ def test_80_capabilities(api, report):
 @stage("husky")
 def test_81_logic_analyser(api, report):
     ensure_target(api)
-    r = api.post("/api/la/capture", {"source": "native", "settings": {"group": "CW 20-pin", "trigger": "capture", "depth": 4000}, "wait": True, "timeout": 30})
+    r = api.post("/api/la/capture", {"source": "native", "settings": {"group": "CW 20-pin", "trigger": "capture", "fire": "simpleserial", "depth": 4000}, "wait": True, "timeout": 30})
     report("husky", "la_samples", r["samples"])
     report("husky", "la_edges", r["edges"])
     report("husky", "la_warnings", r.get("warnings"))
@@ -441,11 +441,15 @@ def test_83_sad_trigger(api, report):
     if api.get("/api/traces")["count"] == 0:
         api.post("/api/capture/start", {"count": 1})
         api.wait_job()
-    api.put("/api/interfaces/trigger", {"kind": "sad", "threshold": 10000, "start": 0})
-    api.post("/api/capture/start", {"count": 5, "store": False, "max_timeouts": 5})
-    job = api.wait_job()["job"]
-    report("husky", "sad", {"done": job["done"], "timeouts": job["timeouts"]})
-    api.put("/api/interfaces/trigger", {"kind": "basic", "pins": ["tio4"]})
+    try:
+        # Husky's SAD threshold maxes out at 64 (the Pro allows up to 100000); keep it in range.
+        api.put("/api/interfaces/trigger", {"kind": "sad", "threshold": 32, "start": 0})
+        api.post("/api/capture/start", {"count": 5, "store": False, "max_timeouts": 5})
+        job = api.wait_job()["job"]
+        report("husky", "sad", {"done": job["done"], "timeouts": job["timeouts"]})
+    finally:
+        # always restore the basic trigger so later capture stages are not left on SAD
+        api.put("/api/interfaces/trigger", {"kind": "basic", "pins": ["tio4"]})
 
 
 @stage("husky")
@@ -462,8 +466,13 @@ def test_84_uart_and_gpio(api, report):
     rx = "".join(e["hex"] for e in api.get(f"/api/target/serial?since={t0 - 0.01}") if e["dir"] == "rx")
     ct = encrypt_block(bytes.fromhex(KEY), bytes.fromhex(PT))
     report("husky", "uart_rx", rx)
-    assert b"\x00" not in ct  # COBS leaves a ciphertext without zero bytes as it is, so it shows up verbatim
-    assert "72" in rx and ct.hex() in rx, f"raw UART reply {rx} does not hold the 'r' response with ciphertext {ct.hex()}"
+    if target_kind() == "SimpleSerial":
+        # v1 answers in ASCII: 'r' + the ciphertext as uppercase hex text + '\n'
+        txt = bytes.fromhex(rx).decode("ascii", "replace")
+        assert "r" in txt and ct.hex() in txt.lower(), f"raw UART reply {txt!r} does not hold the 'r' response with ciphertext {ct.hex()}"
+    else:
+        assert b"\x00" not in ct  # COBS leaves a ciphertext without zero bytes as it is, so it shows up verbatim
+        assert "72" in rx and ct.hex() in rx, f"raw UART reply {rx} does not hold the 'r' response with ciphertext {ct.hex()}"
     g = api.get("/api/interfaces/gpio")
     report("husky", "gpio", {p: v["level"] for p, v in g["pins"].items()})
     api.post("/api/interfaces/gpio/pulse", {"pin": "nrst", "ms": 50})
