@@ -11,7 +11,7 @@ import time
 import numpy as np
 import pytest
 
-from conftest import HW, REPO, cfg, scope_kind, target_kind
+from conftest import HW, REPO, cfg, scope_kind, ss_proto, ss_ver, target_kind
 from cwstudio.aes import encrypt_block
 
 KEY = "2b7e151628aed2a6abf7158809cf4f3c"
@@ -161,7 +161,7 @@ def firmware(api, report):
     cat = api.get("/api/firmware")
     if not cat["sources"]["valid"]:
         pytest.skip("no firmware sources in the data folder (run tools/hw_session.sh --prepare)")
-    body = {"project": "simpleserial-aes", "platform": C["platform"], "ss_ver": "SS_VER_2_1", "crypto_target": "TINYAES128C", "compiler": "gcc"}
+    body = {"project": "simpleserial-aes", "platform": C["platform"], "ss_ver": ss_ver(), "crypto_target": "TINYAES128C", "compiler": "gcc"}
     t0 = time.time()
     api.post("/api/firmware/build", body)
     while True:
@@ -455,7 +455,7 @@ def test_84_uart_and_gpio(api, report):
     report("husky", "uart", u)
     assert u["rx"] and u["tx"]
     from cwstudio.codemap.emu import SimpleSerial
-    raw = SimpleSerial("2.1").frame("p", bytes.fromhex(PT))
+    raw = SimpleSerial(ss_proto()).frame("p", bytes.fromhex(PT))
     t0 = time.time()
     api.post("/api/target/serial/write", {"data": raw.hex(), "hex": True})
     time.sleep(0.5)

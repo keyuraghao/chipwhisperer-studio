@@ -184,7 +184,19 @@ def scope_kind():
 
 
 def target_kind():
-    return "sim" if HW == "sim" else "SimpleSerial2"
+    if HW == "sim":
+        return "sim"
+    return os.environ.get("CWSTUDIO_HW_TARGET") or "SimpleSerial2"
+
+
+def ss_ver():
+    """Firmware SS_VER macro matching the connected target kind (SimpleSerial -> v1, SimpleSerial2 -> v2)."""
+    return "SS_VER_1_1" if target_kind() == "SimpleSerial" else "SS_VER_2_1"
+
+
+def ss_proto():
+    """SimpleSerial protocol string for the codemap emulator ('1.1' or '2.1')."""
+    return "1.1" if target_kind() == "SimpleSerial" else "2.1"
 
 
 sys.path.insert(0, HERE)

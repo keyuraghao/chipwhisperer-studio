@@ -22,10 +22,13 @@ Then unplug and replug the scope. After this the Husky reports firmware 1.7.0 an
 
 ## How to run the staged session
 
+This exact rig (SAM4S running SimpleSerial v1) runs with:
+
 ```bash
 source ../../.venv/bin/activate            # the project venv
 CWSTUDIO_HW=husky \
 CWSTUDIO_HW_PLATFORM=CW308_SAM4S \
+CWSTUDIO_HW_TARGET=SimpleSerial \
 pytest tests/hardware -v -s
 ```
 
@@ -33,9 +36,9 @@ Set `CWSTUDIO_HW=sim` to run the same stages against the simulator with no hardw
 
 Stages run in order and a failed stage skips the ones that depend on it: environment, discovery, scope, firmware, target, capture, analysis, glitch, husky. The last run's per-stage results are written to `last_run.json`.
 
-### Matching this board's SimpleSerial version
+### SimpleSerial version
 
-`conftest.py` currently hard-codes `target_kind()` to `SimpleSerial2` and builds `simpleserial-aes` with `ss_ver=SS_VER_2_1`. The SAM4S on this rig runs SimpleSerial v1, so to drive this exact board the target kind must be `SimpleSerial` and the firmware built with `SS_VER_1_1` (or reflash the target with v2 firmware). Wiring this to an env knob such as `CWSTUDIO_HW_TARGET` is a small follow-up; until then, adjust `target_kind()` and the build body in `test_session.py` to match whatever firmware is on the target.
+`CWSTUDIO_HW_TARGET` selects the target kind (default `SimpleSerial2`). The session derives everything else from it: the target connect kind, the `ss_ver` the AES firmware is built with (`SimpleSerial` builds `SS_VER_1_1`, `SimpleSerial2` builds `SS_VER_2_1`), and the protocol the codemap emulator frames. So `CWSTUDIO_HW_TARGET=SimpleSerial` is all that is needed to drive a v1 board end to end. A v2 connection to v1 firmware just times out with "10 consecutive timeouts"; if that happens, check the firmware's SimpleSerial version (ping `v` at 38400) and set this knob to match.
 
 ## Results from the actual run (2026-10-05)
 
