@@ -529,7 +529,7 @@ class Session:
             except Exception:  # noqa: BLE001
                 return
             if data:
-                self._record_serial("rx", data.encode(errors="replace") if isinstance(data, str) else bytes(data))
+                self._record_serial("rx", data.encode("latin-1", errors="replace") if isinstance(data, str) else bytes(data))  # the chipwhisperer readers decode bytes as latin-1, so this gives back the exact bytes
 
     def _record_serial(self, direction: str, data: bytes):
         rec = {"dir": direction, "data": data.decode("utf-8", errors="replace"), "hex": data.hex(),

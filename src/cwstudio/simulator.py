@@ -850,7 +850,7 @@ class SimTarget:
                 num_char = len(self._rx)
             out = bytes(self._rx[:num_char])
             del self._rx[:num_char]
-        return out.decode(errors="replace")
+        return out.decode("latin-1")  # like the chipwhisperer serial readers: one character per byte
 
     def in_waiting(self):
         with self._lock:
