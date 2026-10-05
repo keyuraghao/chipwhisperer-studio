@@ -121,7 +121,8 @@ class GlitchJob(LongJob):
         self.bus.publish("glitch", {"state": state, "error": self.error, **self.progress()})
 
     def progress(self) -> Dict[str, Any]:
-        return {"point": self.i, "points": len(self.points), "repeats": self.repeats,
+        return {"done": self.i, "total": len(self.points), "point": self.i, "points": len(self.points),
+                "repeats": self.repeats,
                 "counts": dict(self.counts), "parameters": [p["path"] for p in self.params]}
 
     # --- one glitch attempt -----------------------------------------------

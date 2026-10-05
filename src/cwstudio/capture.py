@@ -149,7 +149,7 @@ class CaptureJob(LongJob):
 
     def progress(self) -> Dict[str, Any]:
         return {
-            "done": self.done_count, "target": self.count, "timeouts": self.timeouts,
+            "done": self.done_count, "total": self.count, "target": self.count, "timeouts": self.timeouts,
             "rate": round(self.rate, 1), "stored": len(self.store), "mode": self.mode,
             "elapsed": round((getattr(self, "ended_at", None) or time.time()) - (self.started_at or time.time()), 1),  # frozen once the job has ended
         }

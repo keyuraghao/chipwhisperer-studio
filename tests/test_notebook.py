@@ -159,6 +159,11 @@ def test_notes_api(client):
     assert r["name"] == "Lab 2.md"
     assert any(x["name"] == "Lab 2.md" for x in client.get("/api/notes").json())
     assert client.delete("/api/notes/Lab 2.md").json()["ok"]
+    # creating with an initial body in one POST writes the text (issue #1)
+    c = client.post("/api/notes", json={"name": "Lab3", "text": "hello body"}).json()
+    assert c["name"] == "Lab3.md" and c["bytes"] == len("hello body")
+    assert client.get("/api/notes/Lab3.md").json()["text"] == "hello body"
+    client.delete("/api/notes/Lab3.md")
 
 
 def test_calculator_and_stats(client):

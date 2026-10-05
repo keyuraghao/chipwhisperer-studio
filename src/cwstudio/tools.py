@@ -51,13 +51,13 @@ class NotesStore:
         os.replace(tmp, p)
         return {"name": os.path.basename(p), "bytes": os.path.getsize(p), "mtime": os.path.getmtime(p)}
 
-    def create(self, name: Optional[str] = None) -> Dict[str, Any]:
+    def create(self, name: Optional[str] = None, text: str = "") -> Dict[str, Any]:
         base = (name or time.strftime("Note %Y-%m-%d %H.%M")).strip()
         cand, n = base, 1
         while os.path.exists(self._path(cand)):
             n += 1
             cand = f"{base} {n}"
-        return self.put(cand, "")
+        return self.put(cand, text or "")
 
     def rename(self, old: str, new: str) -> Dict[str, Any]:
         src, dst = self._path(old), self._path(new)

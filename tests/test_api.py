@@ -87,6 +87,8 @@ def test_capture_and_traces(client):
     st = wait_job(client)
     assert st["traces"]["count"] == 200, st
     assert st["job"]["error"] is None
+    # every job type exposes a consistent done/total pair (issue #2)
+    assert st["job"]["done"] == st["job"]["total"] == st["job"]["target"] == 200
     r = client.get("/api/traces/5")
     header, samples = decode_frame(r.content)
     assert header["index"] == 5 and header["n"] == 3000 and samples.shape[0] == 3000
@@ -163,6 +165,8 @@ def test_glitch(client):
     })
     assert r.status_code == 200, r.text
     st = wait_job(client)
+    # consistent done/total pair, kept in step with the legacy point/points (issue #2)
+    assert st["job"]["done"] == st["job"]["point"] and st["job"]["total"] == st["job"]["points"] == 4 * 5
     res = client.get("/api/glitch/results").json()
     assert len(res["results"]) == 4 * 5 * 2
     assert res["counts"]["success"] > 0 and res["counts"]["normal"] > 0

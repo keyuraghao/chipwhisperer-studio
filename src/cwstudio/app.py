@@ -725,7 +725,7 @@ def create_app(session: Session) -> App:
     async def notes_create(req: Request):
         p = await body(req)
         try:
-            return await run(session.notes.create, p.get("name"))
+            return await run(session.notes.create, p.get("name"), p.get("text") or "")
         except Exception as e:  # noqa: BLE001
             err(e)
 

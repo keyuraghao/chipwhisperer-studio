@@ -162,7 +162,11 @@ function applyStatus(st) {
   setChip('chip-scope', sc.connected ? 'on' : '', sc.connected ? `${sc.name || sc.type}${sc.sn ? ' · ' + sc.sn : ''}` : 'No scope');
   setChip('chip-target', tg.connected ? 'on' : '', tg.connected ? tg.type : 'No target');
   const job = st.job;
-  if (job && job.running) setChip('chip-job', 'busy', `${job.name}: ${job.done != null ? job.done + (job.target ? '/' + job.target : '') : (job.point != null ? job.point + '/' + job.points : '')}${job.rate ? ' · ' + job.rate + '/s' : ''}`);
+  if (job && job.running) {
+    const jd = job.done != null ? job.done : job.point;
+    const jt = job.total != null ? job.total : (job.target != null ? job.target : job.points);
+    setChip('chip-job', 'busy', `${job.name}: ${jd != null ? jd + (jt != null ? '/' + jt : '') : ''}${job.rate ? ' · ' + job.rate + '/s' : ''}`);
+  }
   else if (job && job.error) setChip('chip-job', 'err', `${job.name} error`);
   else setChip('chip-job', '', 'Idle');
   document.getElementById('btn-stop').disabled = !(job && job.running);
