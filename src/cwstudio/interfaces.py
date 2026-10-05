@@ -610,8 +610,22 @@ class Interfaces:
         elif kind == "sad":
             threshold = int(p.get("threshold", 10))
             start = int(p.get("start", 0))
-            if not 1 <= threshold <= (100_000 if m == "pro" else 2 ** 31):
-                raise ValueError("threshold must be 1 to 100000 on the Pro" if m == "pro" else "threshold must be at least 1")
+            if m == "pro":
+                max_threshold = 100_000
+            elif self._sim():
+                # the simulator scores SAD as a sum of absolute differences, a much wider range than the hardware counter
+                max_threshold = 2 ** 31
+            else:
+                # Husky / Husky Plus: the hardware caps the threshold at 2**(counter_width-1) (64 on a 7-bit counter);
+                # read it so the error is clear up front instead of failing later at the SAD setter.
+                width = None
+                try:
+                    width = getattr(getattr(scope, "SAD", None), "_sad_counter_width", None)
+                except Exception:  # noqa: BLE001
+                    width = None
+                max_threshold = (1 << (int(width) - 1)) if width else 64
+            if not 1 <= threshold <= max_threshold:
+                raise ValueError(f"threshold must be 1 to {max_threshold} on {'the Pro' if m == 'pro' else 'this scope'}")
             if start < 0:
                 raise ValueError("the reference start sample must be 0 or more")
             cfg.update(threshold=threshold, start=start)

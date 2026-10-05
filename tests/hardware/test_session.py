@@ -447,6 +447,9 @@ def test_83_sad_trigger(api, report):
         api.post("/api/capture/start", {"count": 5, "store": False, "max_timeouts": 5})
         job = api.wait_job()["job"]
         report("husky", "sad", {"done": job["done"], "timeouts": job["timeouts"]})
+        # an out-of-range threshold is rejected up front with a clear message, not deep in the hardware
+        bad = api.put("/api/interfaces/trigger", {"kind": "sad", "threshold": 1_000_000, "start": 0}, ok=False)
+        assert bad.status_code == 400 and "threshold must be 1 to" in bad.text, bad.text
     finally:
         # always restore the basic trigger so later capture stages are not left on SAD
         api.put("/api/interfaces/trigger", {"kind": "basic", "pins": ["tio4"]})
