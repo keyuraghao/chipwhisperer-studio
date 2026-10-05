@@ -446,9 +446,12 @@ def native_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
     except Exception:  # noqa: BLE001
         pass
     with_analog = bool(s.get("with_analog")) and trig == "capture"
+    # The "capture" trigger is the ADC capture trigger, which only reaches the logic analyser while the
+    # ADC is armed, so arm it whenever that trigger is selected (keep the analog trace only if asked).
+    arm_adc = trig == "capture"
     fire = s.get("fire") or ("simpleserial" if trig in ("capture", "trigger_glitch", "glitch", "glitch_source", "glitch_trigger") and target is not None else "none")
     job.phase = "armed"
-    if with_analog:
+    if arm_adc:
         scope.arm()
     la.arm()
     pt = None
@@ -457,7 +460,7 @@ def native_capture(job: "LogicJob") -> Generator[None, None, LogicCapture]:
     else:
         pt = fire_target(target, fire, job.rng)
     timed_out = None
-    if with_analog:
+    if arm_adc:
         timed_out = scope.capture()
     timeout = _num(s.get("timeout"), DEFAULTS["native"]["timeout"])
     deadline = time.time() + timeout
