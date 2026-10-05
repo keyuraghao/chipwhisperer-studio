@@ -288,9 +288,113 @@ def test_60_cpa_recovers_key(api, report):
 
 
 # ----- 8. glitch --------------------------------------------------------------------------------
+# Both sweeps target the AES firmware already on the board: command p with a known plaintext, so a valid but different ciphertext is a successful fault, and no answer is a reset. Settings stay deliberately gentle (narrow clock glitches, a few cycles of the low-power MOSFET only), and every test restores the scope and checks the target still answers correctly afterwards.
+GLITCH_OFF = [("glitch.trigger_src", "manual"), ("glitch.width", 0), ("glitch.enabled", False), ("io.glitch_lp", False), ("io.glitch_hp", False), ("io.hs2", "clkgen"), ("glitch.output", "clock_xor"), ("glitch.repeat", 1), ("glitch.ext_offset", 0)]
+
+
+def _set(api, path, value):
+    return api.put("/api/scope/settings", {"path": path, "value": value})
+
+
+def _restore_glitch(api):
+    for path, value in GLITCH_OFF:
+        r = api._do("PUT", "/api/scope/settings", {"path": path, "value": value}, ok=False)
+        if r.status_code >= 300:
+            print(f"[glitch] restore {path} -> {r.status_code}: {r.text[:200]}")
+
+
+def _sweep(studio, api, report, name, parameters, repeats=2):
+    ct = encrypt_block(bytes.fromhex(KEY), bytes.fromhex(PT)).hex()
+    api.post("/api/target/simpleserial", {"cmd": "k", "data": KEY, "read_cmd": "e", "read_len": 1})
+    from websockets.sync.client import connect as wsconnect
+    events = []
+    with wsconnect(studio.url.replace("http", "ws") + "/ws", max_size=None) as ws:
+        assert json.loads(ws.recv(timeout=10))["type"] == "hello"
+        api.post("/api/glitch/start", {"parameters": parameters, "repeats": repeats, "command": "p", "data": PT, "expected": ct, "output_len": 16, "reset": "nrst", "reset_on": "reset"})
+        end = time.time() + 300
+        while time.time() < end:
+            msg = ws.recv(timeout=60)
+            if isinstance(msg, bytes):
+                continue
+            ev = json.loads(msg)
+            if ev.get("type") in ("glitch", "glitch_result"):
+                events.append(ev)
+            if ev.get("type") == "glitch" and ev.get("state") in ("done", "stopped", "error"):
+                break
+    api.wait_job(timeout=60)
+    res = api.get("/api/glitch/results")
+    points = 1
+    for prm in parameters:
+        points *= len(prm["values"])
+    assert not res.get("error"), res.get("error")
+    assert not res.get("running")
+    assert len(res["results"]) == points * repeats, f"{len(res['results'])} results for {points} points x {repeats}"
+    assert sum(res["counts"].values()) == points * repeats
+    assert set(res["counts"]) <= {"normal", "success", "reset"}
+    assert any(e.get("type") == "glitch_result" for e in events), "no glitch_result events reached the websocket"
+    assert any(e.get("type") == "glitch" and e.get("state") == "done" for e in events), "no final glitch event"
+    per_point = {}
+    for r in res["results"]:
+        k = ",".join(str(v) for v in r["values"])
+        per_point.setdefault(k, {"normal": 0, "success": 0, "reset": 0})[r["result"]] += 1
+    report("glitch", f"{name}_counts", res["counts"])
+    report("glitch", f"{name}_per_point", per_point)
+    exported = api.post("/api/glitch/export", {"path": f"hw_{name}.csv"})["path"]
+    with open(exported) as f:
+        assert sum(1 for _ in f) == points * repeats + 1
+    return res
+
+
+def _target_still_works(api, report, name):
+    """After a sweep: reset the target, then the AES known answer and a short capture must work."""
+    ct = encrypt_block(bytes.fromhex(KEY), bytes.fromhex(PT)).hex()
+    for attempt in range(3):
+        _set(api, "io.nrst", "low")
+        time.sleep(0.05)
+        _set(api, "io.nrst", "high_z")
+        time.sleep(0.3)
+        api.post("/api/target/simpleserial", {"cmd": "k", "data": KEY, "read_cmd": "e", "read_len": 1})
+        r = api.post("/api/target/simpleserial", {"cmd": "p", "data": PT})
+        if r.get("response") == ct:
+            break
+    report("glitch", f"{name}_recovery_attempts", attempt + 1)
+    assert r.get("response") == ct, f"target does not answer correctly after the {name} sweep: {r}"
+    api.post("/api/capture/start", {"count": 5, "store": False})
+    st = api.wait_job(timeout=120)
+    assert not (st.get("job") or {}).get("error"), st
+
+
 @stage("glitch")
-def test_70_glitch_sweeps():
-    pytest.skip("glitch stage not included in this session: run glitch sweeps by hand from the Glitch tab")
+def test_70_glitch_capabilities(api, report):
+    ensure_target(api)
+    caps = api.get("/api/capabilities")
+    report("glitch", "capabilities", {k: v for k, v in caps.items() if "glitch" in k.lower()} if isinstance(caps, dict) else caps)
+    tree = api.get("/api/scope/settings")
+    assert "glitch" in json.dumps(tree), "the scope settings have no glitch module"
+
+
+@stage("glitch")
+def test_71_clock_glitch_sweep(studio, api, report):
+    ensure_target(api)
+    try:
+        for path, value in [("glitch.enabled", True), ("glitch.clk_src", "pll"), ("glitch.output", "clock_xor"), ("glitch.trigger_src", "ext_single"), ("glitch.repeat", 1), ("io.hs2", "glitch")]:
+            _set(api, path, value)
+        _sweep(studio, api, report, "clock", [{"path": "glitch.width", "values": [10, 25, 40], "int": True}, {"path": "glitch.ext_offset", "values": [0, 30], "int": True}])
+    finally:
+        _restore_glitch(api)
+    _target_still_works(api, report, "clock")
+
+
+@stage("glitch")
+def test_72_voltage_glitch_sweep(studio, api, report):
+    ensure_target(api)
+    try:
+        for path, value in [("glitch.enabled", True), ("glitch.clk_src", "pll"), ("glitch.output", "enable_only"), ("glitch.trigger_src", "ext_single"), ("io.glitch_hp", False), ("io.glitch_lp", True)]:
+            _set(api, path, value)
+        _sweep(studio, api, report, "voltage", [{"path": "glitch.repeat", "values": [1, 3, 5], "int": True}, {"path": "glitch.ext_offset", "values": [0, 30], "int": True}])
+    finally:
+        _restore_glitch(api)
+    _target_still_works(api, report, "voltage")
 
 
 # ----- 9. Husky specific ------------------------------------------------------------------------
