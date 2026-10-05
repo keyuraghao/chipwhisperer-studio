@@ -4,6 +4,17 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+### Added
+
+- **Real-hardware test session.** `tests/hardware` runs the whole flow (connect, build and flash firmware, talk to the target, capture, CPA, glitch, the logic analyser and the other interfaces, notebooks and the MCP server) against a real ChipWhisperer through the HTTP API, and against the simulator with `CWSTUDIO_HW=sim`. `CWSTUDIO_HW_TARGET` selects the SimpleSerial version, with the firmware `ss_ver` and the codemap emulator protocol following it. Verified end to end on a Husky with a CW308 SAM4S target (full AES-128 key recovered, reliable voltage glitch); see [tests/hardware/README.md](tests/hardware/README.md), with per-stage results written to `tests/hardware/last_run.json`.
+
+### Fixed
+
+- **Logic analyser `capture` trigger.** `la_capture` with `trigger="capture"` now arms the ADC even when the analog trace is not kept, so the capture trigger reaches the analyser instead of waiting out its timeout with an empty FIFO.
+- **SAD trigger threshold.** The threshold is capped at the hardware maximum (`2**(counter_width-1)`, 64 on the Husky) and an out-of-range value is rejected up front with a clear message instead of failing deep in the SAD setter; the Pro keeps its 100000 limit and the simulator its wider range.
+- **Note creation.** `POST /api/notes` writes an optional `text` body in one call instead of always creating an empty note.
+- **Job progress fields.** Capture and glitch jobs report a consistent `done`/`total` pair (alongside the existing `target` and `point`/`points`), matching firmware builds, so a client can show progress without special-casing the job type.
+
 ## [0.5.1] - 2026-10-02
 
 Studio is now on PyPI: `pip install chipwhisperer-studio`. No changes to the application itself.

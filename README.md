@@ -309,6 +309,18 @@ python -m pytest
 
 The frontend has no build step: edit `src/cwstudio/static/**` and reload the page (`cw-studio --browser` is handy while developing).
 
+### Tests
+
+`python -m pytest` runs the simulator-based suite, which needs no hardware. A separate staged session in `tests/hardware` drives a real ChipWhisperer through the same HTTP API and MCP server (and runs on the simulator too):
+
+```bash
+CWSTUDIO_HW=sim python -m pytest tests/hardware -v -s                 # simulator, no hardware
+CWSTUDIO_HW=husky CWSTUDIO_HW_PLATFORM=CW308_SAM4S \
+  CWSTUDIO_HW_TARGET=SimpleSerial python -m pytest tests/hardware -v -s   # a real Husky + SAM4S target
+```
+
+It runs in dependency-ordered stages (environment, scope, firmware, target, capture, CPA, glitch, logic analyser and the other interfaces, notebook, MCP, robustness) and writes a per-stage summary to `tests/hardware/last_run.json`. `CWSTUDIO_HW_TARGET` selects the SimpleSerial version, and the firmware `ss_ver` and the emulator protocol follow it. [`tests/hardware/README.md`](tests/hardware/README.md) documents all the `CWSTUDIO_HW_*` knobs and records the latest verified run on a Husky with a CW308 SAM4S target: the full AES-128 key recovered by CPA (every byte at PGE 0) and a reliable voltage glitch, with the exported traces and glitch sweep saved under Studio's data folder (`husky_sam4s_glitch_results.csv`).
+
 | Task | Command |
 |------|---------|
 | Standalone bundles for this OS | `python packaging/build.py` (PyInstaller; produces `dist/ChipWhispererStudio-<os>-<arch>.zip`) and `python packaging/build.py --variant web` (`dist/ChipWhispererStudio-Web-<os>-<arch>.zip`) |
