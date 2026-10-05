@@ -4,6 +4,8 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-05
+
 ### Added
 
 - **Real-hardware test session.** `tests/hardware` runs the whole flow (connect, build and flash firmware, talk to the target, capture, CPA, glitch, the logic analyser and the other interfaces, notebooks and the MCP server) against a real ChipWhisperer through the HTTP API, and against the simulator with `CWSTUDIO_HW=sim`. `CWSTUDIO_HW_TARGET` selects the SimpleSerial version, with the firmware `ss_ver` and the codemap emulator protocol following it. Verified end to end on a Husky with a CW308 SAM4S target (full AES-128 key recovered, reliable voltage glitch); see [tests/hardware/README.md](tests/hardware/README.md), with per-stage results written to `tests/hardware/last_run.json`.
