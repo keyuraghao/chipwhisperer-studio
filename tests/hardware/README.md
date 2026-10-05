@@ -40,6 +40,17 @@ Stages run in order and a failed stage skips the ones that depend on it: environ
 
 `CWSTUDIO_HW_TARGET` selects the target kind (default `SimpleSerial2`). The session derives everything else from it: the target connect kind, the `ss_ver` the AES firmware is built with (`SimpleSerial` builds `SS_VER_1_1`, `SimpleSerial2` builds `SS_VER_2_1`), and the protocol the codemap emulator frames. So `CWSTUDIO_HW_TARGET=SimpleSerial` is all that is needed to drive a v1 board end to end. A v2 connection to v1 firmware just times out with "10 consecutive timeouts"; if that happens, check the firmware's SimpleSerial version (ping `v` at 38400) and set this knob to match.
 
+## Staged session status (2026-10-05)
+
+The full staged session passes on the real Husky + CW308_SAM4S: `29 passed, 1 skipped` (the skip is `test_98_manual_unplug`, which needs `CWSTUDIO_HW_MANUAL=1` and an operator). Getting there surfaced four findings, all fixed on this branch:
+
+- Studio: the logic analyser's `capture` trigger only reached the LA while the ADC was armed, so `la_capture(trigger="capture")` without `with_analog` timed out. `native_capture` now arms the ADC whenever the trigger is `capture`.
+- test_83 used a SAD threshold of 10000, but the Husky's SAD threshold maxes at 64; it now uses 32 and restores the basic trigger in a `finally` (a failed SAD set-up used to leave the trigger broken and cascade into the notebook, mcp and robustness stages).
+- test_81 fires a SimpleSerial command so the 20-pin capture gets its trigger.
+- test_84 accepts SimpleSerial v1's ASCII-hex reply, not only v2's COBS binary.
+
+Still open (minor, not yet fixed): `interfaces.py` validates the SAD threshold up to 2^31 on the Husky even though the hardware max is 64, so an out-of-range value fails at the hardware instead of with a clear up-front error.
+
 ## Results from the actual run (2026-10-05)
 
 Captured by driving the HTTP API directly, cross-checked against the staged stages.
