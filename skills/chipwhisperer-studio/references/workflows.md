@@ -11,16 +11,16 @@ Each recipe is a tested order of MCP tool calls. Tool names are shown without th
 | Several boards | `scope_connect(sn="...")` with the serial number from `list_devices`. |
 | "Device in use" | Another program left it open: `scope_connect(force=true)`. |
 | Legacy firmware | `target_connect(kind="SimpleSerial")` (v1), or `simpleserial_connect(version="1.1")`. |
-| CW305 FPGA target | `target_connect(kind="CW305", options={"bitfile": "/path/file.bit"})`. |
+| CW305 FPGA target | `target_connect(kind="CW305", options={"bsfile": "/path/file.bit"})`. |
 
 Check the target answers before capturing: `simpleserial(cmd="p", data="00"*16, read_len=16)` should return 16 bytes. On real hardware an empty reply usually means wrong firmware, wrong SimpleSerial version or wrong baud (`target_get_settings(filter="baud")`).
 
 ## 2. Build and flash firmware (real hardware)
 
-1. `firmware_catalogue`: if `sources.valid` is false, run `firmware_fetch_sources(wait=true)` (network, about 100 MB; ask first). Pick `platform` from the catalogue (for example CWLITEARM for the CW-Lite Arm, CWNANO for the CW-Nano, CWLITEXMEGA for XMEGA, CW308_SAM4S for SAM4S targets). Ask the user which target board they have when it is not obvious.
+1. `firmware_catalogue`: if `sources.valid` is false, run `firmware_fetch_sources(wait=true)` (network, about 110 MB; ask first). Pick `platform` from the catalogue (for example CWLITEARM for the CW-Lite Arm, CWNANO for the CW-Nano, CWLITEXMEGA for XMEGA, CW308_SAM4S for SAM4S targets). Ask the user which target board they have when it is not obvious.
 2. `toolchains_list`: the GCC toolchain for the platform's architecture must be installed (`arm-gcc`, `avr-gcc` or `riscv-gcc`). If not, ask, then `toolchain_install(toolchain_id, wait=true)`. Clang builds (`compiler="clang"`) need the `clang` toolchain **and** the GCC one (GCC links). Windows also needs `win-build-tools` for make.
 3. `firmware_plan(project, platform)` to show what will run (optional, no side effects).
-4. `firmware_build(project="simpleserial-aes", platform="CWLITEARM", crypto_target="TINYAES128C", ss_ver="SS_VER_2_1", wait=true)`. On failure read `log_tail` in the reply or `firmware_build_log`. `TINYAES128C` builds on every platform.
+4. `firmware_build(project="simpleserial-aes", platform="CWLITEARM", crypto_target="TINYAES128C", ss_ver="SS_VER_2_1", wait=true)`. On failure read `log_tail` in the reply or `firmware_build_log`. `TINYAES128C` is the crypto target that builds on every platform Studio can build at all (three platforms have broken upstream HALs and three need a custom toolchain; see the Troubleshooting wiki page).
 5. Ask before flashing, then `firmware_program()` (uses the last build and the platform's programmer). For a file of your own, `target_program(path, programmer)`.
 
 With the simulator, programming an ELF runs it in the emulator (the reply says `emulation`); the simulated AES target works without any firmware.
@@ -62,7 +62,7 @@ Voltage (crowbar) glitching uses `glitch.output="glitch_only"` with `io.glitch_l
 
 - `notebook_run_code(code)` runs in the shared default kernel; variables persist between calls (`kernel_variables` lists them).
 - Inside: `import chipwhisperer as cw`, `scope = cw.scope()`, `target = cw.target(scope)` give stand-ins bound to Studio's connected devices (connect them with the MCP tools first, or let `cw.scope()` connect). `cw.capture_trace(scope, target, text, key)` stores traces in Studio, so CPA and the waveform view see them. `studio.traces` (`.waves`, `.textins`, `.textouts`, `.keys`), `studio.add_trace(wave, textin, textout, key)`, `studio.build_firmware(project, platform, compiler)`, `studio.program(hex_path)`. IPython magics, `!shell` and `plt.show()` work.
-- Stored notebooks: `notebook_list`, `notebook_read(path)`, `notebook_write(path, cells)` (the user sees it in the Notebook tab), `notebook_run(path)` runs all cells in that notebook's own kernel; continue in it with `notebook_run_code(code, notebook_path=path)`. Free memory afterwards with `kernel_shutdown(path)`.
+- Stored notebooks: `notebook_list`, `notebook_read(path)`, `notebook_write(path, cells)` (the user sees it in the Notebook tab), `notebook_run(path)` runs all cells in that notebook's own kernel; continue in it with `notebook_run_code(code, notebook_path=path)`. Free memory afterwards with `kernel_shutdown(notebook_path)`.
 - NewAE tutorials: `tutorials_fetch(wait=true)` downloads them into the notebooks folder with firmware paths linked. If it stops in state `confirm`, ask the user whether to `on_modified="backup"` or `"keep"`.
 - A stuck cell: `kernel_interrupt(notebook_path)`; `kernel_restart` clears variables (ask first).
 
@@ -94,7 +94,7 @@ Needs stored traces from firmware Studio knows (programmed in this session, or t
 3. Low alignment confidence: `code_map_align` refits, or set `shift`/`scale` by hand.
 4. Combine with CPA: the `sample` of the best guess in `cpa_result` can be passed to `code_map_region` to name the leaking function.
 
-## 11. Autonomous glitch campaign from source code ("glitch an instruction")
+## 10. Autonomous glitch campaign from source code ("glitch an instruction")
 
 Use this when the only instruction is something like "here is the firmware source, glitch an instruction" and you must choose the target, find the vulnerable instruction, run the attack and report the parameters yourself. The goal is a fault (usually an instruction skip) that changes the firmware's observable behaviour, plus the glitch parameters that caused it most reliably. Work on the simulator or the user's own board; confirm the board if hardware is implied.
 
@@ -102,7 +102,7 @@ Report back at the end, not step by step, but keep the user posted with a short 
 
 ### Orchestration: split the work across agents
 
-Do not run the whole campaign as one agent. It is several distinct jobs, some parallelisable, and keeping them separate stops a long sweep from crowding out the analysis. Act as the coordinator: spawn subagents with the Agent tool (one per role below), give each the specific files, tool names and the exact question to answer, collect their conclusions and decide the next phase. Keep this skill's instructions in the agents you spawn (tell them to read `references/workflows.md` section 11 and `references/tools.md`).
+Do not run the whole campaign as one agent. It is several distinct jobs, some parallelisable, and keeping them separate stops a long sweep from crowding out the analysis. Act as the coordinator: spawn subagents with the Agent tool (one per role below), give each the specific files, tool names and the exact question to answer, collect their conclusions and decide the next phase. Keep this skill's instructions in the agents you spawn (tell them to read `references/workflows.md` section 10 and `references/tools.md`).
 
 - **Source analyst** (read only, no hardware): reads the firmware source, lists candidate vulnerable instructions with the observable success each one would produce, the SimpleSerial command that drives each path, and the expected un-glitched response. Returns a ranked shortlist.
 - **Assembly verifier** (phase C below): builds the code map and disassembles the candidates so the attack is aimed at real instructions, not a guess. Returns the exact instruction, its cycle offset from the trigger and the bounded `ext_offset` range.
@@ -149,7 +149,7 @@ Turn glitching off at the end (`scope_set_settings({"io.hs2": "clkgen", "io.glit
 
 On the simulator with emulated firmware a glitch is modelled as skipping the instruction at `glitch.ext_offset` cycles after the trigger (more with a larger `repeat`), with the outcome also depending on `width`, so a sweep finds genuinely vulnerable offsets rather than random ones; treat the result as a rehearsal of the method, not a hardware number.
 
-## 10. Notes, calculator and exports
+## 11. Notes, calculator and exports
 
 - `note_write(name, text, append=true)` to record keys, settings and findings in Studio's notes pad (`notes_list`, `note_read`).
 - `calculate("hw(sbox(0x2b ^ 0x00))")`: arithmetic, hex, XOR, `hw`, `hd`, `sbox`; variables persist.

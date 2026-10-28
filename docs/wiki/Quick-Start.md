@@ -53,11 +53,11 @@ That is the whole attack. From here you can try a glitch sweep in the **Glitch**
 
 This walkthrough uses a ChipWhisperer-Lite with its built-in STM32F3 (ARM) target, platform `CWLITEARM`. Other hardware works the same way with a different platform and programmer; see [Firmware Builds](Firmware-Builds) and [Target and Programming](Target-and-Programming).
 
-> **Note:** Studio has been tested with the simulator and in CI, but not yet on physical ChipWhisperer hardware. If a step behaves differently on your device, please [open an issue](https://github.com/keyuraghao/chipwhisperer-studio/issues).
+> **Note:** Studio has been verified on a ChipWhisperer-Husky with a CW308 SAM4S target, with the simulator and in CI; the Nano, Lite, Pro and Husky Plus have not been tried on real hardware yet. If a step behaves differently on your device, please [open an issue](https://github.com/keyuraghao/chipwhisperer-studio/issues).
 
 ### 1. Prepare the computer (once)
 
-- **Windows:** make sure the WinUSB driver is installed (see [Installation](Installation#windows)).
+- **Windows:** nothing to install for current ChipWhisperer firmware; if the device is not found, follow the hint in the Connect tab (see [Installation](Installation#windows)).
 - **Linux:** install the udev rule shown in the Connect tab, log out and in again, and re-plug the device (see [Installation](Installation#linux)).
 - **macOS:** nothing to do.
 

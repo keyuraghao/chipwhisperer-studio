@@ -43,7 +43,7 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 | Firmware | Build any ChipWhisperer firmware project for any platform with **GCC or clang**. Compilers download on demand and sources come straight from NewAE's GitHub. |
 | Waveform | Live view of every capture, an overlay of the last N traces, mean and min/max envelope, trace browsing, zoom (drag, buttons or +/- keys), two cursors with delta read-out, a time axis and PNG export. |
 | Code | **Code on the waveform**: Studio emulates your firmware (Arm Cortex-M, RISC-V, AVR/XMEGA) for a captured trace, aligns it automatically and shows functions and source lines under the plot; select part of the trace to see the code that made it. |
-| Capture | Single, N traces or continuous; fixed, random or counter keys and plaintexts; trigger-only mode; rate limiting; export to `.npz`, `.cwp` (ChipWhisperer project) or `.csv`. |
+| Capture | Single, N traces or continuous; fixed, random or counter keys and plaintexts; trigger-only mode; rate limiting; export to `.npz`, `.cwp` (ChipWhisperer project), `.csv` or a NumPy `.npy` set. |
 | Analysis | Progressive CPA with five AES leakage models, per-byte ranking, PGE convergence and correlation plots. |
 | Glitch | Cartesian or random sweeps over any `glitch.*` parameters with target reset handling and a live result scatter plot. |
 | Notebook | Jupyter-style `.ipynb` notebooks that run inside Studio and share its hardware connection, as tabs or two side by side, each with its own kernel; captured traces land in the Capture tab. Runs NewAE's tutorial notebooks unmodified. |
@@ -56,9 +56,9 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 
 ### Standalone bundle (no Python needed)
 
-Every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases/latest) has two builds per platform (about 72 MB each): **ChipWhisperer Studio** (`ChipWhispererStudio-<os>-<arch>.zip`) opens in its own application window, and **ChipWhisperer Studio Web** (`ChipWhispererStudio-Web-<os>-<arch>.zip`) opens in your web browser. Unzip one and run:
+Every [release](https://github.com/keyuraghao/chipwhisperer-studio/releases/latest) has two builds per platform (55 to 75 MB each, depending on the system and build): **ChipWhisperer Studio** (`ChipWhispererStudio-<os>-<arch>.zip`) opens in its own application window, and **ChipWhisperer Studio Web** (`ChipWhispererStudio-Web-<os>-<arch>.zip`) opens in your web browser. Unzip one and run:
 
-- **Windows:** `ChipWhispererStudio.exe`. If the device is not detected, install the NewAE WinUSB driver.
+- **Windows:** `ChipWhispererStudio.exe`. Current ChipWhisperer firmware needs no driver on Windows 10 and 11; if the device is not detected, follow the hint in the Connect tab (an old libusb-win32 driver from the NewAE driver package must be removed; only very old firmware needs WinUSB assigned with Zadig).
 - **macOS:** `ChipWhisperer Studio.app` or `ChipWhisperer Studio Web.app` (right-click and choose Open the first time).
 - **Linux:** `./chipwhisperer-studio.sh`. Install the udev rule once; the Connect tab shows the exact command. `./ChipWhispererStudio --install-desktop` adds Studio with its icon to the applications menu.
 
@@ -210,8 +210,9 @@ Studio does not bundle compilers, which would add hundreds of MB to every downlo
 | GNU RISC-V GCC | 15.2.0 | NEORV32, Ibex, FE310 | [xPack](https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/) |
 | LLVM clang | 21 | Arm, AVR and RISC-V | [Zig 0.16.0](https://ziglang.org/download/) |
 | GNU make + sh | 4.4.1 | Windows only | [xPack](https://xpack-dev-tools.github.io/windows-build-tools-xpack/) |
+| OpenOCD | 0.12.0 | JTAG/SWD debugging and flashing (Interfaces tab) | [xPack](https://xpack-dev-tools.github.io/openocd-xpack/) |
 
-Clang builds compile every C file with clang and let GCC assemble the startup files and link against newlib or avr-libc, so the firmware uses the same C library and linker scripts as a GCC build. For targets without a free pinned toolchain (TriCore, PowerPC, RX) or to pin a specific compiler, add a **custom toolchain** from an archive URL or an existing folder. Compilers already on your `PATH` are detected and used as a fallback.
+Clang builds compile every C file with clang and let GCC assemble the startup files and link against newlib or avr-libc, so the firmware uses the same C library and linker scripts as a GCC build. For targets without a free pinned toolchain (TriCore, PowerPC, RX) or to pin a specific compiler, add a **custom toolchain** from an archive URL or an existing folder. Compilers already on your `PATH` are detected and used as a fallback (except an Arm or RISC-V GCC without newlib-nano, such as the Debian, Ubuntu and Kali `gcc-arm-none-eabi` packages, which cannot link ChipWhisperer firmware).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/toolchains-light.png"><img alt="Toolchains with their versions, sizes and install state" src="docs/wiki/images/toolchains.png"></picture>
 
@@ -319,13 +320,13 @@ CWSTUDIO_HW=husky CWSTUDIO_HW_PLATFORM=CW308_SAM4S \
   CWSTUDIO_HW_TARGET=SimpleSerial python -m pytest tests/hardware -v -s   # a real Husky + SAM4S target
 ```
 
-It runs in dependency-ordered stages (environment, scope, firmware, target, capture, CPA, glitch, logic analyser and the other interfaces, notebook, MCP, robustness) and writes a per-stage summary to `tests/hardware/last_run.json`. `CWSTUDIO_HW_TARGET` selects the SimpleSerial version, and the firmware `ss_ver` and the emulator protocol follow it. [`tests/hardware/README.md`](tests/hardware/README.md) documents all the `CWSTUDIO_HW_*` knobs and records the latest verified run on a Husky with a CW308 SAM4S target: the full AES-128 key recovered by CPA (every byte at PGE 0) and a reliable voltage glitch, with the exported traces and glitch sweep saved under Studio's data folder (`husky_sam4s_glitch_results.csv`).
+It runs in dependency-ordered stages (environment, discovery, scope, firmware, target, capture, analysis, glitch, husky, notebook, mcp, robustness, disconnect; the husky stage covers the logic analyser and the other interfaces) and writes a per-stage summary to `tests/hardware/last_run.json`. `CWSTUDIO_HW_TARGET` selects the SimpleSerial version, and the firmware `ss_ver` and the emulator protocol follow it. [`tests/hardware/README.md`](tests/hardware/README.md) documents all the `CWSTUDIO_HW_*` knobs and records the latest verified run on a Husky with a CW308 SAM4S target: the full AES-128 key recovered by CPA (every byte at PGE 0) and a reliable voltage glitch, with the exported traces and the clock and voltage sweeps saved in the session's data folder (`hw_clock.csv`, `hw_voltage.csv`).
 
 | Task | Command |
 |------|---------|
 | Standalone bundles for this OS | `python packaging/build.py` (PyInstaller; produces `dist/ChipWhispererStudio-<os>-<arch>.zip`) and `python packaging/build.py --variant web` (`dist/ChipWhispererStudio-Web-<os>-<arch>.zip`) |
 | Regenerate the screenshots (dark and light) | `pip install playwright && playwright install chromium && python tools/screenshots.py` |
-| Record the video tour and its clips | `pip install imageio-ffmpeg && python tools/demo_video.py` |
+| Record the video tour and its clips | `pip install playwright imageio-ffmpeg && playwright install chromium && python tools/demo_video.py` |
 | Release notes for a version | `python tools/release_notes.py 0.5.0` |
 
 Pinned toolchain versions and checksums live in `src/cwstudio/resources/toolchains.json`. To publish a new compiler version, update that file and bump its `revision`; running Studios pick it up with **Refresh list**.

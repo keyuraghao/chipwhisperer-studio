@@ -152,7 +152,7 @@ ChipWhisperer's hardware abstraction layers were written for older compilers. Cu
 | `-fcommon` | Some HALs define variables in headers; GCC 10 and later reject the duplicate definitions at link time without this. |
 | `-misa-spec=2.2` (RISC-V only) | GCC 12 and later no longer treat the `zicsr` and `zifencei` extensions as part of `rv32i`; this restores the older rule the NEORV32 and Ibex HALs rely on. Also passed to the assembler. |
 
-The same compatibility flags are set for `!make` and `%%bash` commands run from a [notebook](Notebooks).
+The same compatibility flags (all but the RISC-V `-misa-spec=2.2`, which only Studio's own builds add) are set for `!make` and `%%bash` commands run from a [notebook](Notebooks).
 
 ## Platform coverage
 
@@ -190,6 +190,7 @@ The same request body works for `POST /api/firmware/build` (add `"clean": false`
 |---------|---------------|
 | *no firmware sources yet: download them or choose a firmware folder* | Download the sources on the **Firmware sources** card, or point Studio at your checkout. |
 | *no GCC toolchain for arm: install one on the Toolchains card* | Install the GCC toolchain for the platform's architecture (the **Install now** link does it). Clang builds need GCC too. |
+| *the only arm gcc found (in ...) has no newlib-nano (nano.specs)* | The compiler on your `PATH` is a distribution package (Debian, Ubuntu, Kali `gcc-arm-none-eabi`) without newlib-nano, which the ChipWhisperer makefiles link against. Install the managed GNU Arm toolchain on the Toolchains card; Studio prefers it over the system one. |
 | *make not found* | On Windows, install **GNU make + sh** on the Toolchains card. On Linux install make (for example `sudo apt install make`); on macOS run `xcode-select --install`. |
 | *... needs the chipwhisperer-fw-extra HALs* | Your own firmware checkout lacks that git submodule. Initialise it, or switch back to Studio's downloaded sources. |
 | `unrecognized opcode 'csrr ...', extension 'zicsr' required` | A RISC-V build outside Studio's normal path. Studio adds `-misa-spec=2.2` automatically; if you pass your own `CFLAGS`, keep it. |

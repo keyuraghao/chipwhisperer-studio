@@ -2,7 +2,7 @@
 
 Problems are grouped by symptom. Each entry explains the likely cause and the fix. If nothing here helps, see [Reporting a bug](#reporting-a-bug) at the end.
 
-> **Note:** Studio has been tested with the built-in simulator and in automated builds on Linux, Windows and macOS. It has not yet been verified on physical ChipWhisperer hardware, so hardware-specific problems may exist that are not listed here. Please report them.
+> **Note:** Studio has been verified on a ChipWhisperer-Husky with a CW308 SAM4S target, with the built-in simulator and in automated builds on Linux, Windows and macOS. The Nano, Lite, Pro and Husky Plus have not been tried on real hardware yet, so problems specific to them may exist that are not listed here. Please report them.
 
 ## Where to find logs
 
@@ -17,7 +17,7 @@ Problems are grouped by symptom. Each entry explains the likely cause and the fi
 
 1. Press **Scan USB** on the Connect tab. If the list is empty, the operating system does not see a NewAE device.
 2. Try another USB cable (many cables are charge-only) and another port, preferably directly on the computer rather than a hub.
-3. **Windows:** ChipWhisperer devices need the WinUSB driver. Install NewAE's driver package (the Connect tab links to it) or use Zadig to assign WinUSB, then reconnect.
+3. **Windows:** current ChipWhisperer firmware needs no driver on Windows 10 and 11. If Device Manager lists the device under *libusb-win32 devices* (the old NewAE driver package) it cannot connect: uninstall that device with *Delete the driver software*, then replug. Only very old firmware needs WinUSB assigned with Zadig; then reconnect.
 4. **Linux:** install the udev rule (next section).
 5. **macOS:** no driver is needed. Try another cable or port.
 
@@ -39,7 +39,7 @@ Another program (a Jupyter notebook, a second Studio) still holds the device. Cl
 
 ### Port already in use
 
-Studio automatically tries the next 49 ports if 8765 is taken and prints the URL it actually used. To choose a port yourself, pass `--port 9000`. If you want to find the process holding the port: `lsof -i :8765` (macOS, Linux) or `netstat -ano | findstr 8765` (Windows).
+Studio automatically tries the next 49 ports if 8765 is taken (and, when all 50 are reserved, takes any free port the system gives out) and prints the URL it actually used. To choose a port yourself, pass `--port 9000`. If you want to find the process holding the port: `lsof -i :8765` (macOS, Linux) or `netstat -ano | findstr 8765` (Windows).
 
 ### Studio opened in the browser instead of its own window
 
@@ -141,6 +141,10 @@ The downloaded file does not match the SHA-256 pinned in Studio's registry. The 
 
 Install the matching compiler on the **Toolchains** card (the **Build firmware** card offers an **Install now** link). Clang builds need the GCC toolchain too, because GCC provides the C library and links the firmware.
 
+### "the only arm gcc found ... has no newlib-nano (nano.specs)"
+
+A compiler on your `PATH`, usually a distribution package such as the Debian, Ubuntu or Kali `gcc-arm-none-eabi`, lacks newlib-nano, which ChipWhisperer's makefiles link against (`-specs=nano.specs`). Studio does not use it; install the managed GNU Arm (or RISC-V) toolchain on the **Toolchains** card and build again.
+
 ### "make not found"
 
 - **Windows:** install **GNU make + sh** on the **Toolchains** card.
@@ -164,7 +168,7 @@ Keep **Clean before building** ticked (the default). Object files from one compi
 - Make sure the scope is connected: programming goes through the scope.
 - Choose the programmer for your target family (STM32F for CW-Lite ARM, CW-Nano and STM32 targets, XMEGA for CW-Lite XMEGA, AVR for ATmega, SAM4S for the Husky target, NEORV32 for the soft core). Build & program picks it automatically.
 - Some targets need the clock running before programming; run `default_setup()` on the Scope tab first.
-- With the simulator, programming is simulated and only checks that the file exists.
+- With the simulator, programming an ELF (or a `.hex` that Studio built, which keeps its `.elf`) runs that firmware in the emulator; any other file is accepted without being run.
 
 ## Capturing
 

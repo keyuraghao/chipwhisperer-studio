@@ -98,12 +98,13 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 | `simulator.py` | `SimScope` and `SimTarget`: AES leakage and glitch behaviour without hardware, any model, programmed firmware in the emulator. |
 | `capabilities.py` | What the connected scope supports, with reasons. |
 | `interfaces.py`, `openocd.py`, `sim_interfaces.py` | UART, SimpleSerial, SPI, GPIO, USERIO, triggers, bit-banger, 1-Wire; OpenOCD and MPSSE; their simulated counterparts. |
+| `simtrigger.py` | The simulator's special triggers (Husky UART pattern, Pro UART decode, edge counter, ADC level, SAD, sequencer), evaluated on the serial traffic and trigger pin the simulated target really produces, laid out in time as on the wire. |
 | `logic/` | Logic analyser: model and view queries, sources, decoders, file formats, sigrok, synthetic traffic. |
 | `codemap/` | Code map: ELF and DWARF, emulators, cycle tables, power model and alignment, timeline, simulator firmware, SWO. |
 | `settings.py` | Generic settings tree introspection and typed assignment. |
 | `capture.py` | `CaptureJob`: key and text generation, capture loop, publication. |
 | `glitch.py` | `GlitchJob`: parameter sweep, target reset, result classification. |
-| `traces.py` | `TraceStore`: in-memory traces, statistics, import and export (npz, cwp, csv). |
+| `traces.py` | `TraceStore`: in-memory traces, statistics, import and export (npz, npy, csv, cwp). |
 | `analysis.py` | Progressive CPA with five AES leakage models. |
 | `aes.py` | Small AES-128 implementation used by the simulator and the leakage models. |
 | `toolchains.py` | Pinned, checksummed, on-demand compiler downloads and custom toolchains. |
@@ -119,7 +120,7 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 
 ### Packaging
 
-`packaging/` holds a PyInstaller spec and a `build.py` driver that creates an isolated venv, installs the project, runs PyInstaller and zips a `ChipWhispererStudio-<os>-<arch>` folder (the window build) or `ChipWhispererStudio-Web-<os>-<arch>` (`--variant web`); on macOS each is a `.app`. `.github/workflows/ci.yml` runs the tests on all three operating systems, builds real firmware with downloaded toolchains on each of them, builds and smoke tests the bundles, and publishes a GitHub release with notes from `CHANGELOG.md` when a version tag is pushed.
+`packaging/` holds a PyInstaller spec and a `build.py` driver that creates an isolated venv, installs the project, runs PyInstaller and zips a `ChipWhispererStudio-<os>-<arch>` folder (the window build) or `ChipWhispererStudio-Web-<os>-<arch>` (`--variant web`); on macOS each is a `.app`. `.github/workflows/ci.yml` runs the tests on all three operating systems, builds real firmware with downloaded toolchains on each of them, builds and smoke tests the bundles, and publishes a GitHub release with notes from `CHANGELOG.md` and uploads the package to PyPI when a version tag is pushed.
 
 USB access on a machine without Python:
 

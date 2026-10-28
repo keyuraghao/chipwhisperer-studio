@@ -15,7 +15,7 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 - **Lab and workshop instructors** who need something that installs in one step on Windows, macOS and Linux, and that works with a built-in simulator when there is not enough hardware for everyone.
 - **Researchers and engineers** who want a fast interactive tool for tuning a capture setup, plus notebooks, an HTTP API and an MCP server for automation.
 
-> **Note:** Studio has been tested extensively with the built-in [simulator](Simulator) and in continuous integration on Windows, macOS and Linux, but not yet on physical ChipWhisperer hardware. Please [report](https://github.com/keyuraghao/chipwhisperer-studio/issues) anything that behaves differently on your device.
+> **Note:** Studio has been verified on a ChipWhisperer-Husky with a CW308 SAM4S target (the staged session in `tests/hardware`: firmware build and flash, capture, CPA key recovery, voltage glitching, the logic analyser and the MCP server), and is tested extensively with the built-in [simulator](Simulator) and in continuous integration on Windows, macOS and Linux. The Nano, Lite, Pro and Husky Plus have not been tried on real hardware yet. Please [report](https://github.com/keyuraghao/chipwhisperer-studio/issues) anything that behaves differently on your device.
 
 ## What you can do
 

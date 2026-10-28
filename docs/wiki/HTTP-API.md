@@ -52,7 +52,7 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `status` | text | Every 2 seconds and after changes: the same object as `GET /api/status`. |
 | `log` | text | A log record: `level`, `logger`, `msg`. |
 | `capture` | text | Capture progress: `state` (running, done, stopped, error), `done`, `target`, `timeouts`, `rate`, `stored`, `mode`, `elapsed`. |
-| `trace` | binary | A captured or displayed trace (rate limited to about 25 per second): `index`, `stored`, plaintext, ciphertext and key when known, `source` (`notebook` for notebook traces). |
+| `trace` | binary | A captured or displayed trace (rate limited to about 25 per second): `index`, `stored`, plaintext, ciphertext and key when known, `source` (`notebook` for notebook traces, `glitch` for the trace captured at each sweep point, with its `result`). |
 | `traces` | text | Trace store summary after a clear or import: `count`, `samples`, `memory_bytes`. |
 | `serial` | text | Serial traffic: `t`, `dir` (tx or rx), `data`, `hex`. |
 | `setting` | text | A setting changed: `target` (scope or target), `path`, `value`. |
@@ -78,7 +78,7 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | Method and path | Purpose |
 |-----------------|---------|
 | `GET /api/status` | Scope and target info, running job, trace summary, CPA summary, uptime, data folder. |
-| `GET /api/meta` | Version, scope kinds, target kinds, programmers, CPA models, crypto targets, SimpleSerial versions, simulator models (`sim_models`), the command an MCP client should run for this installation (`mcp_command`: `{command, args}`), host platform, platform help (drivers, udev). |
+| `GET /api/meta` | Version, scope kinds, target kinds, programmers, CPA models, crypto targets, SimpleSerial versions, simulator models (`sim_models`), the command an MCP client should run for this installation (`mcp_command`: `{command, args}`), host platform, platform help (drivers, udev), `data_dir` and `simulate_default` (whether Studio was started with `--simulate`). |
 | `GET /api/capabilities` | What the connected scope supports: UART, SimpleSerial, SPI, JTAG, SWD, trace, GPIO, USERIO, bit-banger, 1-Wire, every trigger type, every programmer and the logic analyser sources, each as `{available, reason, ...details}`. For a scope type the Interfaces tab does not support, a top-level `reason` says so. See [Protocols and Interfaces](Protocols-and-Interfaces). |
 | `GET /api/devices` | Attached ChipWhisperer USB devices. |
 | `GET /api/logs?since=SEQ` | Log, capture and glitch events after a sequence number. |
@@ -133,7 +133,7 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `POST /api/analysis/cpa/stop` | Stop the attack. |
 | `GET /api/analysis/cpa` | Latest result: `best_key`, `bytes` (ranking per byte), `history`, `done`, `traces_used`, `known_key`. |
 | `GET /api/analysis/cpa/corr/{b}` | Correlation trace for key byte `b` (binary frame). |
-| `POST /api/glitch/start` | Body: `parameters` ([{path, start, stop, step}] or [{path, values}]), `command`, `data`, `expected`, `output_len`, `repeats`, `order`, `reset`, `reset_on`, `reset_delay`, `glitch_timeout`, `arm_scope`. |
+| `POST /api/glitch/start` | Body: `parameters` ([{path, start, stop, step}] or [{path, values}]), `command`, `data`, `expected`, `output_len`, `repeats`, `order`, `reset`, `reset_on`, `reset_delay`, `glitch_timeout`, `arm_scope`, `display` (default true: each point's captured trace is sent to the waveform view). |
 | `GET /api/glitch/results` | Results, counts and progress. |
 | `POST /api/glitch/export` | Body: `path` (CSV). |
 
@@ -214,10 +214,10 @@ Everything in the [Interfaces](Protocols-and-Interfaces) tab. Requests for somet
 | `GET /api/interfaces/openocd` | OpenOCD binary, scripts folder, server state, ports, MPSSE state and the newest log lines. `mpsse` carries `detected: true` (with `connected`, `sn` and `kind`) for a scope Studio found already in MPSSE mode, for example after a restart. |
 | `GET /api/interfaces/openocd/targets` | Target configurations in OpenOCD's scripts folder. |
 | `GET /api/interfaces/openocd/log?since=` | OpenOCD log lines. |
-| `POST /api/interfaces/openocd/mpsse` | Body: `enable`, `transport` (jtag, swd), `header` (target, userio). Enabling releases the scope; disabling restores normal mode and reconnects it, also for a scope that was found already in MPSSE mode. |
+| `POST /api/interfaces/openocd/mpsse` | Body: `enable`, `transport` (jtag, swd), `header` (target, userio), and when disabling `reconnect` (default true). Enabling releases the scope; disabling restores normal mode and reconnects it, also for a scope that was found already in MPSSE mode. |
 | `POST /api/interfaces/openocd/start` | Body: `target_cfg` (for example `target/stm32f3x.cfg`), `transport`, `ports` (`{gdb, telnet, tcl}`), `extra` (a list of `-c` commands). |
 | `POST /api/interfaces/openocd/stop` | Stop the OpenOCD server. |
-| `POST /api/interfaces/openocd/command` | Body: `command`. Runs it on OpenOCD's TCL port; returns `ok` and the output. |
+| `POST /api/interfaces/openocd/command` | Body: `command`, `timeout` (seconds, default 30). Runs it on OpenOCD's TCL port; returns `ok` and the output. |
 | `POST /api/interfaces/openocd/program` | Body: `path` (.hex, .elf or .bin on the Studio machine), `verify`, `reset`, `address` (for .bin). |
 
 ### Logic analyser
@@ -228,7 +228,7 @@ The [Logic](Logic-Analyser) tab. Sample indices count from the start of the capt
 |-----------------|---------|
 | `GET /api/la` | State: the running job, the current capture, the captures in memory, decoders and buses. |
 | `GET /api/la/sources` | Capture sources with availability and reason (native, adc, sim, sigrok, files), the Husky LA triggers and clock sources, the decoders with their options, the default settings of each source (`defaults`, the same as the Logic tab and the MCP tools), and the scope's ADC and LA clock rates. |
-| `POST /api/la/capture` | Body: `source` (native, adc, sim, sigrok), `settings` (per source, as in the tab: native `group`, `clk_source`, `oversampling`, `downsample`, `depth`, `trigger`, `fire`, `with_analog`; adc `segments`, `samples`, `level`, `hysteresis`, `fire`, `invert`; sim `samplerate`, `duration_ms` or `samples`, `pretrigger`, `channels`, `jitter_ns`, `glitches_per_ms`; sigrok `device`, `samplerate`, `channels`, `samples` or `time_ms`, `triggers`, `config`; any source `persist` to keep a `.sr` copy), `wait`, `timeout`. |
+| `POST /api/la/capture` | Body: `source` (native, adc, sim, sigrok), `settings` (per source, as in the tab: native `group`, `clk_source`, `oversampling`, `downsample`, `depth`, `trigger`, `fire`, `with_analog`; adc `segments`, `samples`, `level`, `hysteresis`, `fire`, `invert`; sim `samplerate`, `duration_ms` or `samples`, `pretrigger`, `channels`, `jitter_ns`, `glitches_per_ms`, `fire`, `baud`, `clock_hz`, `ss_version`; sigrok `device`, `samplerate`, `channels`, `samples` or `time_ms`, `triggers`, `config`, `timeout`; native also `timeout` and `userio_inputs`; any source `persist` to keep a `.sr` copy), `wait`, `timeout`. |
 | `POST /api/la/stop` | Stop the running capture. |
 | `GET /api/la/captures`, `PUT /api/la/current`, `DELETE /api/la/captures/{cid}` | The captures in memory; choose the current one (body `id`); delete one. |
 | `GET /api/la/capture?capture=` | A capture's summary: channels, sample rate, trigger, duration, analog rows. |
@@ -241,9 +241,9 @@ The [Logic](Logic-Analyser) tab. Sample indices count from the start of the capt
 | `POST /api/la/decode` | Run a decoder once without adding it. Body: `type`, `channels`, `options`, `limit` (500). Invalid options return 400. |
 | `GET /api/la/annotations` | Decoded results: `decoder`, `q` (filter), `offset`, `limit`, `after`, `before`, `row`. |
 | `GET /api/la/annotations.csv` | The same as CSV. |
-| `POST /api/la/import` | Body: `path` (a .vcd, .csv or .sr file on the Studio machine), `format`, `samplerate` (for CSV files without a time column). |
+| `POST /api/la/import` | Body: `path` (a .vcd, .csv or .sr file on the Studio machine), `format`, `samplerate` (for CSV files without a time column), `name` (the capture's name, default the file name). |
 | `POST /api/la/import/upload` | Multipart `file` (query `format`, `samplerate`). |
-| `POST /api/la/export` | Body: `format` (vcd, csv, sr), `path` (default: the `logic/exports` folder), `channels`. Returns the path. |
+| `POST /api/la/export` | Body: `format` (vcd, csv, sr), `path` (default: the `logic/exports` folder), `channels`, `capture` (default the current one). Returns the path. |
 | `GET /api/la/download/{fmt}` | Export the current capture and download it. |
 | `GET /api/la/files` | Logic files in the data folder (captures, exports, imports, sigrok). |
 | `POST /api/la/analog/from_trace` | Body: `index` (stored trace, default the newest). Adds it as an analog row on the capture's time base. |
@@ -258,7 +258,7 @@ The [Logic](Logic-Analyser) tab. Sample indices count from the start of the capt
 |-----------------|---------|
 | `GET /api/codemap` | State: firmware (ELF, architecture, core, SimpleSerial version), the inputs it ran with, whether the emulated response is the correct AES and matches the stored trace, the cycle to sample mapping and the last alignment, and which emulators are available, and `pathsep` (the separator for several source folders). |
 | `GET /api/codemap/elfs` | ELF files to choose from: the one programmed in this session, then Studio's firmware builds. |
-| `POST /api/codemap/build` | Body: `elf` (path; default the programmed firmware or the newest build), `sources` (folder, or several separated by `pathsep`; `""` clears a folder set before and goes back to the paths in the ELF), `trace` (index; default the newest), `key`/`text` (hex, instead of a trace; `text: ""` sends the command without data), `cmd` (`p`), `raw` (hex serial bytes fed as they are, for firmware that is not SimpleSerial; `raw_text: true` for text), `core`, `protocol`, `wait_states`, `mapping` (`{adc_freq, target_freq, adc_offset, presamples, decimate, scale, shift}`), `align` (true, false or `auto`), `options` (`{skip, getch, putch, trigger_high, trigger_low, max_instructions}`). |
+| `POST /api/codemap/build` | Body: `elf` (path; default the programmed firmware or the newest build), `sources` (folder, or several separated by `pathsep`; `""` clears a folder set before and goes back to the paths in the ELF), `trace` (index; default the newest), `key`/`text` (hex, instead of a trace; `text: ""` sends the command without data), `cmd` (`p`), `raw` (hex serial bytes fed as they are, for firmware that is not SimpleSerial; `raw_text: true` for text), `core`, `protocol`, `wait_states`, `mapping` (`{adc_freq, target_freq, adc_offset, presamples, decimate, scale, shift}`), `align` (true, false or `auto`), `align_source` (`mean` or `trace`), `options` (`{skip, getch, putch, trigger_high, trigger_low, noskip, trigger_port, max_instructions, max_boot_instructions}`). |
 | `POST /api/codemap/upload` | Multipart `file`: upload an ELF; returns its path for `build`. |
 | `GET /api/codemap/band` | The timeline the code band draws: function spans and source line runs in cycles from the trigger, and the mapping. |
 | `POST /api/codemap/region` | Body: `start`, `end` (samples), `limit`. The functions and source lines that ran there; code without line information is one line entry with `no_line_info: true`. |
@@ -275,7 +275,7 @@ The [Logic](Logic-Analyser) tab. Sample indices count from the start of the capt
 
 | Method and path | Purpose |
 |-----------------|---------|
-| `GET /api/notes` / `POST /api/notes` | List notes, create one (body: `name`). |
+| `GET /api/notes` / `POST /api/notes` | List notes, create one (body: `name`, optional `text`). |
 | `GET /api/notes/{name}` | Read a note. |
 | `PUT /api/notes/{name}` | Body: `text`, optional `rename`. |
 | `DELETE /api/notes/{name}` | Delete a note. |

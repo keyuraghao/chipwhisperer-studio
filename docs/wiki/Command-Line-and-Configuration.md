@@ -18,7 +18,7 @@ All forms accept the same options. Studio starts a local web server (`http://127
 | Option | Default | What it does |
 |--------|---------|--------------|
 | `--host ADDRESS` | `127.0.0.1` | Address the server listens on. `0.0.0.0` makes Studio reachable from other machines on the network (see Remote use below). |
-| `--port N` | `8765` | Preferred port. If it is taken, Studio tries the next 49 ports and uses the first free one, then prints the actual URL. |
+| `--port N` | `8765` | Preferred port. If it is taken, Studio tries the next 49 ports and uses the first free one (and any free port the system gives out when all 50 are reserved, as on Windows with Hyper-V or WSL2), then prints the actual URL (on the default port, a Studio that is already running is opened instead; see below). |
 | `--browser` | off | Open Studio in your web browser instead of its own window. |
 | `--app-window` | off | Open Studio in its own window even in the Web build or with `cw-studio-web`. If the window cannot be opened (for example WebKitGTK missing on Linux), Studio says why and uses the browser. |
 | `--no-browser` | off | Run only the server: no window and no browser. Useful for remote use, scripts and CI. |
@@ -31,7 +31,7 @@ When both are given, `--no-browser` wins over `--browser`, which wins over `--ap
 
 If the window cannot be opened, Studio prints why (for example *Studio cannot open its own window: WebKitGTK is not available ...*, with the package to install) and opens the browser instead. On a machine without a graphical display (over SSH) it opens neither and prints the address to open, with a hint to forward the port. Without a console (such as the window build's `ChipWhispererStudio.exe` on Windows), these messages go to `~/ChipWhispererStudio/studio.log`.
 
-Studio does not stop you from starting it twice: a second Studio takes the next free port, has its own session and competes for the same USB device. Close the first one, or use it from another window.
+One Studio at a time: starting Studio again in window or browser mode on the default port (a second click on the icon, for example) finds the running Studio and opens it instead of a second server. With `--no-browser` or another `--port`, a second Studio does start on its own port, with its own session, and competes for the same USB device.
 
 Examples:
 
@@ -62,6 +62,8 @@ On Linux, `cw-studio --install-desktop` (or `./ChipWhispererStudio --install-des
 | `GITHUB_TOKEN` or `GH_TOKEN` | Optional. Sent with GitHub API lookups for firmware sources and tutorials, which lifts GitHub's limit of 60 anonymous requests per hour. A token with no scopes is enough. |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | Optional. If set, Studio verifies HTTPS certificates against this PEM bundle or folder instead of the operating system's trust store. Use it on networks that inspect HTTPS when you cannot install their root certificate in the system store. |
 | `CWSTUDIO_URL` | Default `--url` for `cw-studio mcp`. |
+| `BROWSER` | Python's `webbrowser` override. When it is set, Studio opens the browser even on a machine without a graphical display. |
+| `CWSTUDIO_WINDOW_SNAPSHOT`, `CWSTUDIO_WINDOW_SCRIPT`, `CWSTUDIO_WINDOW_DOWNLOAD_DIR`, `CWSTUDIO_WINDOW_UPLOAD` | Internal hooks of the Linux window helper, used by the automated window tests and CI. |
 | `CWSTUDIO_DEFAULT_UI` | `window` or `browser`: how Studio opens when neither `--browser` nor `--app-window` is given (overrides the build's default). |
 | `CWSTUDIO_GTK_PYTHON` | Linux: the Python interpreter that runs Studio's window (it needs PyGObject and WebKitGTK). Default: the system `python3`. |
 | `CWSTUDIO_DEVTOOLS` | Linux window: set to `1` to enable the web inspector (right-click, Inspect Element) and print the page's console messages in the terminal. |
@@ -102,14 +104,14 @@ ChipWhispererStudio/
 │   └── sigrok/            captures made with sigrok-cli
 ├── codemap/uploads/       ELF files uploaded in the Code tab
 ├── notes/                 your notes as .md or .txt files
-└── studio.log             messages, when Studio runs without a console (always here, even with --data-dir)
+└── studio.log             messages of every standalone bundle, also beside a console (always here, even with --data-dir)
 ```
 
 Relative paths you type in Studio (trace export names, glitch CSV names) are saved inside the data folder. Absolute paths are used as given.
 
 The interface's own settings (theme, last tab, notebook layout, waveform, Interfaces and Logic tab choices) are stored by the window or browser, not in the data folder. Studio's window keeps them between runs (on Windows in `%LOCALAPPDATA%\ChipWhispererStudio\WebView`); they are tied to the address, so they also follow the port Studio runs on.
 
-Disk usage: the ChipWhisperer firmware sources are about 250 MB. Installed compilers are the biggest items: Arm GCC about 1.1 GB, RISC-V GCC about 1.6 GB, AVR GCC about 215 MB and clang (Zig) about 400 MB unpacked. Remove the ones you do not need in the Firmware tab (see [Toolchains](Toolchains)).
+Disk usage: the ChipWhisperer firmware sources are about 250 MB. Installed compilers are the biggest items: Arm GCC about 1.1 GB, RISC-V GCC about 1.6 GB, AVR GCC about 220 MB and clang (Zig) about 400 MB unpacked. Remove the ones you do not need in the Firmware tab (see [Toolchains](Toolchains)).
 
 ## Remote use
 

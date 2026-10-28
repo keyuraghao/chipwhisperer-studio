@@ -1,6 +1,6 @@
-# Real-hardware test run (hw/husky)
+# Real-hardware test run (Husky + CW308 SAM4S)
 
-This branch carries the staged real-hardware session in `test_session.py` plus the notes from the actual run on a physical rig. The session is skipped unless `CWSTUDIO_HW` is set, so a normal `pytest` ignores it.
+This folder holds the staged real-hardware session in `test_session.py` plus the notes from the actual run on a physical rig. The session is skipped unless `CWSTUDIO_HW` is set, so a normal `pytest` ignores it.
 
 ## The rig that was tested
 
@@ -25,7 +25,7 @@ Then unplug and replug the scope. After this the Husky reports firmware 1.7.0 an
 This exact rig (SAM4S running SimpleSerial v1) runs with:
 
 ```bash
-source ../../.venv/bin/activate            # the project venv
+source ../.venv/bin/activate               # the project venv, one folder above the repository
 CWSTUDIO_HW=husky \
 CWSTUDIO_HW_PLATFORM=CW308_SAM4S \
 CWSTUDIO_HW_TARGET=SimpleSerial \
@@ -34,15 +34,15 @@ pytest tests/hardware -v -s
 
 Set `CWSTUDIO_HW=sim` to run the same stages against the simulator with no hardware. Other knobs (see `conftest.py`): `CWSTUDIO_HW_SN`, `CWSTUDIO_HW_PROGRAMMER`, `CWSTUDIO_HW_SKIP_PROGRAM=1`, `CWSTUDIO_HW_MANUAL=1`, `CWSTUDIO_HW_DATA`.
 
-Stages run in order and a failed stage skips the ones that depend on it: environment, discovery, scope, firmware, target, capture, analysis, glitch, husky. The last run's per-stage results are written to `last_run.json`.
+Stages run in order and a failed stage skips the ones that depend on it: environment, discovery, scope, firmware, target, capture, analysis, glitch, husky, notebook, mcp, robustness, disconnect. The last run's per-stage results are written to `last_run.json`.
 
 ### SimpleSerial version
 
-`CWSTUDIO_HW_TARGET` selects the target kind (default `SimpleSerial2`). The session derives everything else from it: the target connect kind, the `ss_ver` the AES firmware is built with (`SimpleSerial` builds `SS_VER_1_1`, `SimpleSerial2` builds `SS_VER_2_1`), and the protocol the codemap emulator frames. So `CWSTUDIO_HW_TARGET=SimpleSerial` is all that is needed to drive a v1 board end to end. A v2 connection to v1 firmware just times out with "10 consecutive timeouts"; if that happens, check the firmware's SimpleSerial version (ping `v` at 38400) and set this knob to match.
+`CWSTUDIO_HW_TARGET` selects the target kind (default `SimpleSerial2`). The session derives everything else from it: the target connect kind, the `ss_ver` the AES firmware is built with (`SimpleSerial` builds `SS_VER_1_1`, `SimpleSerial2` builds `SS_VER_2_1`), and the protocol the codemap emulator frames. So `CWSTUDIO_HW_TARGET=SimpleSerial` is all that is needed to drive a v1 board end to end. If a connection only produces "10 consecutive timeouts", the knob does not match the firmware (see the rig notes above).
 
 ## Staged session status (2026-10-05)
 
-The full staged session passes on the real Husky + CW308_SAM4S: `29 passed, 1 skipped` (the skip is `test_98_manual_unplug`, which needs `CWSTUDIO_HW_MANUAL=1` and an operator). Getting there surfaced four findings, all fixed on this branch:
+The full staged session passes on the real Husky + CW308_SAM4S: `29 passed, 1 skipped` (the skip is `test_98_manual_unplug`, which needs `CWSTUDIO_HW_MANUAL=1` and an operator). Two measurements in `last_run.json` are worth knowing even though their stages pass: on this rig the UART-pattern trigger and the SAD trigger never fired (0 captures, 5 timeouts each, recorded under the `husky` stage); the edge-counter trigger did. Those two triggers are therefore configured but not yet verified on real hardware. Getting there surfaced five findings, all fixed:
 
 - Studio: the logic analyser's `capture` trigger only reached the LA while the ADC was armed, so `la_capture(trigger="capture")` without `with_analog` timed out. `native_capture` now arms the ADC whenever the trigger is `capture`.
 - test_83 used a SAD threshold of 10000, but the Husky's SAD threshold maxes at 64; it now uses 32 and restores the basic trigger in a `finally` (a failed SAD set-up used to leave the trigger broken and cascade into the notebook, mcp and robustness stages).
@@ -59,7 +59,7 @@ Scope setup: `clock.clkgen_freq=7.37 MHz`, `clock.adc_mul=4` (ADC 29.45 MHz, MMC
 - Target sanity: AES-128 of `6bc1bee22e409f96e93d7e117393172a` under the test key returned `3ad77bb40d7a3660a89ecaf32466ef97`, the NIST ECB vector. Correct.
 - CPA key recovery (`simpleserial-aes`, model `sbox_hw`): 60 traces at about 30 traces/s recovered the full AES-128 key `2b7e151628aed2a6abf7158809cf4f3c`. All 16 bytes at PGE 0, best-guess correlation 0.61 to 0.78.
 - Clock glitching (`simpleserial-glitch`, `g` = 50x50 loop, baseline count 2500): ineffective on the SAM4S because its core runs from an internal PLL that filters a glitched input clock. 945 shots gave 939 normal, 6 reset, 0 success.
-- Voltage (crowbar) glitching (`glitch.output=glitch_only`, `io.glitch_lp=True`): works. The reliable point is `ext_offset=1700, offset=2800, width=1550, repeat=2`, which corrupts the loop counter from 2500 to 2425 about 80 to 90 percent of the time (9/10 on the sweep, 8/12 on a fresh repro). A slightly wider `width=1580` at the same point faults harder (count 1325). Full sweep data is in the Studio data folder as `husky_sam4s_glitch_results.csv`.
+- Voltage (crowbar) glitching (`glitch.output=glitch_only`, `io.glitch_lp=True`): works. The reliable point is `ext_offset=1700, offset=2800, width=1550, repeat=2`, which corrupts the loop counter from 2500 to 2425 about 80 to 90 percent of the time (9/10 on the sweep, 8/12 on a fresh repro). A slightly wider `width=1580` at the same point faults harder (count 1325). Full sweep data is in the session's data folder (`CWSTUDIO_HW_DATA`) as `hw_clock.csv` and `hw_voltage.csv`.
 
 ## Safety note left for the next run
 

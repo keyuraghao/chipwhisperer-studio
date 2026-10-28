@@ -11,7 +11,7 @@ ChipWhisperer Studio does not ship compilers inside its download, because they w
 | Toolchain | Version | Builds firmware for | Source | Download size | Size on disk |
 |-----------|---------|---------------------|--------|---------------|--------------|
 | GNU Arm GCC (`arm-none-eabi`) | 15.2.1-1.1 | Arm Cortex-M: CW-Lite Arm, Nano, Husky, STM32, SAM4S, K82F and more | [xPack](https://xpack-dev-tools.github.io/arm-none-eabi-gcc-xpack/) | 294 to 336 MB | about 1.1 GB |
-| GNU AVR GCC + avr-libc | 7.3.0-atmel3.6.1-arduino7 | AVR and XMEGA: CW-Lite XMEGA, CW304 and more | [Arduino](https://github.com/arduino/toolchain-avr) | 37 to 53 MB | about 214 MB |
+| GNU AVR GCC + avr-libc | 7.3.0-atmel3.6.1-arduino7 | AVR and XMEGA: CW-Lite XMEGA, CW304 and more | [Arduino](https://github.com/arduino/toolchain-avr) | 37 to 53 MB | about 220 MB |
 | GNU RISC-V GCC (`riscv-none-elf`) | 15.2.0-1 | RISC-V: NEORV32, Ibex, FE310 | [xPack](https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/) | 401 to 465 MB | about 1.6 GB |
 | LLVM clang 21 (Zig 0.16.0 toolchain) | zig-0.16.0 | Arm, AVR and RISC-V, for [clang builds](Firmware-Builds#gcc-and-clang-builds) | [ziglang.org](https://ziglang.org/download/) and its mirrors | 51 to 97 MB | about 400 MB |
 | GNU make + sh | 4.4.1-3 | Windows only: the `make` and shell that ChipWhisperer's makefiles need | [xPack](https://xpack-dev-tools.github.io/windows-build-tools-xpack/) | 3 MB | a few MB |
@@ -39,7 +39,7 @@ Each row shows the toolchain name, a status badge, the version, the architecture
 | Badge | Meaning |
 |-------|---------|
 | **Installed** | Studio downloaded and unpacked this toolchain; builds use it. |
-| **On system PATH** | Not installed by Studio, but the compiler was found on your `PATH` (hover to see where). Builds use it if nothing is installed. |
+| **On system PATH** | Not installed by Studio, but the compiler was found on your `PATH` (hover to see where). Builds use it if nothing is installed. An Arm or RISC-V gcc without newlib-nano (`nano.specs`), such as the Debian, Ubuntu and Kali `gcc-arm-none-eabi` packages, is skipped because the ChipWhisperer targets cannot link with it. |
 | **Not installed** | Available to download. Press **Install**. |
 | **Downloading NN%** / **Unpacking...** | An installation is in progress; a progress bar shows below the row. |
 | **Failed** | The last installation failed; the error is shown under the row (hover the badge too). Press **Install** to try again. |
@@ -149,4 +149,4 @@ Proxies: Studio uses Python's standard proxy support, so the usual `HTTPS_PROXY`
 | Delete a custom toolchain | `DELETE /api/toolchains/custom/{id}` | `toolchain_remove_custom` |
 | Refresh the list | `POST /api/toolchains/refresh` | `toolchains_refresh` |
 
-The ids of the pinned toolchains are `arm-gcc`, `avr-gcc`, `riscv-gcc`, `clang` and `win-build-tools`. See [HTTP API](HTTP-API) and [MCP Server](MCP-Server).
+The ids of the pinned toolchains are `arm-gcc`, `avr-gcc`, `riscv-gcc`, `clang`, `win-build-tools` and `openocd`. See [HTTP API](HTTP-API) and [MCP Server](MCP-Server).

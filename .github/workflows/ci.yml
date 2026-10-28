@@ -29,7 +29,7 @@ jobs:
       - run: python -m pytest -q
 
   docs:
-    # README and DESIGN links and images resolve, and no em dashes anywhere in the text (the project's style rule).
+    # README, DESIGN, CHANGELOG and bundle README links and images resolve, and no em dashes anywhere in the text (the project's style rule).
     name: Docs
     runs-on: ubuntu-latest
     steps:

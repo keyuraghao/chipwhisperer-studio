@@ -50,7 +50,7 @@ The simulated scope implements the parts of the `chipwhisperer` scope API that S
 With the built-in AES model, each capture produces `adc.samples` samples (5000 by default) built from:
 
 - A background of clock ripple, a slow envelope and random noise (standard deviation 0.02).
-- **Key-dependent leakage for the first AES round.** For each of the 16 key bytes there is a short dip in the trace, starting at sample 60 and spaced 45 samples apart (at 4 samples per cycle). Its depth depends on the Hamming weight of the S-box output `SBOX[plaintext[i] XOR key[i]]`. This is exactly what the **HW of SBox output** CPA model looks for, so CPA recovers the key from a few hundred traces.
+- **Key-dependent leakage for the first AES round.** For each of the 16 key bytes there is a short dip in the trace, starting at sample 60 and spaced 45 samples apart (at 4 samples per cycle). Its depth depends on the Hamming weight of the S-box output `SBOX[plaintext[i] XOR key[i]]`. This is exactly what the **HW of SBox output** CPA model looks for, so CPA recovers the key from a few dozen traces (the test suite uses 60).
 - Nine more bumps for the remaining AES rounds, which look like activity but do not depend on the key.
 - **Gain.** Traces scale with `gain.gain` and `gain.mode`, and are clipped to the range -0.5 to 0.5 like a real ADC. If you raise the gain too far the peaks clip, just as on real hardware.
 - **Offset.** `adc.offset` shifts the trace window, so the leaks move left as you increase it.
@@ -68,7 +68,7 @@ The simulated AES target understands the SimpleSerial commands of NewAE's exampl
 | `g` | Runs a "glitch loop" like simpleserial-glitch and replies with a 4 byte loop counter (normally 2500, which is `c4090000` in little endian hex) |
 | `x` | Counts as a reset |
 
-Its settings (visible in the Target tab) are `output_len` (16), `baud` (38400), the last command sent and read, and `protver` (2.1).
+Its settings (visible in the Target tab) are `output_len` (16), `baud` (38400), `parity` (none), `stop_bits` (1), the last command sent and read, and `protver` (2.1).
 
 ## Running your own firmware
 
@@ -108,6 +108,6 @@ A simulated Husky or Husky Plus has a simulated built-in logic analyser, and eve
 - The built-in leakage is idealised: one clear S-box leak per byte with Gaussian noise. Real devices have more complicated leakage, misalignment and noise, and usually need more traces.
 - The built-in model only simulates SimpleSerial AES and the glitch loop. Other firmware (ECC, RSA, password check, bootloaders) needs its ELF programmed so the emulator runs it.
 - Emulated firmware runs each SimpleSerial command from the state right after start-up (with the key applied), so firmware that keeps state between commands behaves as if freshly reset; raw serial input keeps its state. The emulator settings are automatic (core, protocol, no flash wait states).
-- The simulated target ignores baud rate and serial framing details.
+- The simulated target's data does not depend on the baud rate or framing (bytes arrive at once); only the special triggers time the serial traffic with the configured baud rate, parity and stop bits.
 - `cw.program_target()` in a notebook programs the simulated target like the Target tab does; without an ELF it only checks that the file exists.
 - OpenOCD (JTAG and SWD) needs real hardware. SimpleSerial "v2 over CDC" works in the simulator, answered by the simulated target.

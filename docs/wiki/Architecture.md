@@ -15,7 +15,7 @@ This page is for developers who want to understand how Studio is built before ch
 
 ## One process, several threads
 
-Studio is a single Python process running a Starlette application under uvicorn, with a small built-in router (`web.py`). The same server delivers the web UI (static files), the REST API and one WebSocket. The UI is shown in Studio's own window or in a browser; helper processes are used only for the Linux window, big logic decodes, OpenOCD, sigrok-cli and firmware builds.
+Studio is a single Python process running a Starlette application under uvicorn, with a small built-in router (`web.py`). The same server delivers the web UI (static files), the REST API and one WebSocket. The UI is shown in Studio's own window or in a browser; helper processes are used only for the Linux window, big logic decodes, OpenOCD, sigrok-cli, firmware builds and the shell commands of notebooks.
 
 | Thread | Job |
 |--------|-----|
@@ -48,7 +48,7 @@ Every scope and target sub-object in `chipwhisperer` implements `_dict_repr()`. 
 `cli.py` decides how the UI opens (`--no-browser`, then `--browser`, then `--app-window`, then `CWSTUDIO_DEFAULT_UI`, then the build's variant marker) and `window.py` opens it:
 
 - **Windows and macOS:** pywebview with Edge WebView2 or WebKit. Studio checks that pywebview really got WebView2 (it would otherwise fall back to Internet Explorer), keeps a persistent profile so settings survive restarts, and lets downloads and external links work. uvicorn runs on a thread; closing the window stops the server, and `/api/shutdown` closes the window.
-- **Linux:** `resources/gtk_window.py` is a small GTK 3 and WebKit2GTK program run by the *system* Python, so the bundle does not ship GTK. Studio probes candidate interpreters (`CWSTUDIO_GTK_PYTHON`, `/usr/bin/python3`, `python3` on `PATH`) with `--check`, starts the helper with a clean environment, and tells it to close when Studio stops; the helper quits when its parent goes away. It handles downloads with a save dialog, opens other sites in the default browser, reloads after a web process crash and sets the window class so the desktop entry's icon applies.
+- **Linux:** `resources/gtk_window.py` is a small GTK 3 and WebKit2GTK program run by the *system* Python, so the bundle does not ship GTK. Studio probes candidate interpreters (`CWSTUDIO_GTK_PYTHON`, `/usr/bin/python3`, `python3` on `PATH`, `/usr/local/bin/python3`) with `--check`, starts the helper with a clean environment, and tells it to close when Studio stops; the helper quits when its parent goes away. It handles downloads with a save dialog, opens other sites in the default browser, reloads after a web process crash and sets the window class so the desktop entry's icon applies.
 - **Fallback:** if no window can open, Studio prints the reason and the package to install, then uses the browser; without a display it only prints the address.
 
 The frozen bundles come in two variants built from one spec (`--variant app|web`): the window build (with pywebview on Windows and macOS, a windowed `ChipWhispererStudio.exe` and a console `cw-studio.exe` on Windows) and the Web build (console executable, no pywebview).
@@ -86,6 +86,7 @@ The frozen bundles come in two variants built from one spec (`--variant app|web`
 | `interfaces.py` | UART, SimpleSerial, SPI, GPIO, USERIO, triggers, bit-banger and 1-Wire (Interfaces tab and `/api/interfaces`). |
 | `openocd.py` | MPSSE mode and the OpenOCD server for JTAG and SWD. |
 | `sim_interfaces.py` | Simulated SPI flash, pins, bit-banger and 1-Wire device. |
+| `simtrigger.py` | The simulator's special triggers (Husky UART pattern, Pro UART decode, edge counter, ADC level, SAD, sequencer), evaluated on the serial traffic and trigger pin the simulated target really produces, laid out in time as on the wire. |
 | `logic/` | Logic analyser: capture model and view queries, sources, decoders, file formats, sigrok, synthetic traffic, routes. |
 | `codemap/` | Code map: ELF and DWARF, Unicorn and AVR emulation, cycle tables, power model and alignment, timeline, simulator firmware, SWO. |
 | `aes.py` | Small AES-128 implementation used by the simulator, the leakage models and the calculator's `sbox()`. |

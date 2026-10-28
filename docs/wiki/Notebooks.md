@@ -184,6 +184,7 @@ Studio supports the IPython syntax that ChipWhisperer's notebooks use. Line magi
 | `%who`, `%whos` | List variables. |
 | `%pip ...`, `%conda ...` | Run pip in Studio's Python (`%conda` runs pip too). Not available in the standalone downloads. |
 | `%sx command`, `%system command` | Run a command and return its output lines. |
+| `%bash command`, `%sh command` | Run a command in the shell and show its output (same as `!command`). |
 | `%%capture [name]` | Run the cell without showing its output; store the output text in `name`. |
 | `%%writefile [-a] file` | Write (or append) the cell's text to a file. |
 | `%%html`, `%%markdown` | Show the cell as HTML or formatted Markdown. |

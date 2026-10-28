@@ -7,7 +7,7 @@ The **Connect** tab is where you choose which ChipWhisperer scope to use and whi
 
 Studio talks to the hardware only through NewAE's `chipwhisperer` Python library (`cw.scope()`, `cw.target()` and friends), so any device that library supports should work in Studio.
 
-> **Note:** Studio has been tested with the built-in [simulator](Simulator) and in CI on Windows, macOS and Linux, but not yet on physical ChipWhisperer hardware.
+> **Note:** Studio has been verified on a ChipWhisperer-Husky with a CW308 SAM4S target, with the built-in [simulator](Simulator) and in CI on Windows, macOS and Linux. The Nano, Lite, Pro and Husky Plus have not been tried on real hardware yet; please report what you find.
 
 ![Connecting the simulator scope and target (animated)](images/clips/connect.webp)
 
@@ -79,8 +79,8 @@ The Status card shows what is connected right now:
 The last card gives setup hints for your operating system:
 
 - **Linux:** the udev command that lets you use the device without root, with a **Copy command** button. Install it once, log out and back in, and re-plug the device. See [Installation](Installation#linux).
-- **Windows:** a reminder that ChipWhisperer devices need the WinUSB driver, and a link to NewAE's driver instructions.
-- **macOS:** no driver is needed.
+- **Windows:** a note that current ChipWhisperer firmware needs no driver on Windows 10 and 11, what to do if Device Manager still shows the device under libusb-win32 (the old NewAE driver package), and a link to NewAE's driver instructions.
+- **macOS:** no driver is needed with the bundle; a pip installation needs libusb (`brew install libusb`).
 
 ## Several devices
 
@@ -90,7 +90,7 @@ The last card gives setup hints for your operating system:
 
 ## Disconnecting and closing
 
-Disconnect the scope before unplugging it, so the library releases the USB device cleanly. When you quit Studio (close the console window or press Ctrl+C in it), it disconnects everything automatically.
+Disconnect the scope before unplugging it, so the library releases the USB device cleanly. When you quit Studio (close its window, or the console window or Ctrl+C when it runs in a terminal), it disconnects everything automatically.
 
 Only one program can use a ChipWhisperer at a time. If a Jupyter notebook or another tool already has the device open, disconnect there first (or restart that program), or connect in Studio with **force FPGA reprogram** ticked.
 
@@ -98,7 +98,7 @@ Only one program can use a ChipWhisperer at a time. If a Jupyter notebook or ano
 
 | Symptom | What to try |
 |---------|-------------|
-| Scan USB shows "No NewAE USB devices found." | Check the cable (some USB cables are charge-only) and try another port. On Windows install the WinUSB driver; on Linux install the udev rule and log out and in. |
+| Scan USB shows "No NewAE USB devices found." | Check the cable (some USB cables are charge-only) and try another port. On Windows check Device Manager for an old libusb-win32 driver (see the Platform card); on Linux install the udev rule and log out and in. |
 | Connecting fails with a permission or access error (Linux) | The udev rule is missing or your user is not yet in the `chipwhisperer` group. Run the command from the Platform card, log out and back in, and re-plug. |
 | Connecting fails because the device is in use | Another program (Jupyter, a second Studio) has the device open. Close it or disconnect there. |
 | Scope connects but behaves oddly | Disconnect, tick **force FPGA reprogram** and connect again. |

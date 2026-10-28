@@ -8,7 +8,7 @@ No. It is an independent open source project and is not affiliated with or endor
 
 ### Has it been tested on real hardware?
 
-Not yet. Studio has been tested with its built-in simulator and in automated builds on Linux, Windows and macOS, which download real compilers and build real ChipWhisperer firmware. Because every hardware call goes through the unmodified `chipwhisperer` library it is expected to work, but please report anything that does not ([Troubleshooting](Troubleshooting)).
+Yes, on one setup so far: a ChipWhisperer-Husky with a CW308 SAM4S target ran the staged session in `tests/hardware` end to end (firmware build and flash, SimpleSerial, capture, CPA recovering the full AES-128 key, a reliable voltage glitch, the logic analyser and the other interfaces, notebooks and the MCP server). Everything else is covered by the built-in simulator and by automated builds on Linux, Windows and macOS, which download real compilers and build real ChipWhisperer firmware. The Nano, Lite, Pro and Husky Plus have not been tried on real hardware yet. Every hardware call goes through the unmodified `chipwhisperer` library, so they are expected to work, but please report anything that does not ([Troubleshooting](Troubleshooting)).
 
 ### Which hardware is supported?
 
@@ -88,7 +88,7 @@ Yes, through the MCP server (`cw-studio mcp`), which offers 106 tools covering e
 
 ### Why are the downloads so large?
 
-Each download is about 72 MB. The standalone bundles contain a complete Python runtime, numpy, matplotlib, the `chipwhisperer` library (with its FPGA bitstreams), libusb and the Unicorn CPU emulator, so they run without anything installed. Compilers and OpenOCD are not included; they are downloaded only when you need them.
+Each download is 55 to 75 MB, depending on the system and build. The standalone bundles contain a complete Python runtime, numpy, matplotlib, the `chipwhisperer` library (with its FPGA bitstreams), libusb and the Unicorn CPU emulator, so they run without anything installed. Compilers and OpenOCD are not included; they are downloaded only when you need them.
 
 ### Why does clang fail for some platforms?
 

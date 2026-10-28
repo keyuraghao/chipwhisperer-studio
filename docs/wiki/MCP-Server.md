@@ -24,7 +24,7 @@ When you run `cw-studio mcp`, the server first checks whether a Studio answers a
 2. If nothing answers, the server starts a headless Studio inside the same process (API and UI, no browser window) on `--port` (default 8765, or the next free port). Its UI URL is printed to stderr and is also returned by the `open_ui` and `studio_status` tools, so you can still open it in a browser to watch.
 3. With `--no-embed`, the server refuses to start its own Studio and exits with an error if none is running.
 
-> **Note:** Studio has been tested with the built-in simulator and in CI on Linux, Windows and macOS. It has not yet been verified on physical ChipWhisperer hardware, so treat hardware results from an agent with the same care as your own first experiments.
+> **Note:** Studio has been verified on a ChipWhisperer-Husky with a CW308 SAM4S target (including the MCP server, in the staged session in `tests/hardware`), with the built-in simulator and in CI on Linux, Windows and macOS. Other models have not been tried on real hardware yet, so treat hardware results from an agent with the same care as your own first experiments.
 
 ## Setup
 

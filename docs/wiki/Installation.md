@@ -23,7 +23,7 @@ The window uses the web engine that comes with the operating system: Microsoft E
 
 | Platform | Files | Notes |
 |----------|-------|-------|
-| Windows 10 and 11 (64-bit Intel/AMD) | `ChipWhispererStudio-windows-x86_64.zip`, `ChipWhispererStudio-Web-windows-x86_64.zip` | Needs the WinUSB driver for ChipWhisperer devices |
+| Windows 10 and 11 (64-bit Intel/AMD) | `ChipWhispererStudio-windows-x86_64.zip`, `ChipWhispererStudio-Web-windows-x86_64.zip` | Current ChipWhisperer firmware needs no driver on Windows 10 and 11; details below for ChipWhisperer devices |
 | macOS on Apple Silicon (M1 and newer) | `ChipWhispererStudio-macos-arm64.zip`, `ChipWhispererStudio-Web-macos-arm64.zip` | Intel Macs are not supported by the bundle yet; use the [Python package](#python-package) |
 | Linux (64-bit Intel/AMD) | `ChipWhispererStudio-linux-x86_64.zip`, `ChipWhispererStudio-Web-linux-x86_64.zip` | Built on Ubuntu 22.04, so it needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later) |
 
@@ -35,7 +35,7 @@ Each zip contains one folder (`ChipWhispererStudio` or `ChipWhispererStudio-Web`
 - `50-newae.rules` (Windows and Linux folders): NewAE's Linux udev rule for ChipWhisperer devices.
 - `README.md`, `LICENSE.txt` and `NOTICE.txt`.
 
-Everything Studio needs (its own Python runtime, the `chipwhisperer` library, `libusb`, the Unicorn CPU emulator for the [code map](Code-on-the-Waveform) and all other dependencies) is inside the application. Each zip is about 72 MB.
+Everything Studio needs (its own Python runtime, the `chipwhisperer` library, `libusb`, the Unicorn CPU emulator for the [code map](Code-on-the-Waveform) and all other dependencies) is inside the application. Each zip is 55 to 75 MB, depending on the system and build.
 
 With the window build, closing the window quits Studio. With the Web build, your browser opens Studio's address (normally `http://127.0.0.1:8765/`); on Windows and Linux a console window shows it, and closing the console stops the application (on macOS, quit the app).
 
@@ -49,7 +49,7 @@ With the window build, closing the window quits Studio. With the Web build, your
 
 The window uses Microsoft Edge WebView2, which is part of Windows 10 and 11. On the rare system without it, Studio opens in the browser instead; installing the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/) from Microsoft brings the window back.
 
-**USB driver.** ChipWhisperer devices need the WinUSB driver on Windows. If your ChipWhisperer is not detected, install the NewAE driver package as described in [NewAE's Windows driver instructions](https://chipwhisperer.readthedocs.io/en/latest/windows-install.html#windows-drivers), or assign WinUSB with Zadig. The Connect tab on Windows links to the same page.
+**USB driver.** With ChipWhisperer firmware 0.23 / 1.23 or newer (since November 2020) Windows 10 and 11 load the WinUSB driver by themselves. If the device is not detected, open Device Manager: a device listed under *libusb-win32 devices* still has the old NewAE driver package, which blocks the connection; right-click it, choose Uninstall device, tick *Delete the driver software for this device*, then unplug and replug. Only very old firmware needs WinUSB assigned with Zadig before a firmware upgrade. The Connect tab shows this hint and links to [NewAE's driver page](https://chipwhisperer.readthedocs.io/en/latest/drivers.html).
 
 ### macOS
 
@@ -59,7 +59,7 @@ The window uses Microsoft Edge WebView2, which is part of Windows 10 and 11. On 
 4. If macOS says the app "is damaged" or refuses to open it, remove the download quarantine flag in Terminal and try again: `xattr -dr com.apple.quarantine "/Applications/ChipWhisperer Studio.app"`
 5. Studio opens in its window (or your browser for the Web build).
 
-No USB driver is needed on macOS. If a device is not detected, try another cable or USB port. To use command-line options, run the program inside the app, for example `"/Applications/ChipWhisperer Studio.app/Contents/MacOS/ChipWhispererStudio" --simulate`.
+No USB driver is needed on macOS with the bundle (it ships libusb). If a device is not detected, try another cable or USB port. To use command-line options, run the program inside the app, for example `"/Applications/ChipWhisperer Studio.app/Contents/MacOS/ChipWhispererStudio" --simulate`.
 
 ### Linux
 
@@ -105,7 +105,7 @@ This installs the `chipwhisperer` library from PyPI together with Studio's other
 
 The wheel is also attached to every [GitHub release](https://github.com/keyuraghao/chipwhisperer-studio/releases), and you can install the latest development version straight from the repository: `pip install git+https://github.com/keyuraghao/chipwhisperer-studio@dev`
 
-The USB driver (Windows) and udev rule (Linux) steps above apply to the Python package too.
+The udev rule (Linux) and the Windows notes above apply to the Python package too; on macOS a pip installation also needs libusb (`brew install libusb`), which only the bundle ships.
 
 ### Window or browser
 
@@ -139,13 +139,13 @@ Everything Studio creates goes into one data folder, `ChipWhispererStudio` in yo
 | `exports/` and the folder itself | Trace and glitch exports. A relative file name in an export dialog is saved inside the data folder. |
 | `logic/` | Logic analyser files: `captures/` (copies kept on disk), `exports/`, `imports/` and `sigrok/`. See [Logic Analyser](Logic-Analyser#files). |
 | `codemap/uploads/` | ELF files uploaded in the Code tab. |
-| `studio.log` | Studio's messages when it runs without a console (the window build on Windows). It is always in `~/ChipWhispererStudio`, even with `--data-dir`. |
+| `studio.log` | Studio's messages. Every standalone bundle writes it, also when started from a terminal; a `pip` installation logs to the terminal only. It is always in `~/ChipWhispererStudio`, even with `--data-dir`. |
 
 Captured traces live in memory while Studio runs. Export them (see [Capturing Traces](Capturing-Traces)) if you want to keep them.
 
 ## Disk space
 
-The download is about 72 MB and the application needs about 150 to 300 MB once extracted. Compilers are only downloaded when you first build firmware for that architecture, and they are large:
+The download is 55 to 75 MB and the application needs about 150 to 300 MB once extracted. Compilers are only downloaded when you first build firmware for that architecture, and they are large:
 
 | Toolchain | Download | On disk (approximately) |
 |-----------|----------|-------------------------|

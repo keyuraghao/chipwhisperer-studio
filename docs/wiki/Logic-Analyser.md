@@ -44,7 +44,7 @@ Each capture records one group of nine signals:
 | **Clock** | **USB 96 MHz**, **target (HS1/AUX)** or **Husky PLL**: the clock the sampling clock is derived from. |
 | **Oversampling**, **Downsample** | The sample rate is clock x oversampling / downsample (downsample 1 to 65,536, default 96, which gives 1 MHz from the USB clock). The rate line under the form shows the result, for example *1.000 MHz sampling, 16376 samples = 16.376 ms after the trigger*. The Husky's logic analyser is specified up to 250 MHz. |
 | **Depth** | Samples per signal: up to 16,376 on the Husky and 65,535 on the Husky Plus (an even number). |
-| **Trigger** | `capture` (the scope's capture trigger), `manual` (fires right after arming: shows whatever is on the pins), the glitch triggers (`glitch`, `glitch_source`, `glitch_trigger`, `trigger_glitch`), `HS1`, an edge on a TIO pin (`rising_tio1` ... `falling_tio4`) or a USERIO pin (`rising_userio_d0` ... `falling_userio_d7`). |
+| **Trigger** | `capture` (the scope's capture trigger), `manual` (fires right after arming: shows whatever is on the pins), the glitch triggers (`glitch`, `glitch_source`, `glitch_trigger`, `trigger_glitch`), `HS1`, an edge on a TIO pin (`rising_tio1` ... `falling_tio4`) or a USERIO pin (`rising_userio_d0` ... `falling_userio_d7`), or the Husky's `trigger signal 0` and `trigger signal 1`. |
 | **Fire target** | **send a SimpleSerial command** makes the target raise its trigger (the default for the capture and glitch triggers when a target is connected); **no** waits for the trigger. |
 | **Also capture the ADC trace** | With the `capture` trigger, keeps the scope's power trace as an analog row on the same time base. |
 | **Timeout (s)** | How long to wait for the trigger (default 5 s). |
@@ -69,7 +69,7 @@ The analog samples stay visible as the **ADC input** row with the threshold draw
 
 With the simulator connected (any model), this source generates 18 channels of traffic around a SimpleSerial encryption, with t = 0 at the trigger: the plaintext command on **UART RX** before the trigger, the ciphertext on **UART TX** after it, a **TRIG** pulse, a 1 MHz **CLK**, an SPI flash reading its JEDEC ID and data, an I2C EEPROM read with a repeated start and a NACKed probe, a 1-Wire reset, presence and Read ROM, a standard and an extended CAN frame, JTAG reading an Arm IDCODE, and SWD reading DPIDR with OK, WAIT and FAULT answers.
 
-Settings: the sample rate (1 to 100 MHz, default 4 MHz), the duration (default 25 ms), how much is before the trigger (default 40 percent), which channels, edge jitter and noise spikes per millisecond (to try the glitch filter), and whether to send a real plaintext to the simulated target. A simulated Husky also has a simulated built-in logic analyser, with the same traffic wired to its pins.
+Settings: the sample rate (1 to 100 MHz in the tab, up to 1 GHz over the API; default 4 MHz), the duration (default 25 ms), how much is before the trigger (default 40 percent), which channels, edge jitter and noise spikes per millisecond (to try the glitch filter), and whether to send a real plaintext to the simulated target. A simulated Husky also has a simulated built-in logic analyser, with the same traffic wired to its pins.
 
 ### External analysers (sigrok)
 

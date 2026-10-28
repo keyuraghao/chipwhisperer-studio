@@ -4,6 +4,17 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+### Added
+
+- The Scope tab's waveform follows a glitch sweep: every point's captured trace is shown as it is taken (`display` in the sweep parameters turns it off).
+
+### Fixed
+
+- A distribution `gcc-arm-none-eabi` without newlib-nano (Debian, Ubuntu, Kali) is no longer picked as the fallback compiler; the build says why and points at the managed GNU Arm toolchain instead of failing in the link with "cannot read spec file nano.specs".
+- Dead code removed across the backend, the UI and the tests (unused helpers, write-only attributes, unreachable branches, CSS rules and exports nothing used), and the docstrings, help texts, wiki pages and MCP tool descriptions were checked against the code and corrected where they had drifted (CLI help, export and import formats, the `openocd` toolchain id, the sweep legend, the hardware session's stage list and knobs).
+- The `target_connect` tool's docstring and the agent skill named the CW305 bitstream option `bitfile`; the `chipwhisperer` library expects `bsfile`.
+- Documentation: the wiki, README, bundle README and agent skill no longer say Studio is untested on real hardware (a Husky with a CW308 SAM4S target ran the full staged session just before 0.5.2 was cut), the bundle sizes are given as the real 55 to 75 MB range, starting Studio twice is described as it works (the running Studio is opened), `studio.log` is described as written by every bundle, the simulator's CPA trace count and firmware programming are described correctly, and the test and tools tables list every file.
+
 ## [0.5.2] - 2026-10-05
 
 ### Added
@@ -288,7 +299,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.4...v0.4.5

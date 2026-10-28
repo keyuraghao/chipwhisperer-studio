@@ -135,7 +135,7 @@ Numbers are recognised in decimal (`42`, `-3.5`, `.5`), scientific (`1e-6`, `2.5
 | Action | HTTP API | MCP tool |
 |--------|----------|----------|
 | List notes | `GET /api/notes` | `notes_list` |
-| Create a note | `POST /api/notes` with `{"name": "..."}` | `note_write` creates missing notes |
+| Create a note | `POST /api/notes` with `{"name": "...", "text": "..."}` (`text` optional) | `note_write` creates missing notes |
 | Read a note | `GET /api/notes/{name}` | `note_read` |
 | Write or rename a note | `PUT /api/notes/{name}` with `{"text": "...", "rename": "new name.md"}` | `note_write` (append by default) |
 | Delete a note | `DELETE /api/notes/{name}` | |

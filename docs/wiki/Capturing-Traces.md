@@ -65,10 +65,10 @@ Traces are stored in memory as 32 bit floats, up to a limit of 200,000 traces pe
 
 ## Exporting traces
 
-Choose a format next to **Export** and type a name, then:
+Choose a format next to **Export**, then:
 
-- **Save on Studio machine** writes the file on the computer running Studio. A plain name like `traces` is saved inside the Studio data directory (by default `~/ChipWhispererStudio`); an absolute path is used as is.
-- **Download in browser** creates the file in the data directory's `exports` folder and downloads it through your browser. For the NumPy `.npy` set, which consists of four files, the download is a single `traces_npy.zip` containing all of them. A ChipWhisperer project downloads as `traces_cwp.zip` with the `.cwp` file and its `traces_data` folder; unzip it to open it with `cw.open_project()`, or import the zip into Studio as it is.
+- **Save on Studio machine** writes the file under the name you typed on the computer running Studio. A plain name like `traces` is saved inside the Studio data directory (by default `~/ChipWhispererStudio`); an absolute path is used as is.
+- **Download in browser** ignores the name field: it creates `traces.<ext>` in the data directory's `exports` folder (overwriting the previous download) and downloads it through your browser. For the NumPy `.npy` set, which consists of four files, the download is a single `traces_npy.zip` containing all of them. A ChipWhisperer project downloads as `traces_cwp.zip` with the `.cwp` file and its `traces_data` folder; unzip it to open it with `cw.open_project()`, or import the zip into Studio as it is.
 
 | Format | What you get | Best for |
 |--------|--------------|----------|

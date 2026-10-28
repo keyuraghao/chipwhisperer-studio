@@ -21,7 +21,7 @@ This page explains every part of the Studio window: the top bar, the navigation,
 
 - **Logo, name and version.** The small badge next to the name shows the version you are running.
 - **Status chips.** Three rounded chips show the scope, the target and the current job:
-  - The **scope** chip shows the device name and serial number (for example `ChipWhisperer-Simulator · SIM000001`) with a green dot when connected, or **No scope**.
+  - The **scope** chip shows the device name and serial number (for example `ChipWhisperer-Simulator (Husky) · SIM000001`) with a green dot when connected, or **No scope**.
   - The **target** chip shows the target type (for example `SimpleSerial2`) or **No target**.
   - The **job** chip shows **Idle**, or the running job with its progress and rate (for example `capture: 120/500 · 850/s`) with a pulsing amber dot. It turns red if the last job ended with an error.
 - **Single** captures one trace. **Run** starts a capture with the settings of the [Capture tab](Capturing-Traces). **Stop** stops the running capture or glitch sweep. Single and Run are disabled until a scope is connected.
