@@ -1,6 +1,6 @@
 # ChipWhisperer Studio MCP tool reference
 
-Generated from the MCP server of chipwhisperer-studio 0.5.2 by tools/skill_reference.py (106 tools). Do not edit by hand.
+Generated from the MCP server of chipwhisperer-studio 0.5.3 by tools/skill_reference.py (106 tools). Do not edit by hand.
 
 Each entry: `name(arguments)` with defaults (`?` means optional with no default), whether it changes anything, then the server's own description. Every result arrives wrapped as `{"result": ...}`.
 

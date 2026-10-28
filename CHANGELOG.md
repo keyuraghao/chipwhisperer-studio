@@ -4,6 +4,8 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-28
+
 ### Added
 
 - The Scope tab's waveform follows a glitch sweep: every point's captured trace is shown as it is taken (`display` in the sweep parameters turns it off).
@@ -299,7 +301,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.4.5...v0.5.0
