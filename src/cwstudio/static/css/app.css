@@ -585,3 +585,23 @@ table.tbl.pins .btn.sm { height: 24px; padding: 0 7px; font-size: 11.5px; }
 .cm-meter.medium > i { background: var(--warn); } .cm-meter.low > i { background: var(--err); }
 .cm-nudge { display: inline-flex; gap: 2px; }
 .cm-nudge .btn.sm { padding: 0 7px; min-width: 26px; }
+
+/* Quick Info: pin diagram of the connected ChipWhisperer (Connect tab) */
+.pinmap { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 8px 0; font-size: 11.5px; }
+.pinmap .pin { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 4px; border-radius: 4px; cursor: default; }
+.pinmap .pin:hover { background: var(--surface-3); }
+.pinmap .pin .num { width: 20px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.pinmap .pin .sq { width: 11px; height: 11px; border-radius: 3px; border: 1px solid var(--border); background: var(--surface-3); flex: none; }
+.pinmap .pin.first .sq { border-radius: 50%; }
+.pinmap .pin.power .sq { background: var(--err); border-color: var(--err); }
+.pinmap .pin.ground .sq { background: var(--fg-2); border-color: var(--fg-2); }
+.pinmap .pin.io .sq { background: var(--accent); border-color: var(--accent); }
+.pinmap .pin.spi .sq { background: var(--info); border-color: var(--info); }
+.pinmap .pin.clock .sq { background: var(--warn); border-color: var(--warn); }
+.pinmap .pin.reset .sq { background: var(--ok); border-color: var(--ok); }
+.pinmap .pin.nc { opacity: .55; }
+.pinmap .pin .nm { font-family: var(--mono, ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pinmap .pin .al { color: var(--muted); white-space: nowrap; }
+.pinlegend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin: 2px 0 6px; }
+.pinlegend .pin { padding: 0; }
+.pinlegend .pin:hover { background: none; }

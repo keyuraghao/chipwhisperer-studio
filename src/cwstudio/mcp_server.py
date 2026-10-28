@@ -193,6 +193,11 @@ def build_server(client: StudioClient, url_note: str = ""):
         return client.get("/api/devices")
 
     @mcp.tool(annotations=RO)
+    def scope_pinout() -> Dict[str, Any]:
+        """Pin diagram of the ChipWhisperer Studio has open (the active device): every pin of the 20-pin target header with its number, name, direction, function and scope.io alias, the Husky USERIO header, the coax ports and model notes. connected False with the message "No ChipWhisperer connected" when no scope is open."""
+        return client.get("/api/pinout")
+
+    @mcp.tool(annotations=RO)
     def get_logs(since_seq: int = 0, limit: int = 200, level: Optional[Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]] = None) -> List[Dict[str, Any]]:
         """Recent Studio and ChipWhisperer log messages (also capture and glitch events), optionally only those after sequence number since_seq or at a given level."""
         items = client.get("/api/logs", since=since_seq)

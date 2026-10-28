@@ -1,6 +1,6 @@
 # ChipWhisperer Studio MCP tool reference
 
-Generated from the MCP server of chipwhisperer-studio 0.5.3 by tools/skill_reference.py (106 tools). Do not edit by hand.
+Generated from the MCP server of chipwhisperer-studio 0.5.3 by tools/skill_reference.py (107 tools). Do not edit by hand.
 
 Each entry: `name(arguments)` with defaults (`?` means optional with no default), whether it changes anything, then the server's own description. Every result arrives wrapped as `{"result": ...}`.
 
@@ -14,6 +14,7 @@ Each entry: `name(arguments)` with defaults (`?` means optional with no default)
 
 ## Scope
 
+- `scope_pinout()` [read only]: Pin diagram of the ChipWhisperer Studio has open (the active device): every pin of the 20-pin target header with its number, name, direction, function and scope.io alias, the Husky USERIO header, the coax ports and model notes. connected False with the message "No ChipWhisperer connected" when no scope is open.
 - `scope_connect(kind='auto', sn=None, force=False, default_setup=True, sim_model=None)` [changes state]: Connect to a capture scope. kind='sim' uses the built-in simulator (no hardware); sim_model picks which ChipWhisperer it stands in for (default husky), which decides the protocols, triggers and programmers offered. sn picks a device by serial number, force reconnects a device another program left open, default_setup applies ChipWhisperer's recommended settings for the default target.
 - `scope_disconnect()` [changes state]: Disconnect the scope (and release the USB device).
 - `scope_get_settings(filter=None, include_docs=False)` [read only]: All scope settings as a flat list of {path, value, type, writable, choices} read back from the hardware; filter keeps paths containing the text (e.g. 'glitch', 'adc', 'clock'); include_docs adds each setting's documentation.

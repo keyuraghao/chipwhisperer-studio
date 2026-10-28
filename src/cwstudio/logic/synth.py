@@ -83,7 +83,8 @@ def _render_clock(c: Clock, sr: float, t_start: float, n: int) -> Tuple[int, np.
         i0 = max(0, int(math.ceil((lo - t_start) * sr)))
         i1 = min(n, int(math.ceil((hi - t_start) * sr)))
         t = t_start + np.arange(i0, i1) / sr
-        bits = (np.mod((t - c.phase) * c.freq, 1.0) < c.duty).astype(np.int8)
+        # same rule as _render_line: a sample sees an edge at or before its instant, with the same 1e-6 sample tolerance so an edge exactly on a sample is not lost to floating point
+        bits = (np.mod((t - c.phase) * c.freq + 1e-6 * c.freq / sr, 1.0) < c.duty).astype(np.int8)
         full = np.full(n, c.init, np.int8)
         full[i0:i1] = bits
         from cwstudio.logic.model import edges_from_bits

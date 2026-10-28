@@ -116,6 +116,12 @@ def create_app(session: Session) -> App:
             return caps(None)  # nothing to read from hardware
         return await run(session.worker.call, caps, scope, target, timeout=30)  # firmware features and component probes are scope reads: they run on the hardware thread like every other
 
+    @app.get("/api/pinout")
+    async def pinout():
+        """Pin diagram of the scope Studio has open (the active device, not the first on the bus): the 20-pin target header, the Husky USERIO header and the coax ports, or connected False when none. Built from the cached scope info, so it never waits for the hardware thread."""
+        from cwstudio.pinout import pinout as pins
+        return pins(session.scope_info())
+
     @app.get("/api/devices")
     async def devices():
         try:

@@ -442,9 +442,13 @@ class SimScope:
         from cwstudio.codemap.sim import load
         return load(self, path)
 
+    ADC_BITS = {"nano": 8, "lite": 10, "pro": 10, "husky": 12, "huskyplus": 12}  # chipwhisperer: the Nano's ADC is 8-bit, the Lite's and Pro's 10-bit, the Husky's 12-bit
+
     def get_last_trace(self, as_int: bool = False) -> np.ndarray:
+        """The last trace as floats in -0.5 to 0.5 or, with ``as_int``, as the raw unsigned ADC codes of the model (float = code / 2**bits - 0.5, like the hardware)."""
         if as_int:
-            return (self._last_trace * 512).astype(np.int16)
+            full = 1 << self.ADC_BITS.get(self.sim_model, 10)
+            return np.clip(np.round((self._last_trace.astype(np.float64) + 0.5) * full), 0, full - 1).astype(np.int16)
         return self._last_trace
 
     # --- leakage model ------------------------------------------------------
@@ -461,6 +465,15 @@ class SimScope:
         if spc == 4:
             return self.leak_start, self.leak_spacing
         return int(round(self.leak_start * spc / 4)), max(1, int(round(self.leak_spacing * spc / 4)))
+
+    def _leak_width(self) -> int:
+        """Sigma (samples) of a byte's S-box dip: 6 at 4 samples per clock, scaled with the ADC clock like the positions (the dip lasts a fixed number of target clocks)."""
+        return max(1, int(round(6 * self._spc() / 4)))
+
+    def _round_shape(self):
+        """Half-window and sigma (samples) of the per-round activity bumps: 40 and 15 at 4 samples per clock."""
+        f = self._spc() / 4
+        return max(2, int(round(40 * f))), max(1.0, 15.0 * f)
 
     def _background(self, n: int) -> np.ndarray:
         """Clock ripple + slow envelope for `n` samples (key independent, cached)."""
@@ -480,9 +493,9 @@ class SimScope:
 
         Returns None when the per-byte windows overlap (custom leak_spacing), in which case `_synth` applies them one by one so every sample sees the same sequence of float32 roundings.
         """
-        width = 6
+        width = self._leak_width()
         leak_start, leak_spacing = self._leak_pos()
-        geo_key = (n, offset, leak_start, leak_spacing)
+        geo_key = (n, offset, leak_start, leak_spacing, width)
         cached = self._geo_cache
         if cached is not None and cached[0] == geo_key:
             return cached[1]
@@ -498,12 +511,13 @@ class SimScope:
                     b_shape.append(np.exp(-0.5 * ((idx - center) / width) ** 2))
             r_idx, r_shape = [], []
             r_start = leak_start + 16 * leak_spacing - offset
+            r_half, r_sigma = self._round_shape()
             for r in range(9):
                 c = r_start + r * 16 * leak_spacing
                 if 0 <= c < n:
-                    idx = np.arange(max(0, c - 40), min(n, c + 40))
+                    idx = np.arange(max(0, c - r_half), min(n, c + r_half))
                     r_idx.append(idx)
-                    r_shape.append(0.12 * np.exp(-0.5 * ((idx - c) / 15.0) ** 2))
+                    r_shape.append(0.12 * np.exp(-0.5 * ((idx - c) / r_sigma) ** 2))
             cat = lambda parts, dt: np.concatenate(parts) if parts else np.zeros(0, dt)  # noqa: E731
             geo = (cat(b_idx, np.intp), cat(b_win, np.intp), cat(b_shape, np.float64),
                    cat(r_idx, np.intp), cat(r_shape, np.float64))
@@ -531,12 +545,13 @@ class SimScope:
                 wave[r_idx] -= r_shape
         else:
             leak_start, leak_spacing = self._leak_pos()
+            width = self._leak_width()
+            r_half, r_sigma = self._round_shape()
             if has_key:
                 for b in range(16):
                     center = leak_start + b * leak_spacing - offset
                     if 0 <= center < n:
                         hw = int(HW[SBOX[pt[b] ^ key[b]]])
-                        width = 6
                         lo, hi = max(0, center - 3 * width), min(n, center + 3 * width)
                         idx = np.arange(lo, hi)
                         bump = np.exp(-0.5 * ((idx - center) / width) ** 2)
@@ -545,9 +560,9 @@ class SimScope:
             for r in range(9):
                 c = r_start + r * 16 * leak_spacing
                 if 0 <= c < n:
-                    lo, hi = max(0, c - 40), min(n, c + 40)
+                    lo, hi = max(0, c - r_half), min(n, c + r_half)
                     idx = np.arange(lo, hi)
-                    wave[lo:hi] -= 0.12 * np.exp(-0.5 * ((idx - c) / 15.0) ** 2)
+                    wave[lo:hi] -= 0.12 * np.exp(-0.5 * ((idx - c) / r_sigma) ** 2)
         wave *= gain_scale
         return np.clip(wave, -0.5, 0.5).astype(np.float32)
 

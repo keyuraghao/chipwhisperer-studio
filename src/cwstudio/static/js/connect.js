@@ -84,6 +84,50 @@ export function initConnect(ctx, el) {
     } catch (e) { showErr(targetErr, e.message); toast(e.message, 'err', 8000); ctx.refreshStatus(); } finally { btnTarget.disabled = false; }
   }
 
+  // Quick Info: the pin diagram of the scope Studio has open (the active device, not the first one on the bus). Redrawn from /api/pinout whenever the status says the scope changed.
+  const quick = h('div', { class: 'card' });
+  const ROLES = [['power', 'power'], ['ground', 'ground'], ['io', 'target IO'], ['spi', 'SPI / programming'], ['clock', 'clock'], ['reset', 'reset'], ['nc', 'not connected']];
+  let quickKey = null;
+  function pinEl(p) {
+    const el = h('div', { class: `pin ${p.role}${p.pin === 1 ? ' first' : ''}`, title: `${p.pin}: ${p.name}${p.dir ? ' (' + p.dir + ')' : ''}\n${p.function}${p.alias ? '\nscope.io: ' + p.alias : ''}` },
+      h('span', { class: 'num' }, String(p.pin)), h('span', { class: 'sq' }), h('span', { class: 'nm' }, p.name));
+    if (p.alias) el.append(h('span', { class: 'al' }, p.alias));
+    return el;
+  }
+  function paintQuick(po) {
+    quick.innerHTML = '';
+    quick.append(h('h2', {}, 'Quick Info'));
+    if (!po.connected) { quick.append(h('div', { class: 'help' }, po.message || 'No ChipWhisperer connected')); return; }
+    const d = po.device || {};
+    quick.append(h('div', { class: 'help' }, `${po.label || d.name || '?'}${d.sn ? ' · sn ' + d.sn : ''}${d.simulated ? ' (simulated)' : ''}${d.hw_loc ? ' · bus ' + d.hw_loc[0] + ' addr ' + d.hw_loc[1] : ''}`));
+    if (po.message) { quick.append(h('div', { class: 'help warn' }, po.message)); return; }
+    quick.append(h('div', { class: 'pinlegend' }, ...ROLES.map(([r, t]) => h('span', { class: 'pin ' + r }, h('span', { class: 'sq' }), t))));
+    (po.connectors || []).forEach((c) => {
+      quick.append(h('div', { class: 'card-head', style: 'margin:8px 0 2px' }, h('span', { class: 'title' }, c.name)));
+      // two rows of the header side by side: odd pins left, even pins right, as on the board seen from above
+      const grid = h('div', { class: 'pinmap' });
+      const pins = c.pins.slice().sort((a, b) => a.pin - b.pin);
+      for (let i = 0; i < pins.length; i += 2) { grid.append(pinEl(pins[i])); if (pins[i + 1]) grid.append(pinEl(pins[i + 1])); }
+      quick.append(grid);
+      if (c.note) quick.append(h('div', { class: 'help' }, c.note));
+    });
+    if (po.ports && po.ports.length) {
+      quick.append(h('div', { class: 'card-head', style: 'margin:8px 0 2px' }, h('span', { class: 'title' }, 'Ports')));
+      const kv = h('div', { class: 'kv' });
+      po.ports.forEach((p) => kv.append(h('span', { class: 'k' }, `${p.name} (${p.kind})`), h('span', {}, p.function)));
+      quick.append(kv);
+    }
+    (po.notes || []).forEach((n) => quick.append(h('div', { class: 'help' }, n)));
+  }
+  paintQuick({ connected: false });
+  async function refreshQuick(sc) {
+    const key = sc.connected ? [sc.type, sc.sim_model, sc.sn, sc.name, sc.pending ? 'p' : ''].join('|') : null;
+    if (key === quickKey) return;
+    quickKey = key;
+    if (!sc.connected) { paintQuick({ connected: false }); return; }
+    try { paintQuick(await get('/api/pinout')); } catch (e) { quickKey = null; paintQuick({ connected: true, label: sc.name || sc.type, message: 'Could not load the pin diagram: ' + e.message }); }
+  }
+
   const platCard = h('div', { class: 'card' }, h('h2', {}, `Platform: ${plat.os || '?'}`), h('div', { class: 'help' }, plat.note || ''));
   if (plat.udev_install_cmd) {
     platCard.append(h('div', { class: 'help' }, 'Linux needs a udev rule so you can access the device without root:'),
@@ -108,10 +152,12 @@ export function initConnect(ctx, el) {
       h('div', { class: 'row' }, btnTarget, btnTargetDis),
       targetErr),
     h('h2', {}, 'Status'), h('div', { class: 'card' }, info),
+    quick,
     platCard,
   );
 
   ctx.on('status', (st) => {
+    refreshQuick(st.scope);
     info.innerHTML = '';
     const rows = [['Scope', st.scope.connected ? `${st.scope.name || st.scope.type}${st.scope.sn ? ' (sn ' + st.scope.sn + ')' : ''}` : (st.scope.lost ? 'lost: ' + st.scope.lost : 'not connected')],
       ['Firmware', st.scope.fw_version ? JSON.stringify(st.scope.fw_version) : '-'],
