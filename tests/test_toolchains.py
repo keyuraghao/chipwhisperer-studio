@@ -4,6 +4,7 @@ import io
 import json
 import os
 import pathlib
+import sys
 import tarfile
 import zipfile
 
@@ -162,13 +163,25 @@ def test_firmware_folder_and_plan_errors(tmp_path):
 
 
 def _fake_gcc(bindir: pathlib.Path, name: str, nano_path):
-    """A stub <name> that answers -print-file-name=nano.specs with nano_path (or 'nano.specs' when None)."""
+    """A stub <name> that answers -print-file-name=nano.specs with nano_path (or 'nano.specs' when None).
+
+    A shell script on POSIX; Windows cannot run a script named .exe, so there the answer is kept in a sidecar file that the test's stand-in for subprocess.run reads (see _run_fake_gcc)."""
     bindir.mkdir(parents=True, exist_ok=True)
     out = str(nano_path) if nano_path else "nano.specs"
     p = bindir / name
     p.write_text("#!/bin/sh\nif [ \"$1\" = -print-file-name=nano.specs ]; then echo '%s'; fi\n" % out)
     p.chmod(0o755)
+    (bindir / (name + ".nano")).write_text(out)
     return p
+
+
+def _run_fake_gcc(cmd, **kw):
+    """subprocess.run stand-in for Windows: answers like the stub would."""
+    import subprocess
+    out = ""
+    if cmd[1:] == ["-print-file-name=nano.specs"]:
+        out = open(cmd[0] + ".nano").read()
+    return subprocess.CompletedProcess(cmd, 0, stdout=out + "\n", stderr="")
 
 
 def test_system_gcc_without_newlib_nano_is_not_used(tmp_path, monkeypatch):
@@ -178,6 +191,8 @@ def test_system_gcc_without_newlib_nano_is_not_used(tmp_path, monkeypatch):
                            "downloads": {"any": {"url": "https://x", "sha256": "0" * 64, "size": 1}}}]}
     tc = ToolchainManager(str(tmp_path / "data"), registry=reg)
     e = tc.entry("arm-gcc")
+    if sys.platform == "win32":
+        monkeypatch.setattr("cwstudio.toolchains.subprocess.run", _run_fake_gcc)
 
     # a distro gcc on PATH that cannot resolve nano.specs (Debian/Kali gcc-arm-none-eabi)
     sysbin = tmp_path / "sysbin"

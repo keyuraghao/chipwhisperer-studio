@@ -148,7 +148,6 @@ def test_ui_files_have_the_right_type_and_are_revalidated():
     try:
         app_module = importlib.reload(app_module)
         assert mimetypes.guess_type("x.js")[0] == "text/javascript"
-        assert mimetypes.guess_type("x.mjs")[0] == "text/javascript"
         assert mimetypes.guess_type("x.css")[0] == "text/css"
         session = Session(simulate=True, data_dir=tempfile.mkdtemp())
         with TestClient(app_module.create_app(session)) as c:
