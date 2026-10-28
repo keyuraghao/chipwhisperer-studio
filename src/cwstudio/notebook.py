@@ -34,7 +34,6 @@ import numpy as np
 from cwstudio.events import trace_event
 
 log = logging.getLogger("cwstudio.notebook")
-OutputFn = Callable[[Dict[str, Any]], None]
 
 
 # ----------------------------------------------------------------------------
@@ -636,7 +635,6 @@ class KernelManager:
                     e.kernel._flush_streams(e)
                 except Exception:  # noqa: BLE001
                     log.debug("output flusher", exc_info=True)
-            e = None
 
     def close(self):
         self._closed.set()
@@ -1574,7 +1572,7 @@ class StudioTarget(_Live):
 
 
 class _ProxyWithFrom(types.ModuleType):
-    """Result of ``from chipwhisperer import X``: the proxy's scope/target/capture_trace, everything else from the real module."""
+    """Result of ``from chipwhisperer import X``: the proxy's scope, target, capture_trace, program_target and plot, everything else from the real module."""
 
     def __init__(self, proxy, real):
         super().__init__("chipwhisperer")
@@ -1704,7 +1702,6 @@ class Tutorials:
             raise ValueError(f"on_modified must be one of {', '.join(self.MODES)}")
         if self.job.get("state") in ("resolving", "downloading", "extracting"):
             return self.status()
-        from cwstudio.toolchains import Cancelled  # noqa: F401
         self.job = {"state": "resolving", "done": 0, "total": 0, "error": None, "cancel": threading.Event()}
         th = threading.Thread(target=self._fetch, args=(on_modified,), name="fetch-tutorials", daemon=True)
         th.start()

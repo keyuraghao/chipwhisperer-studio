@@ -1,10 +1,11 @@
-"""Browser test of the Interfaces tab: with the simulator standing in for a Husky every Husky interface is enabled, as a Nano the SPI, USERIO, bit-banger and debug sections are disabled with their reasons, unsupported pins and programmers are not selectable, and the simulated SPI flash answers from the UI. Screenshots of both themes go to ``$CWSTUDIO_IFACE_SHOTS`` (default ``/tmp/claude-1000/interfaces``) for review.
+"""Browser test of the Interfaces tab: with the simulator standing in for a Husky every Husky interface is enabled, as a Nano the SPI, USERIO, bit-banger and debug sections are disabled with their reasons, unsupported pins and programmers are not selectable, and the simulated SPI flash answers from the UI. Screenshots of both themes go to ``$CWSTUDIO_IFACE_SHOTS`` (default ``<system temp folder>/cwstudio-shots/interfaces``) for review.
 
 Skipped when Playwright or its Chromium is not installed (``pip install playwright && playwright install chromium``).
 """
 import json
 import re
 import os
+import tempfile
 import socket
 import subprocess
 import sys
@@ -14,7 +15,7 @@ import urllib.request
 import pytest
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
-SHOTS = os.environ.get("CWSTUDIO_IFACE_SHOTS", "/tmp/claude-1000/interfaces")
+SHOTS = os.environ.get("CWSTUDIO_IFACE_SHOTS", os.path.join(tempfile.gettempdir(), "cwstudio-shots", "interfaces"))
 
 
 def _free_port() -> int:

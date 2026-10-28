@@ -5,7 +5,7 @@ import { renderMarkdown } from './notebook.js';
 // ---------------- statistics ----------------
 const NUM_RE = /[-+]?(?:0x[0-9a-fA-F]+|(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/g;
 
-export function parseNumbers(text) {
+function parseNumbers(text) {
   const out = [];
   for (const m of (text || '').matchAll(NUM_RE)) {
     const s = m[0];
@@ -15,7 +15,7 @@ export function parseNumbers(text) {
   return out;
 }
 
-export function computeStats(values) {
+function computeStats(values) {
   const a = Array.from(values).filter(Number.isFinite);
   const n = a.length;
   if (!n) return { count: 0 };
@@ -29,7 +29,7 @@ export function computeStats(values) {
   return { count: n, sum, mean, median, min, max, pk_pk: max - min, std: n > 1 ? Math.sqrt(dev / (n - 1)) : 0, variance: n > 1 ? dev / (n - 1) : 0, rms: Math.sqrt(sq / n), argmin: amin, argmax: amax };
 }
 
-export const fmtNum = (v) => (v == null || Number.isNaN(v) ? '' : Number.isInteger(v) && Math.abs(v) < 1e15 ? String(v) : Math.abs(v) >= 1e6 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(5) : v.toFixed(6).replace(/\.?0+$/, ''));
+const fmtNum = (v) => (v == null || Number.isNaN(v) ? '' : Number.isInteger(v) && Math.abs(v) < 1e15 ? String(v) : Math.abs(v) >= 1e6 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(5) : v.toFixed(6).replace(/\.?0+$/, ''));
 const LABELS = [['count', 'Count'], ['sum', 'Sum'], ['mean', 'Mean (average)'], ['median', 'Median'], ['min', 'Min'], ['max', 'Max'], ['pk_pk', 'Peak to peak'], ['std', 'Std deviation'], ['variance', 'Variance'], ['rms', 'RMS'], ['argmin', 'Index of min'], ['argmax', 'Index of max']];
 
 function statsTable(st, extra) {
@@ -40,7 +40,7 @@ function statsTable(st, extra) {
   return kv;
 }
 
-export function statsText(st, title) {
+function statsText(st, title) {
   if (!st || !st.count) return '';
   return `${title || 'Selection'}: ` + LABELS.filter(([k]) => st[k] != null).map(([k, l]) => `${l.toLowerCase()} ${fmtNum(st[k])}`).join(', ');
 }

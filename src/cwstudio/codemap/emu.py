@@ -88,19 +88,16 @@ class SimpleSerial:
                 c = ((c << 1) ^ 0x4D) & 0xFF if c & 0x80 else (c << 1) & 0xFF
         return c
 
-    def frame(self, cmd: str, data: bytes, scmd: Optional[int] = None) -> bytes:
+    def frame(self, cmd: str, data: bytes) -> bytes:
         data = bytes(data)
         if self.version != "2.1":
             return (cmd + data.hex() + "\n").encode()
-        if scmd is None:
-            if cmd == "p":
-                c, scmd = 0x01, 0x01
-            elif cmd == "k":
-                c, scmd = 0x01, 0x02
-            else:
-                c, scmd = ord(cmd[0]), 0
+        if cmd == "p":
+            c, scmd = 0x01, 0x01
+        elif cmd == "k":
+            c, scmd = 0x01, 0x02
         else:
-            c = ord(cmd[0]) if isinstance(cmd, str) else int(cmd)
+            c, scmd = ord(cmd[0]), 0
         buf = [0, c, scmd, len(data)] + list(data)
         buf.append(self.crc(buf[1:]))
         buf.append(0)
@@ -292,7 +289,7 @@ class UnicornMachine(_Machine):
                 self.uc.ctl_set_cpu_model(model)
             except Exception:  # noqa: BLE001
                 pass
-            self.PC, self.SP, self.LR, self.RET = A.UC_ARM_REG_PC, A.UC_ARM_REG_SP, A.UC_ARM_REG_LR, A.UC_ARM_REG_R0
+            self.PC, self.SP, self.RET = A.UC_ARM_REG_PC, A.UC_ARM_REG_SP, A.UC_ARM_REG_R0
             self.thumb = 1
         elif prog.arch == "riscv":
             from unicorn import riscv_const as RV
@@ -300,7 +297,7 @@ class UnicornMachine(_Machine):
             if prog.elfclass != 32:
                 raise EmuError("only 32-bit RISC-V (RV32) firmware is supported")
             self.uc = U.Uc(U.UC_ARCH_RISCV, U.UC_MODE_RISCV32)
-            self.PC, self.SP, self.LR, self.RET = RV.UC_RISCV_REG_PC, RV.UC_RISCV_REG_SP, RV.UC_RISCV_REG_RA, RV.UC_RISCV_REG_A0
+            self.PC, self.SP, self.RET = RV.UC_RISCV_REG_PC, RV.UC_RISCV_REG_SP, RV.UC_RISCV_REG_A0
             self.thumb = 0
         else:  # pragma: no cover
             raise EmuError(f"Unicorn cannot run {prog.arch}")

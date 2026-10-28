@@ -389,7 +389,7 @@ def test_openocd_toolchain_entry():
     assert raw["revision"] >= 2
 
 
-def test_openocd_tcl_against_real_binary(tmp_path):
+def test_openocd_tcl_against_real_binary():
     """Starts the system or managed OpenOCD with the dummy adapter (no hardware) and talks to it over TCL; skipped when no OpenOCD is installed."""
     import shutil
     import socket
@@ -458,7 +458,7 @@ MATRIX["huskyplus"] = MATRIX["husky"]
 
 @pytest.mark.parametrize("model", SIM_MODELS)
 def test_capability_matrix_exact(model):
-    """Every entry of build/research/protocols.md section 1 for each simulated model (the simulator stands in for the develop library, so the bit-banger is present on both Huskies)."""
+    """Every entry of the per-model capability matrix (MATRIX above) for each simulated model (the simulator stands in for the develop library, so the bit-banger is present on both Huskies)."""
     c = capabilities(SimScope(sim_model=model))
     x = MATRIX[model]
     nano, husky, hp, pro = model == "nano", model in ("husky", "huskyplus"), model == "huskyplus", model == "pro"

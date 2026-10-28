@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -94,7 +93,6 @@ class Session:
         self.programmed: Optional[Dict[str, Any]] = None  # the firmware programmed in this session: path, its ELF, whether the simulator emulates it
         self.worker.start()
         self.kernels = KernelManager(self, self.notebooks.root)  # one kernel per notebook, all cells on the hardware thread in one queue
-        self.kernel = self.kernels.default  # the shared default kernel (API and MCP calls without a notebook)
         self.worker.add_periodic("serial-poll", self._poll_serial, 0.1, only_idle=True)
         self.worker.add_periodic("status", self._push_status, 2.0, only_idle=False)
         self.worker.add_periodic("scope-alive", self._check_scope_alive, 3.0, only_idle=True)

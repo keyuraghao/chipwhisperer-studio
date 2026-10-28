@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 
-CMD_DATA, CMD_STAT, CMD_TIME, CMD_STRM = 0, 1, 2, 3
+CMD_STAT, CMD_TIME = 1, 2
 PC_HEADER = 0x17  # DWT hardware source packet, discriminator 2 (periodic PC sample), 4-byte payload
 PC_SLEEP = 0x15  # PC sample while sleeping, 1-byte payload
 

@@ -131,7 +131,7 @@ export function initCodeMap(ctx, el) {
   // ----- helpers -----
   const kv = (box, rows) => { box.innerHTML = ''; rows.forEach(([k, v, cls]) => { if (v === undefined) return; box.append(h('span', { class: 'k' }, k), h('span', { class: cls || '' }, v)); }); };
   const mapping = () => (st && st.mapping) || null;
-  const sample = (c) => { const m = mapping(); return c * m.samples_per_cycle + (m.intercept != null ? m.intercept : -(m.adc_offset || 0) / Math.max(1, m.decimate || 1) + (m.presamples || 0) + (m.shift || 0)); };
+  const sample = (c) => { const m = mapping(); return c * m.samples_per_cycle + m.intercept; };
   const fmt = (v) => (v == null ? '?' : fmtNum(Math.round(v) || 0));
 
   async function loadElfs() {

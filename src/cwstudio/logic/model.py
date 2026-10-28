@@ -57,15 +57,14 @@ def edges_from_bits(bits: np.ndarray, offset: int = 0) -> np.ndarray:
 class Channel:
     """One digital channel: name, display settings and its transitions."""
 
-    __slots__ = ("name", "init", "edges", "color", "hidden", "group")
+    __slots__ = ("name", "init", "edges", "color", "hidden")
 
-    def __init__(self, name: str, init: int, edges: np.ndarray, color: Optional[str] = None, hidden: bool = False, group: Optional[str] = None):
+    def __init__(self, name: str, init: int, edges: np.ndarray, color: Optional[str] = None, hidden: bool = False):
         self.name = str(name)
         self.init = int(init) & 1
         self.edges = np.asarray(edges)
         self.color = color
         self.hidden = bool(hidden)
-        self.group = group
 
     def value_at(self, idx):
         """Value(s) at sample index or index array."""
@@ -85,7 +84,7 @@ class Channel:
         return (res ^ v0).astype(np.uint8)
 
     def info(self, index: int) -> Dict[str, Any]:
-        return {"index": index, "name": self.name, "color": self.color, "hidden": self.hidden, "group": self.group, "edges": int(self.edges.shape[0]), "init": self.init}
+        return {"index": index, "name": self.name, "color": self.color, "hidden": self.hidden, "edges": int(self.edges.shape[0]), "init": self.init}
 
 
 class AnalogChannel:

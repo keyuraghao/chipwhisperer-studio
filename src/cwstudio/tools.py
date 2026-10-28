@@ -163,7 +163,7 @@ def _fmt(v) -> str:
     return str(v)
 
 
-def stats(values: Sequence[float], sample_rate: Optional[float] = None) -> Dict[str, Any]:
+def stats(values: Sequence[float]) -> Dict[str, Any]:
     """Summary statistics of a list or array of numbers."""
     a = np.asarray(values, dtype=np.float64).ravel()
     a = a[np.isfinite(a)]
@@ -171,6 +171,4 @@ def stats(values: Sequence[float], sample_rate: Optional[float] = None) -> Dict[
     if n == 0:
         return {"count": 0}
     out = {"count": n, "sum": float(a.sum()), "mean": float(a.mean()), "median": float(np.median(a)), "min": float(a.min()), "max": float(a.max()), "pk_pk": float(a.max() - a.min()), "std": float(a.std(ddof=1)) if n > 1 else 0.0, "variance": float(a.var(ddof=1)) if n > 1 else 0.0, "rms": float(np.sqrt(np.mean(a * a))), "argmin": int(a.argmin()), "argmax": int(a.argmax())}
-    if sample_rate:
-        out["duration_s"] = n / sample_rate
     return out

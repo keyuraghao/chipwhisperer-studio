@@ -405,7 +405,7 @@ export class Waveform {
     const hd = cur.header || {};
     const idx = hd.index != null && hd.index >= 0 ? `#${hd.index}` : (hd.stored === false ? 'not stored' : '');
     f.append(
-      h('span', {}, `${this.mode === 'browse' ? 'trace' : 'live'} <b>${idx}</b>`.replace('<b>', '').replace('</b>', '') ),
+      h('span', {}, `${this.mode === 'browse' ? 'trace' : 'live'} ${idx}`),
       h('span', {}, `${s.length} samples${this.sampleRate ? ' @ ' + (this.sampleRate / 1e6).toFixed(3) + ' MS/s' : ''}`),
       h('span', { html: `min <b>${mn.toFixed(4)}</b> max <b>${mx.toFixed(4)}</b> pk-pk <b>${(mx - mn).toFixed(4)}</b> mean <b>${(sum / s.length).toFixed(4)}</b>` }),
     );

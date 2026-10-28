@@ -216,10 +216,6 @@ class HardwareWorker:
             self._periodic = [p for p in self._periodic if p.name != name]
             self._periodic.append(PeriodicTask(name, fn, interval, only_idle))
 
-    def remove_periodic(self, name: str):
-        with self._periodic_lock:
-            self._periodic = [p for p in self._periodic if p.name != name]
-
     # --- main loop --------------------------------------------------------
     def _run(self):
         while self._running:

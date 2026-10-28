@@ -33,7 +33,7 @@ def register_interface_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]
 
     @mcp.tool(annotations=RO)
     def hardware_capabilities() -> Dict[str, Any]:
-        """What the connected ChipWhisperer (or the simulator's model) supports: UART pin modes, SimpleSerial versions, SPI, JTAG/SWD, GPIO, USERIO, bit-banger, 1-Wire, each trigger type and each programmer, as {available, reason, details}. Check this before using the other interface tools."""
+        """What the connected ChipWhisperer (or the simulator's model) supports: UART pin modes, SimpleSerial versions, SPI, JTAG/SWD, GPIO, USERIO, bit-banger, 1-Wire, each trigger type, each programmer, Arm trace, the logic analyser sources and whether clock.adc_mul exists, as {available, reason, details}. Check this before using the other interface tools."""
         return client.get("/api/capabilities")
 
     @mcp.tool(annotations=RO)

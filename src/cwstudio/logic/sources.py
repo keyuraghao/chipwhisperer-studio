@@ -129,7 +129,6 @@ class SimLA:
         self._manual = False
         self._data: Optional[np.ndarray] = None
         self._count0 = 0
-        self.last_window: Optional[Dict[str, Any]] = None
 
     # --- settings ---
     @property
@@ -228,7 +227,7 @@ class SimLA:
     @trigger_source.setter
     def trigger_source(self, v):
         if v not in LA_TRIGGERS or v == "manual":
-            raise ValueError("Must be one of 'glitch', 'capture', 'glitch_source', 'HS1', '[rising|falling]_userio_d[0-7]', or [rising|falling]_tio[0-3]")
+            raise ValueError("Must be one of 'capture', 'glitch', 'glitch_source', 'glitch_trigger', 'trigger_glitch', 'HS1', 'trigger signal 0', 'trigger signal 1', '[rising|falling]_userio_d[0-7]' or '[rising|falling]_tio[1-4]'")
         self._trigger = v
 
     @property
@@ -316,7 +315,6 @@ class SimLA:
             bits[i] = ((np.cumsum(arr[:n]) & 1) ^ v0).astype(np.uint8)
         self._data = bits
         self._armed = False
-        self.last_window = {"t0": t0, "samplerate": sr, "samples": n}
 
     def _group_signals(self, sig) -> List[Any]:
         if self._group in SIM_LA_MAP:
@@ -682,9 +680,6 @@ class LogicJob(LongJob):
         except Stopped:
             self.stopped = True
             return True
-
-    def request_stop(self):
-        super().request_stop()
 
     def finish(self):
         if self._gen is not None:

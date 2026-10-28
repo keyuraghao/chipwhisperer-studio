@@ -154,9 +154,6 @@ class CPAAttack:
     def stop(self):
         self._stop.set()
 
-    def join(self, timeout=None):
-        self._thread.join(timeout)
-
     def _run(self):
         r = self.result
         try:

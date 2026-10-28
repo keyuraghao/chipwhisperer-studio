@@ -1,6 +1,6 @@
 """Protocol decoders that run in software on a :class:`~cwstudio.logic.model.LogicCapture` from any source.
 
-Each decoder takes a channel mapping (``{"rx": 0, ...}`` by index or name) and options, and returns a :class:`Result`: rows of annotations (start and end sample, text, kind, optional value) that the viewer draws under the decoder's channels and the results table lists. Kinds pick the colour: data, addr, cmd, ack, nack, error, warn, start, stop, state, info.
+Each decoder takes a channel mapping (``{"rx": 0, ...}`` by index or name) and options, and returns a :class:`Result`: rows of annotations (start and end sample, text, kind, optional value) that the viewer draws under the decoder's channels and the results table lists. Kinds pick the colour: data, addr, cmd, ack, nack, error, warn, start, stop, state, info and agg (a merged block of several annotations in the zoomed-out view).
 
 Decoders: UART (baud auto-detect, 5-9 data bits, parity, stop bits, inverted, bit order), SPI (CPOL/CPHA, bit order, word size, CS level), I2C (7 and 10-bit addresses, read/write, ACK/NACK, repeated start), 1-Wire (reset/presence, ROM commands, bytes, standard and overdrive speed), JTAG (TAP state tracking, IR/DR shifts), SWD (requests, ACK, data, parity), CAN (classic, standard and extended IDs, DLC, data, CRC, ACK, stuffing; CAN FD frames are recognised and skipped) and SimpleSerial v1/v2 on top of UART. Every decoder has a glitch filter that drops pulses shorter than a set time on its channels.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 from collections import OrderedDict
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -1110,7 +1110,7 @@ def deglitch(c: Channel, min_samples: int) -> Channel:
             continue
         keep[i] = keep[i + 1] = False
         last = i + 1
-    return Channel(c.name, c.init, e[keep], c.color, c.hidden, c.group)
+    return Channel(c.name, c.init, e[keep], c.color, c.hidden)
 
 
 def _filtered(cap: LogicCapture, chans: Dict[str, Any], glitch_ns: float) -> LogicCapture:

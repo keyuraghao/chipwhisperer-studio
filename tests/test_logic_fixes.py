@@ -3,7 +3,6 @@ import json
 import os
 import tempfile
 
-import numpy as np
 import pytest
 from starlette.testclient import TestClient
 
@@ -177,5 +176,4 @@ def test_mcp_la_capture_timeout_reaches_the_trigger_timeout():
     assert path == "/api/la/capture" and body["settings"]["timeout"] == 12.5 and body["timeout"] > 12.5 and http_timeout > body["timeout"]
     m._tools_call({"name": "la_capture", "arguments": {"source": "sim"}})
     assert "timeout" not in sent[-1][1]["settings"]
-    out = json.dumps(m._tools_list({}))
-    assert "trigger" in next(t for t in m._tools_list({})["tools"] if t["name"] == "la_capture")["description"] and out
+    assert "trigger" in next(t for t in m._tools_list({})["tools"] if t["name"] == "la_capture")["description"]

@@ -452,7 +452,7 @@ export function initInterfaces(ctx, el) {
     h('div', { class: 'row' }, h('label', {}, 'Flash'), flashPath),
     h('div', { class: 'row' }, h('label', {}, ''), flashAddr),
     h('div', { class: 'row' }, h('label', {}, ''), h('label', {}, flashVerify, ' verify'), h('label', {}, flashReset, ' reset'), h('button', { class: 'btn sm', onclick: ocdFlash }, 'Flash')),
-    h('div', { class: 'help' }, 'Wiring on the 20-pin header: SCK to TCK/SWCLK, PDID to TMS/SWDIO, MISO to TDO, MOSI to TDI, PDIC to TRST. About 500 kHz. Connect GDB with: target extended-remote localhost:' + 3333));
+    h('div', { class: 'help' }, 'Wiring on the 20-pin header: SCK to TCK/SWCLK, PDID to TMS/SWDIO, MISO to TDO, MOSI to TDI, PDIC to TRST. About 500 kHz. Connect GDB with: target extended-remote localhost:<GDB port above>.'));
   async function refreshOcd() {
     try { ocdStatus = await get('/api/interfaces/openocd'); } catch (e) { return; }
     const st = ocdStatus, m = st.mpsse;

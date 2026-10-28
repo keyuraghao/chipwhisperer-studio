@@ -4,6 +4,7 @@ PyPI shows the README as the project description but has no copy of the reposito
 
     python tools/pypi_readme.py            # rewrite README.md in place for the version in src/cwstudio/__init__.py
     python tools/pypi_readme.py --check    # only report relative links that would remain (exit 1 if any)
+    python tools/pypi_readme.py --readme other.md   # rewrite another file
 """
 from __future__ import annotations
 

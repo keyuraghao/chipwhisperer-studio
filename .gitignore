@@ -5,4 +5,3 @@ build/
 dist/
 .venv/
 .pytest_cache/
-tests/hardware/last_run.json

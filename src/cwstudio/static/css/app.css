@@ -139,10 +139,7 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
 .row:last-child { margin-bottom: 0; }
 .row > label:first-child { min-width: 96px; color: var(--fg-2); font-size: 12.5px; }
 .row label { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-2); font-size: 12.5px; }
-.row.compact label { min-width: 60px; }
 .row.end { justify-content: flex-end; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.stack { display: flex; flex-direction: column; gap: 8px; }
 .divider { height: 1px; background: var(--border); margin: 12px -14px; }
 
 /* ---------- controls ---------- */
@@ -169,7 +166,6 @@ input.mono, .mono { font-family: var(--mono); font-size: 12px; }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--fg-2); }
 .btn.ghost:hover { background: var(--surface-3); color: var(--fg); }
 .btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
-.btn.block { width: 100%; }
 .btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .btn svg.i { width: 15px; height: 15px; }
 button.link { background: none; border: 0; color: var(--info); cursor: pointer; font: inherit; padding: 0 4px; }

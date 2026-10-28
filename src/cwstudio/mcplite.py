@@ -1,6 +1,6 @@
 """A compact Model Context Protocol server (JSON-RPC 2.0) with stdio, streamable HTTP and legacy SSE transports.
 
-It implements the parts of MCP that Studio uses: tools (input and output schemas generated from type hints, annotations, structured results), static resources and prompts, plus ping. Results, schemas and validation follow what the MCP Python SDK produced for the same functions, so clients see no difference; using it keeps Studio free of pydantic, jsonschema, httpx and friends. Every request runs on its own thread, so long tool calls (a capture with wait=true) never delay others such as capture_stop or ping.
+It implements the parts of MCP that Studio uses: tools (input and output schemas generated from type hints, annotations, structured results), static resources and prompts, plus ping. Results, schemas and validation follow what the MCP Python SDK produced for the same functions, so clients see no difference; using it keeps Studio free of pydantic, jsonschema, httpx and friends. Requests run on their own threads (initialize and ping are answered in order on the reader), so long tool calls (a capture with wait=true) never delay others such as capture_stop or ping.
 """
 from __future__ import annotations
 

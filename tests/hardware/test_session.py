@@ -93,7 +93,7 @@ def test_10_devices_lists_husky(api, report):
 
 # ----- 3. scope ---------------------------------------------------------------------------------
 @stage("scope")
-def test_20_connect_auto(api, report):
+def test_20_connect_auto(api):
     if SIM:
         pytest.skip("sim: auto connects to real hardware only")
     info = api.post("/api/scope/connect", {"kind": "auto"})
@@ -447,8 +447,8 @@ def test_83_sad_trigger(api, report):
         api.post("/api/capture/start", {"count": 5, "store": False, "max_timeouts": 5})
         job = api.wait_job()["job"]
         report("husky", "sad", {"done": job["done"], "timeouts": job["timeouts"]})
-        # an out-of-range threshold is rejected up front with a clear message, not deep in the hardware
-        bad = api.put("/api/interfaces/trigger", {"kind": "sad", "threshold": 1_000_000, "start": 0}, ok=False)
+        # an out-of-range threshold is rejected up front with a clear message, not deep in the hardware (above the Husky's 64 and the simulator's much wider range alike)
+        bad = api.put("/api/interfaces/trigger", {"kind": "sad", "threshold": 1 << 32, "start": 0}, ok=False)
         assert bad.status_code == 400 and "threshold must be 1 to" in bad.text, bad.text
     finally:
         # always restore the basic trigger so later capture stages are not left on SAD
@@ -503,7 +503,7 @@ def test_90_notebook_scope(api, report):
     assert encrypt_block(bytes.fromhex(KEY), bytes(16)).hex() in text
 
 
-# ----- MCP --------------------------------------------------------------------------------------
+# ----- 11. MCP ----------------------------------------------------------------------------------
 @stage("mcp")
 def test_95_mcp_agent(studio, api, report):
     ensure_target(api)
@@ -539,9 +539,9 @@ def test_95_mcp_agent(studio, api, report):
         p.wait(10)
 
 
-# ----- 11. robustness ---------------------------------------------------------------------------
+# ----- 12. robustness -----------------------------------------------------------------------
 @stage("robustness")
-def test_97_devices_does_not_reopen(api, report):
+def test_97_devices_does_not_reopen(api):
     hw_only("no USB device to list")
     for _ in range(5):
         devs = api.get("/api/devices")
@@ -571,7 +571,7 @@ def test_98_manual_unplug(api, report):
     api.post("/api/target/connect", {"kind": target_kind()})
 
 
-# ----- 12. disconnect ---------------------------------------------------------------------------
+# ----- 13. disconnect -----------------------------------------------------------------------
 @stage("disconnect")
 def test_99_disconnect(api):
     api.post("/api/target/disconnect")

@@ -2,7 +2,7 @@
 
 Unicorn executes the instructions; it does not count clock cycles. These tables turn the executed program counters into cycle counts: every distinct instruction is classified once (load, store, load/store multiple with its register count, branch, call, return, multiply, divide, ...) and the per-core tables below give its cost, with the data dependent parts (branch taken or not, Cortex-M3/M4 load/store pipelining) worked out from the executed sequence.
 
-Sources: the Cortex-M0, M0+, M3 and M4 Technical Reference Manuals (instruction timing tables; the pipeline refill P is taken as 2 cycles plus the flash wait states), the Ibex documentation and the NEORV32 data sheet (instruction timing). Cortex-M7 is dual issue and uses the M4 table (an upper bound). Divides use a fixed middle value of their data dependent range. These are models, good to a few percent on straight-line code; the trace alignment fits the remaining scale.
+Sources: the Cortex-M0, M0+, M3 and M4 Technical Reference Manuals (instruction timing tables; the pipeline refill P is taken as 2 cycles plus the flash wait states), the Ibex documentation and the NEORV32 data sheet (instruction timing). Cortex-M7 (dual issue) and Cortex-M33 use the M4 table; for the M7 that is an upper bound. Divides use a fixed middle value of their data dependent range. These are models, good to a few percent on straight-line code; the trace alignment fits the remaining scale.
 """
 from __future__ import annotations
 

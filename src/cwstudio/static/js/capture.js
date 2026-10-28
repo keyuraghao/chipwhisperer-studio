@@ -1,4 +1,4 @@
-import { h, get, post, del, upload, downloadUrl, toast, fmtBytes } from './api.js';
+import { h, post, del, upload, downloadUrl, toast, fmtBytes } from './api.js';
 
 export function initCapture(ctx, el) {
   const countIn = h('input', { type: 'number', value: 1000, min: 0, class: 'flex', title: '0 = continuous' });
@@ -19,7 +19,7 @@ export function initCapture(ctx, el) {
   ctx.on('trigger-summary', (txt) => { trigLine.textContent = txt || ''; });
   const fmtSel = h('select', {}, h('option', { value: 'npz' }, 'NumPy .npz'), h('option', { value: 'cwp' }, 'ChipWhisperer project .cwp'), h('option', { value: 'csv' }, 'CSV'), h('option', { value: 'npy' }, 'NumPy .npy set'));
   const pathIn = h('input', { class: 'flex mono', value: 'traces', placeholder: 'file name or absolute path' });
-  const importPath = h('input', { class: 'flex mono', placeholder: 'path to .npz / .cwp on the Studio machine' });
+  const importPath = h('input', { class: 'flex mono', placeholder: 'path to .npz, .cwp, .npy or .zip on the Studio machine' });
   const importFile = h('input', { type: 'file', accept: '.npz,.npy,.cwp,.zip', class: 'flex' });
 
   function params(extra) {
@@ -47,10 +47,10 @@ export function initCapture(ctx, el) {
       if (importFile.files.length) r = await upload('/api/traces/import/upload', importFile.files[0], { replace: true });
       else if (importPath.value) r = await post('/api/traces/import', { path: importPath.value, replace: true });
       else throw new Error('choose a file');
-      toast(`Imported ${r.imported} traces`, 'ok'); ctx.refreshStatus(); ctx.emit('traces-changed');
+      toast(`Imported ${r.imported} traces`, 'ok'); ctx.refreshStatus();
     } catch (e) { toast(e.message, 'err', 7000); }
   }
-  async function clearTraces() { if (!confirm('Discard all traces in memory?')) return; await del('/api/traces'); ctx.refreshStatus(); ctx.emit('traces-changed'); }
+  async function clearTraces() { if (!confirm('Discard all traces in memory?')) return; await del('/api/traces'); ctx.refreshStatus(); }
 
   el.append(
     h('div', { class: 'card' },

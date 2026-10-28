@@ -1,6 +1,6 @@
 // REST + WebSocket client for ChipWhisperer Studio.
 
-/** Error detail as text: a string, or FastAPI-style validation items ({loc, msg}). */
+/** Error detail as text: a string, or the router's validation items ({loc, msg}). */
 function errorText(detail) {
   if (!Array.isArray(detail)) return detail;
   return detail.map((d) => (d && d.msg ? `${(d.loc || []).slice(1).join('.') || 'request'}: ${d.msg}` : String(d))).join('; ');
@@ -48,7 +48,7 @@ export async function upload(path, file, fields = {}) {
 }
 
 /** Decode a binary frame: u32 header length, JSON header, f32 samples. */
-export function decodeFrame(buf) {
+function decodeFrame(buf) {
   const dv = new DataView(buf);
   const hlen = dv.getUint32(0, true);
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hlen)));
@@ -171,7 +171,6 @@ export function themeColors() {
   };
 }
 
-/** uPlot axis options in the current theme. */
 /** Numbers as the user's locale writes them (grouping, decimal mark) but always with Latin digits 0-9: in Arabic, Persian or Hindi locales the browser would otherwise show its native digits, which do not match the hex, code and hardware values next to them. */
 export const fmtNum = (() => {
   try { return new Intl.NumberFormat(navigator.language, { numberingSystem: 'latn' }).format; } catch (e) { return new Intl.NumberFormat('en-US').format; }
@@ -182,6 +181,7 @@ export function fmtClock(date, opts = {}) {
   try { return date.toLocaleTimeString(navigator.language, Object.assign({ numberingSystem: 'latn' }, opts)); } catch (e) { return date.toLocaleTimeString('en-US', opts); }
 }
 
+/** uPlot axis options in the current theme, with tick labels in Latin digits. */
 export function axisStyle(extra = {}) {
   const c = themeColors();
   // uPlot formats tick labels with the browser locale, digits included; keep them Latin like every other number in Studio

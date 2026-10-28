@@ -1,9 +1,10 @@
 """Browser test of the Notebook tab with several notebooks: tabs, the side by side split, per-notebook kernels and output routing, layout memory across reloads, and screenshots of both themes (and a narrow window) for review.
 
-Skipped when Playwright or its Chromium is not installed (``pip install playwright && playwright install chromium``). Screenshots go to ``$CWSTUDIO_SHOTS`` (default ``/tmp/claude-1000/nbtabs``).
+Skipped when Playwright or its Chromium is not installed (``pip install playwright && playwright install chromium``). Screenshots go to ``$CWSTUDIO_SHOTS`` (default ``<system temp folder>/cwstudio-shots/nbtabs``).
 """
 import json
 import os
+import tempfile
 import socket
 import subprocess
 import sys
@@ -13,7 +14,7 @@ import urllib.request
 import pytest
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
-SHOTS = os.environ.get("CWSTUDIO_SHOTS", "/tmp/claude-1000/nbtabs")
+SHOTS = os.environ.get("CWSTUDIO_SHOTS", os.path.join(tempfile.gettempdir(), "cwstudio-shots", "nbtabs"))
 
 
 def _free_port() -> int:

@@ -159,3 +159,41 @@ def test_firmware_folder_and_plan_errors(tmp_path):
         fm.plan({"project": "../../etc", "platform": "CWLITEARM"})
     with pytest.raises(FileNotFoundError):
         fm.set_root(str(tmp_path))
+
+
+def _fake_gcc(bindir: pathlib.Path, name: str, nano_path):
+    """A stub <name> that answers -print-file-name=nano.specs with nano_path (or 'nano.specs' when None)."""
+    bindir.mkdir(parents=True, exist_ok=True)
+    out = str(nano_path) if nano_path else "nano.specs"
+    p = bindir / name
+    p.write_text("#!/bin/sh\nif [ \"$1\" = -print-file-name=nano.specs ]; then echo '%s'; fi\n" % out)
+    p.chmod(0o755)
+    return p
+
+
+def test_system_gcc_without_newlib_nano_is_not_used(tmp_path, monkeypatch):
+    reg = {"schema": 1, "revision": 1, "firmware_sources": {},
+           "toolchains": [{"id": "arm-gcc", "name": "Arm GCC", "compiler": "gcc", "arch": ["arm"],
+                           "version": "9.9", "prefix": "arm-none-eabi-",
+                           "downloads": {"any": {"url": "https://x", "sha256": "0" * 64, "size": 1}}}]}
+    tc = ToolchainManager(str(tmp_path / "data"), registry=reg)
+    e = tc.entry("arm-gcc")
+
+    # a distro gcc on PATH that cannot resolve nano.specs (Debian/Kali gcc-arm-none-eabi)
+    sysbin = tmp_path / "sysbin"
+    _fake_gcc(sysbin, exe("arm-none-eabi-gcc"), None)
+    monkeypatch.setenv("PATH", str(sysbin), prepend=False)
+    assert tc.status(e)["system"] == str(sysbin)
+    assert tc._gcc_has_newlib_nano(str(sysbin), e) is False
+    assert tc.find("arm", "gcc") is None                       # not offered as a usable fallback
+    assert tc.system_gcc_lacking_nano("arm") == str(sysbin)
+
+    tc._nano_cache.clear()
+    # a gcc that does resolve nano.specs is usable again
+    good = tmp_path / "goodbin"
+    nano = tmp_path / "nano.specs"; nano.write_text("*")
+    _fake_gcc(good, exe("arm-none-eabi-gcc"), nano)
+    monkeypatch.setenv("PATH", str(good), prepend=False)
+    assert tc._gcc_has_newlib_nano(str(good), e) is True
+    best = tc.find("arm", "gcc")
+    assert best and best["use_bin"] == str(good) and best["rank"] == 2

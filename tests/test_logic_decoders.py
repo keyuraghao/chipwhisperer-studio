@@ -2,7 +2,6 @@
 
 Every decoder gets a round trip: a waveform is generated from known data with :mod:`cwstudio.logic.synth` (written from the protocol timing rules, not from the decoder), sampled, decoded, and the decoded values compared with the data. Edge cases: UART parity and framing errors, every SPI mode, I2C NACK, repeated start and 10-bit addresses, CAN extended IDs with stuff bits and CRC errors, JTAG IR/DR shifts, SWD WAIT/FAULT/parity errors, 1-Wire ROM CRC and missing presence, SimpleSerial v1 and v2. VCD, CSV and .sr files round trip, and files in other tools' dialects import.
 """
-import os
 import zipfile
 
 import numpy as np
@@ -11,7 +10,7 @@ import pytest
 from cwstudio.logic import decoders as D
 from cwstudio.logic import formats as F
 from cwstudio.logic import synth as S
-from cwstudio.logic.model import Channel, LogicCapture, auto_level, parse_pattern, schmitt
+from cwstudio.logic.model import LogicCapture, auto_level, parse_pattern, schmitt
 
 
 def capture(lines, sr, t0=0.0, dur=None, n=None, trigger=None, **kw):

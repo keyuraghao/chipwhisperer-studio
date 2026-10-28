@@ -109,12 +109,9 @@ def test_instruction_skip_changes_the_glitch_loop():
             continue
         assert np.array_equal(g.pcs[:k], run.pcs[:k])  # identical up to the glitch
         r = _resp(fw, g)
-        seen["normal" if r == run_resp(fw, run) else "changed"] += 1
+        seen["normal" if r == _resp(fw, run) else "changed"] += 1
     assert seen["changed"] > 10 and seen["normal"] > 10
 
-
-def run_resp(fw, run):
-    return _resp(fw, run)
 
 
 def _sim(elf, seed=3):

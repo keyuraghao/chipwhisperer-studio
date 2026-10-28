@@ -18,7 +18,6 @@ from cwstudio.web import HTTPException, Request
 
 log = logging.getLogger("cwstudio.interfaces")
 
-EOLS = {"none": b"", "lf": b"\n", "cr": b"\r", "crlf": b"\r\n"}
 SS_VERSIONS = {"1.0": "SimpleSerial", "1.1": "SimpleSerial", "2.1": "SimpleSerial2", "cdc": "SimpleSerial2_CDC"}
 TRIGGER_KINDS = ("basic", "uart_decode", "uart_pattern", "edge_counter", "adc_level", "sequencer", "sad")
 
@@ -899,7 +898,7 @@ def register_routes(app, session) -> None:
 
     @app.put("/api/interfaces/userio")
     async def userio_put(req: Request):
-        """Body: direction (bit mask, 1 = driven by the Husky), drive (bit mask), mode (normal)."""
+        """Body: direction (bit mask, 1 = driven by the Husky), drive (bit mask), mode (normal, or fpga_debug)."""
         p = await body(req)
         return await run(ifc.userio_set, **pick(p, "direction", "drive", "mode"))
 

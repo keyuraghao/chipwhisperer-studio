@@ -70,9 +70,6 @@ class Function:
     line: int = 0
     source: str = "symtab"
 
-    def to_json(self, prog: "Program") -> Dict[str, Any]:
-        return {"name": self.name, "lo": self.lo, "hi": self.hi, "file": prog.file_label(self.file) if self.file >= 0 else None, "file_index": self.file, "line": self.line}
-
 
 @dataclass
 class Segment:
@@ -133,7 +130,6 @@ class Program:
             self.arch = ARCH_BY_MACHINE.get(mach_num) if isinstance(mach_num, int) else None
             self.machine_name = elf.get_machine_arch()
             self.elfclass = elf.elfclass
-            self.little_endian = elf.little_endian
             self.e_flags = elf.header["e_flags"]
             self.entry = elf.header["e_entry"]
             self.segments: List[Segment] = []
@@ -147,7 +143,6 @@ class Program:
             self.attributes = self._attributes(elf)
             self.avr_device = self._avr_deviceinfo(elf) if self.arch == "avr" else None
             self.symbols: Dict[str, int] = {}
-            self.data_symbols: Dict[str, Tuple[int, int]] = {}
             self.files: List[str] = []
             self._file_index: Dict[str, int] = {}
             self.functions: List[Function] = []
@@ -222,8 +217,6 @@ class Program:
                     self.symbols[name] = addr
                 if size and typ == "STT_FUNC":
                     funcs[(addr, name)] = Function(name, addr, addr + size)
-            elif typ == "STT_OBJECT":
-                self.data_symbols[name] = (val, size)
         # NOTYPE labels with no size (assembly entry points) get a range up to the next symbol
         self.functions = sorted(funcs.values(), key=lambda f: (f.lo, -f.hi))
 
@@ -586,7 +579,7 @@ class Program:
 
     # --- disassembly ----------------------------------------------------------------------------
     def disassemble(self, lo: int, hi: int, limit: int = 400) -> List[Dict[str, Any]]:
-        """Instructions in [lo, hi): address, bytes, text. Uses the toolchain's objdump when known, else capstone, else Studio's own AVR decoder."""
+        """Instructions in [lo, hi): address, bytes, text. AVR uses Studio's own decoder; Arm and RISC-V use the toolchain's objdump when known, else capstone."""
         lo, hi = int(lo), int(hi)
         if hi <= lo:
             return []

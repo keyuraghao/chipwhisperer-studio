@@ -139,7 +139,7 @@ def test_frozen_build_always_writes_studio_log(monkeypatch, tmp_path):
         null.close()
 
 
-def test_ui_files_have_the_right_type_and_are_revalidated(monkeypatch):
+def test_ui_files_have_the_right_type_and_are_revalidated():
     """Windows can map .js to text/plain in the registry; browsers then refuse the UI's modules. Studio sets the types itself, and asks for revalidation so an upgrade never mixes old and new modules."""
     from starlette.testclient import TestClient
     import cwstudio.app as app_module

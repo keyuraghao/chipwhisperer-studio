@@ -312,7 +312,6 @@ export function initNotebook(ctx, sideEl, viewEl) {
       else if (st.started === false) { kernelPill.className = 'badge'; kernelPill.textContent = 'No kernel'; kernelPill.title = 'This notebook\'s kernel starts when you run a cell'; }
       else { kernelPill.className = 'badge ok'; kernelPill.textContent = 'Kernel idle'; kernelPill.title = `This notebook's own kernel: ${st.execution_count ?? 0} cells run`; }
       refreshTab(d);
-      if (d === focusedDoc()) ctx.emit('kernel', st);
     }
     d.onNb = (ev) => {
       const cell = cellById(ev.cell), el = d.cellEls.get(ev.cell), k = d.kernel;
@@ -519,7 +518,7 @@ export function initNotebook(ctx, sideEl, viewEl) {
     panes.forEach((p) => p.el.classList.toggle('focused', split && p.i === focused));
     markList();
     const d = focusedDoc();
-    if ((d && d.path) !== lastFocused) { lastFocused = d && d.path; loadVars(); if (d) ctx.emit('kernel', d.kernel); }
+    if ((d && d.path) !== lastFocused) { lastFocused = d && d.path; loadVars(); }
   }
   function setFocused(i) {
     if (focused === i || (i === 1 && !split)) return;

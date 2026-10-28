@@ -151,7 +151,7 @@ def test_export_import(client):
     r = client.post("/api/traces/import", json={"path": r.json()["path"], "replace": True})
     assert r.json()["imported"] == n
     r = client.get("/api/traces/download/csv")
-    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv") or r.status_code == 200
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
 
 
 def test_glitch(client):

@@ -69,7 +69,7 @@ export class CodeBand {
   }
 
   setMapping(m) {
-    if (m) this.map = { a: m.samples_per_cycle || m.spc * (m.scale || 1), b: m.intercept != null ? m.intercept : -(m.adc_offset || 0) / Math.max(1, m.decimate || 1) + (m.presamples || 0) + (m.shift || 0) };
+    if (m) this.map = { a: m.samples_per_cycle, b: m.intercept };
     this.draw();
   }
 

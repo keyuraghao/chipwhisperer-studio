@@ -13,7 +13,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from cwstudio import settings as cwsettings
-from cwstudio.events import EventBus
+from cwstudio.events import EventBus, trace_event
 from cwstudio.worker import LongJob
 
 log = logging.getLogger("cwstudio.glitch")
@@ -60,13 +60,14 @@ class GlitchJob(LongJob):
         self.reset_on = params.get("reset_on", "reset")    # never | reset | always
         self.glitch_timeout = int(params.get("glitch_timeout", 1000))
         self.arm_scope = bool(params.get("arm_scope", True))
+        # stream each captured trace to the waveform view so the Scope tab animates during a sweep
+        self.display = bool(params.get("display", True)) and self.arm_scope
         self.points: List[tuple] = []
         self.i = 0
         self.rep = 0
         self.results: List[Dict[str, Any]] = []
         self.counts = {"normal": 0, "success": 0, "reset": 0}
         self._last_progress = 0.0
-        self._values_cache: Dict[str, Any] = {}
 
     # --- lifecycle ---------------------------------------------------------
     def start(self):
@@ -171,6 +172,13 @@ class GlitchJob(LongJob):
         else:
             outcome = "reset"
             resp_hex = (val or {}).get("full_response") if isinstance(val, dict) else None
+        if self.display:
+            try:
+                wave = self.scope.get_last_trace()
+                if wave is not None and len(wave):
+                    self.bus.publish_event(trace_event("trace", wave, {"source": "glitch", "result": outcome}, droppable=True))
+            except Exception:  # noqa: BLE001  -- a display hiccup must never stop the sweep
+                pass
         if outcome == "reset" and self.reset_on in ("reset", "always"):
             self._reset_target()
         return outcome, resp_hex

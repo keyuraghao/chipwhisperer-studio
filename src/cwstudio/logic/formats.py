@@ -10,7 +10,6 @@ import configparser
 import csv
 import io
 import json
-import math
 import os
 import re
 import zipfile
@@ -25,7 +24,7 @@ FORMATS = {"vcd": "Value Change Dump (.vcd)", "csv": "CSV (.csv, Saleae Logic st
 _UNITS = {"s": 1.0, "ms": 1e-3, "us": 1e-6, "µs": 1e-6, "ns": 1e-9, "ps": 1e-12, "fs": 1e-15}
 
 
-def detect_format(path: str, head: Optional[bytes] = None) -> str:
+def detect_format(path: str) -> str:
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     if ext in ("vcd", "csv", "sr"):
         return ext
@@ -654,6 +653,3 @@ def annotations_csv(rows: List[Dict[str, Any]], path_or_buf) -> None:
         if own:
             f.close()
 
-
-def _isfinite(x) -> bool:
-    return isinstance(x, (int, float)) and math.isfinite(x)

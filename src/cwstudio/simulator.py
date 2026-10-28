@@ -1,6 +1,6 @@
 """Simulated ChipWhisperer scope and SimpleSerial AES target.
 
-The simulator implements the subset of the `chipwhisperer` API that Studio uses (`arm/capture/get_last_trace`, `_dict_repr`, settings properties, `simpleserial_write/read`, `set_key`, ...).  It produces traces that leak the Hamming weight of the first-round S-box output, so a CPA attack recovers the key from a few hundred traces, and it models a glitch-vulnerable loop so the glitch sweep UI can be exercised.
+The simulator implements the subset of the `chipwhisperer` API that Studio uses (`arm/capture/get_last_trace`, `_dict_repr`, settings properties, `simpleserial_write/read`, `set_key`, ...).  It produces traces that leak the Hamming weight of the first-round S-box output, so a CPA attack recovers the key from a few dozen traces, and it models a glitch-vulnerable loop so the glitch sweep UI can be exercised.
 """
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ class SimADC(_Settings):
         ("timeout", 2.0, "Capture timeout in seconds."),
         ("offset", 0, "Number of samples to skip after the trigger."),
         ("presamples", 0, "Samples to record before the trigger."),
-        ("samples", 5000, "Number of ADC samples to record in a single capture (max 24400)."),
+        ("samples", 5000, "Number of ADC samples to record in a single capture (1 to 131070)."),
         ("decimate", 1, "Keep one sample out of every `decimate`."),
         ("trig_count", 0, "Number of ADC clock cycles the trigger was active (read only)."),
     ]
@@ -234,9 +234,8 @@ class SimGlitch(_Settings):
 
 
 class SimScope:
-    """A scope that behaves like a ChipWhisperer-Lite driving `SimTarget`."""
+    """A scope that stands in for any ChipWhisperer model (sim_model, Husky by default) driving `SimTarget`."""
 
-    _is_husky = False
     _name = "ChipWhisperer-Simulator"
 
     def __init__(self, seed: Optional[int] = None, sim_model: str = "husky"):
@@ -554,7 +553,7 @@ class SimScope:
 
 
 class SimTarget:
-    """A SimpleSerial-2 style AES target with a glitchable password loop."""
+    """A SimpleSerial-2 style AES target with a glitchable loop counter (the simpleserial-glitch g command)."""
 
     def __init__(self, scope: Optional[SimScope] = None):
         self.scope = scope
@@ -574,9 +573,7 @@ class SimTarget:
         self.protver = "2.1"
         self.connectStatus = True
         self._pending_response: Optional[bytes] = None
-        self._pending_cmd: Optional[str] = None
         self._last_run = None  # (Run, per-cycle power) of the last emulated command that raised the trigger
-        self._reset_count = 0
         self._traffic: List[tuple] = []  # since the scope was armed: ("rx", bytes the target received), ("tx", bytes it sent), ("op", trigger timing) for the simulated advanced triggers
         self._raw_in = False
         self.glitch_window = (20, 60)   # ext_offset window where glitches succeed
@@ -716,7 +713,6 @@ class SimTarget:
             self._triggered = True
             self._trigger_count += 1
             self._pending_response = None
-            self._reset_count += 1
             fw._state = None
             return
         if cmd == "p":
@@ -729,7 +725,6 @@ class SimTarget:
             self._trigger_count += 1
         self._record("tx", run.output)
         self._pending_response = resp
-        self._pending_cmd = "r"
         with self._lock:
             self._rx += run.output  # what the firmware really sent (binary frames for SimpleSerial 2.1)
 
@@ -753,7 +748,6 @@ class SimTarget:
             if self._glitch_active() and self._glitch_outcome() == "success":
                 resp = bytes(b ^ 0xFF for b in resp)
             self._pending_response = resp
-            self._pending_cmd = "r"
         elif cmd == "g":
             # simpleserial-glitch style: loop counter, expect 0x09C4 (2500) normally
             self._triggered = True
@@ -761,19 +755,16 @@ class SimTarget:
             outcome = self._glitch_outcome() if self._glitch_active() else "normal"
             if outcome == "reset":
                 self._pending_response = None
-                self._reset_count += 1
             elif outcome == "success":
                 self._pending_response = (2500 - int(self.scope._rng.integers(1, 40))).to_bytes(4, "little")
             else:
                 self._pending_response = (2500).to_bytes(4, "little")
-            self._pending_cmd = "r"
         elif cmd == "k":
             self.set_key(data)
         elif cmd == "x":
-            self._reset_count += 1
+            pass  # reset request: nothing to answer
         else:
             self._pending_response = b""
-            self._pending_cmd = "r"
         if self._pending_response is not None and cmd in ("p", "g") and not self._raw_in:
             self._record("tx", self._frame("r", self._pending_response))
         # Also mirror into the raw rx buffer as a SimpleSerial-formatted line

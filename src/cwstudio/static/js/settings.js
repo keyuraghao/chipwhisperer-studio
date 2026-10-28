@@ -2,9 +2,9 @@
 import { h } from './api.js';
 
 export class SettingsTree {
-  constructor(container, { load, save, onChanged }) {
+  constructor(container, { load, save }) {
     this.el = container;
-    this.load = load; this.save = save; this.onChanged = onChanged;
+    this.load = load; this.save = save;
     this.nodes = [];
     this.open = new Set(['adc', 'gain', 'clock', 'trigger', 'io']);
     this.filter = '';
@@ -119,7 +119,6 @@ export class SettingsTree {
       this.setInputValue(input, n);
       row.classList.remove('pending'); row.classList.add('saved');
       setTimeout(() => row.classList.remove('saved'), 1200);
-      if (this.onChanged) this.onChanged(n.path, v);
       this.refreshValues();
     } catch (e) {
       row.classList.remove('pending'); row.classList.add('errored');
@@ -130,7 +129,7 @@ export class SettingsTree {
 }
 
 function countLeaves(n) { return (n.children || []).reduce((a, c) => a + (c.kind === 'group' ? countLeaves(c) : 1), 0); }
-export function fmtValue(v) {
+function fmtValue(v) {
   if (v === null || v === undefined) return 'None';
   if (typeof v === 'boolean') return v ? 'True' : 'False';
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(+v.toPrecision(10));

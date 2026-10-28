@@ -145,15 +145,6 @@ def render(signals: Dict[str, Signal], samplerate: float, t_start: float, n: int
     return out
 
 
-def render_bits(signals: Dict[str, Signal], samplerate: float, t_start: float, n: int, **kw) -> Dict[str, np.ndarray]:
-    """Like :func:`render` but as dense 0/1 arrays."""
-    res = {}
-    for name, (v0, e) in render(signals, samplerate, t_start, n, **kw).items():
-        arr = np.zeros(n + 1, np.int8)
-        arr[e] = 1
-        res[name] = ((np.cumsum(arr[:n]) & 1) ^ v0).astype(np.uint8)
-    return res
-
 
 def to_analog(bits: np.ndarray, rng: Optional[np.random.Generator] = None, low: float = -0.3, high: float = 0.3, noise: float = 0.02, rise_samples: float = 2.0, ringing: float = 0.06) -> np.ndarray:
     """A digital line as the ChipWhisperer ADC would see it: RC edges, a little ringing, noise, clipped to the +-0.5 range."""

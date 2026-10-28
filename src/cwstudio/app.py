@@ -28,8 +28,7 @@ log = logging.getLogger("cwstudio.app")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 # The types of the UI's files, whatever the system says: on Windows the registry can map .js to text/plain, and browsers then refuse to run the ES modules (an empty window).
-for _type, _ext in (("text/javascript", ".js"), ("text/javascript", ".mjs"), ("text/css", ".css"), ("text/html", ".html"), ("application/json", ".json"),
-                    ("image/svg+xml", ".svg"), ("application/wasm", ".wasm"), ("application/json", ".map")):
+for _type, _ext in (("text/javascript", ".js"), ("text/css", ".css"), ("text/html", ".html"), ("application/json", ".json"), ("image/svg+xml", ".svg")):
     mimetypes.add_type(_type, _ext)
 
 

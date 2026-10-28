@@ -1,9 +1,10 @@
-"""Browser test of code on the waveform: program a real firmware build into the simulator from the Target tab, capture from the Capture tab, build the code map in the Code tab, ctrl+drag a region over the first S-box round on the waveform and check the side panel lists SubBytes and its source lines, pick a line (its samples are highlighted and its source and disassembly shown), hover the Code band, align, and leave the zoom and cursor behaviour as it was. Screenshots of both themes go to ``$CWSTUDIO_CODEMAP_SHOTS`` (default ``/tmp/claude-1000/codemap``) for review.
+"""Browser test of code on the waveform: program a real firmware build into the simulator from the Target tab, capture from the Capture tab, build the code map in the Code tab, ctrl+drag a region over the first S-box round on the waveform and check the side panel lists SubBytes and its source lines, pick a line (its samples are highlighted and its source and disassembly shown), hover the Code band, align, and leave the zoom and cursor behaviour as it was. Screenshots of both themes go to ``$CWSTUDIO_CODEMAP_SHOTS`` (default ``<system temp folder>/cwstudio-shots/codemap``) for review.
 
 Skipped when Playwright or its Chromium is not installed, or when no toolchain can build the firmware (see ``tests/fwbuild.py``).
 """
 import json
 import os
+import tempfile
 import re
 import shutil
 import socket
@@ -15,7 +16,7 @@ import urllib.request
 import pytest
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
-SHOTS = os.environ.get("CWSTUDIO_CODEMAP_SHOTS", "/tmp/claude-1000/codemap")
+SHOTS = os.environ.get("CWSTUDIO_CODEMAP_SHOTS", os.path.join(tempfile.gettempdir(), "cwstudio-shots", "codemap"))
 
 
 def _free_port() -> int:

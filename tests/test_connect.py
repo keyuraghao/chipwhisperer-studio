@@ -33,7 +33,6 @@ class FakeNAE:
 class FakeScope:
     """Records which thread reads each attribute that is a USB access on a real scope."""
 
-    _is_husky = False
 
     def __init__(self, sn="LITE01", up2date=None, adc=True, setup_error=None):
         self.reads = []

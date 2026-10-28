@@ -1,6 +1,6 @@
 """A small cycle-accurate AVR (classic AVRe/AVRe+ and XMEGA AVRxm) instruction set emulator for the code map and the simulator.
 
-It runs avr-gcc and clang output: the whole instruction set those compilers emit (arithmetic and logic with exact SREG flags, multiplies, skips and branches, the X/Y/Z load and store modes, LPM/ELPM, the stack, calls and returns with 16 or 22 bit program counters, XMEGA's XCH/LAS/LAC/LAT). SPM, SLEEP, WDR, BREAK and DES do nothing. Peripherals are not emulated: firmware functions that touch hardware are hooked by address (see :mod:`cwstudio.codemap.emu`), I/O registers read back what was last written (0 after reset) except the CPU registers that live in I/O space (SP, SREG, RAMP*, EIND), and every I/O write can be watched (the XMEGA and ATmega HALs raise the trigger with a port write).
+It runs avr-gcc and clang output: the whole instruction set those compilers emit (arithmetic and logic with exact SREG flags, multiplies, skips and branches, the X/Y/Z load and store modes, LPM/ELPM, the stack, calls and returns with 16 or 22 bit program counters, XMEGA's XCH/LAS/LAC/LAT). SPM, SLEEP, WDR, BREAK and DES do nothing. Peripherals are not emulated: firmware functions that touch hardware are hooked by address (see :mod:`cwstudio.codemap.emu`), I/O registers read back what was last written (0 after reset) except the CPU registers that live in I/O space (SP, SREG, RAMPZ, EIND), and every I/O write can be watched (the XMEGA and ATmega HALs raise the trigger with a port write).
 
 Cycle counts follow the AVR Instruction Set Manual: separate columns for AVRe and AVRxm (XMEGA loads from internal SRAM take one extra cycle; PUSH, ST, SBI/CBI and the calls are faster; SBIC/SBIS take one more), and 3-byte return addresses with their extra cycle on parts with more than 128 KB of flash.
 
@@ -47,11 +47,10 @@ def _tables():
     for r in range(256):
         n = r >> 7
         logic.append(((r == 0) << 1) | (n << 2) | (n << 4))
-    hw = [bin(i).count("1") for i in range(256)]
-    return out[0], out[1], logic, hw
+    return out[0], out[1], logic
 
 
-ADD_T, SUB_T, LOGIC_F, HW8 = _tables()
+ADD_T, SUB_T, LOGIC_F = _tables()
 
 
 class Blocked(Exception):
@@ -101,9 +100,7 @@ class AVRCore:
         self.kind: List[int] = [0] * (self.nwords + 2)  # 1 call, 2 return
         self.hooks: Dict[int, Callable[["AVRCore"], Optional[int]]] = {}
         self.write_watch: Dict[int, Callable[["AVRCore", int, int], None]] = {}
-        self.io_reads: Dict[int, Callable[["AVRCore", int], int]] = {}
         self.cycles = 0
-        self.retsz = 3 if pc22 else 2
 
     # --- data space -----------------------------------------------------------------------------
     def rd(self, a: int) -> int:
@@ -126,9 +123,6 @@ class AVRCore:
             return self.rampz
         if a == self.A_EIND:
             return self.eind
-        f = self.io_reads.get(a)
-        if f is not None:
-            return f(self, a) & 0xFF
         return self.D[a]  # peripherals are not emulated: a register reads back what the firmware last wrote (0 at reset)
 
     def wr(self, a: int, v: int) -> None:
@@ -724,10 +718,7 @@ def _build(c: AVRCore, pc: int):
         pre = mode.startswith("-")
         post = mode.endswith("+")
         load = name.startswith("ld")
-        if load:
-            cyc = (2 if pre else 1) if xm else 2
-        else:
-            cyc = (2 if pre else 1) if xm else 2
+        cyc = (2 if pre else 1) if xm else 2
 
         def f(p, d=d, ptr=ptr, pre=pre, post=post, load=load):
             a = R[ptr] | (R[ptr + 1] << 8)

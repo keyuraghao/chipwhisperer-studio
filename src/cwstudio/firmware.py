@@ -1,6 +1,6 @@
 """Build ChipWhisperer target firmware from inside Studio.
 
-* Sources: ChipWhisperer's ``firmware/mcu`` tree, downloaded on request at the version pinned in ``resources/toolchains.json`` (plus the ``chipwhisperer-fw-extra`` HALs), or any folder the user points at, e.g. a git clone with local changes.
+* Sources: ChipWhisperer's ``firmware/mcu`` tree, downloaded on request at the commit the chosen channel points to on NewAE's GitHub (``develop`` by default; the ``known_good`` commit in ``resources/toolchains.json`` is the fallback when GitHub cannot be reached), plus the ``chipwhisperer-fw-extra`` HALs, or any folder the user points at, e.g. a git clone with local changes.
 * Projects are the folders whose makefile includes ``Makefile.inc`` (simpleserial-aes, simpleserial-glitch, ...); platforms are read from ``hal/Makefile.hal``.
 * A build runs ChipWhisperer's own makefiles with a toolchain from :mod:`cwstudio.toolchains`: GCC directly, or clang through :mod:`cwstudio.ccwrap` (clang compiles, GCC assembles the startup files and links against newlib/avr-libc).  The resulting ``.hex`` is copied to ``<data_dir>/firmware/builds`` and can be programmed straight away.
 """
@@ -32,7 +32,7 @@ HAL_ARCH = {
     "neorv32": "riscv", "ibex": "riscv", "fe310": "riscv",
     "aurix": "tricore", "mpc5676r": "ppc", "pic24f": "pic24", "rx65n": "rx",
 }
-# Platform -> Studio programmer (see hardware.PROGRAMMERS).
+# HAL name -> Studio programmer (see hardware.PROGRAMMERS); CWHUSKY and CW312_SAM4S are special-cased in parse_platforms.
 PROGRAMMER_BY_HAL = {
     "stm32f0": "STM32F", "stm32f0_nano": "STM32F", "stm32f1": "STM32F", "stm32f2": "STM32F", "stm32f3": "STM32F",
     "stm32f4": "STM32F", "xmega": "XMEGA", "avr": "AVR", "sam4s": "SAM4S", "neorv32": "NEORV32",
@@ -418,6 +418,13 @@ class FirmwareManager:
             raise ValueError("compiler must be gcc or clang")
         gcc = self.tc.find(arch, "gcc")
         if gcc is None:
+            stray = self.tc.system_gcc_lacking_nano(arch)
+            if stray:
+                raise FileNotFoundError(
+                    f"the only {arch} gcc found (in {stray}) has no newlib-nano (nano.specs), which the "
+                    "ChipWhisperer targets link against; distro packages such as Debian/Ubuntu/Kali "
+                    "gcc-arm-none-eabi omit it. Install the managed GNU Arm toolchain on the Toolchains "
+                    "card and build again.")
             raise FileNotFoundError(f"no GCC toolchain for {arch}: install one on the Toolchains card "
                                     "(clang builds also need it for the C library and linker)")
         make_dir = self.tc.make_bin()
@@ -638,4 +645,3 @@ def plan_tool(plan: Dict[str, Any], tool: str) -> str:
     return tool
 
 
-__all__ = ["FirmwareManager", "parse_platforms", "gcc_include_dirs", "CRYPTO_TARGETS", "SS_VERSIONS"]

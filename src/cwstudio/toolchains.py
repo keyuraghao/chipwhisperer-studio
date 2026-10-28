@@ -1,6 +1,6 @@
 """On-demand compiler toolchains for building target firmware.
 
-Studio does not ship compilers inside its bundle (they would add hundreds of MB per platform).  Instead ``resources/toolchains.json`` pins official builds (xPack GCC/clang, Arduino's avr-gcc) by version, URL and SHA-256 for every host platform.  :class:`ToolchainManager` downloads one on request, verifies the checksum, unpacks it under ``<data_dir>/toolchains/<id>/<version>/`` and from then on works offline.
+Studio does not ship compilers inside its bundle (they would add hundreds of MB per platform).  Instead ``resources/toolchains.json`` pins official builds (xPack GCC and OpenOCD, Zig's clang, Arduino's avr-gcc) by version, URL and SHA-256 for every host platform.  :class:`ToolchainManager` downloads one on request, verifies the checksum, unpacks it under ``<data_dir>/toolchains/<id>/<version>/`` and from then on works offline.
 
 Users can also register their own toolchains ("custom"): either an archive URL (+ optional SHA-256) that is installed the same way, or an existing directory on disk.  Compilers already on ``PATH`` are detected and used as a fallback.
 """
@@ -13,6 +13,7 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import threading
@@ -26,7 +27,6 @@ from cwstudio import net
 log = logging.getLogger("cwstudio.toolchains")
 
 REGISTRY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "toolchains.json")
-ARCHES = ("arm", "avr", "riscv")
 COMPILERS = ("gcc", "clang")
 MARKER = ".cwstudio-toolchain.json"
 USER_AGENT = "ChipWhisperer-Studio"
@@ -205,6 +205,7 @@ class ToolchainManager:
         self._lock = threading.Lock()
         self._jobs: Dict[str, Dict[str, Any]] = {}      # id -> {state, done, total, error, cancel}
         self.custom_path = os.path.join(self.root, "custom.json")
+        self._nano_cache: Dict[str, bool] = {}          # gcc bin dir -> has newlib-nano (nano.specs)
 
     # --- registry -----------------------------------------------------------
     def _best_registry(self) -> Dict[str, Any]:
@@ -313,6 +314,29 @@ class ToolchainManager:
             return None
         p = shutil.which(name)
         return os.path.dirname(p) if p else None
+
+    def _gcc_has_newlib_nano(self, bin_dir: str, e: Dict[str, Any]) -> bool:
+        """Whether this gcc can resolve newlib-nano (``nano.specs``).
+
+        The ChipWhisperer makefiles link the bare-metal Arm/RISC-V targets with ``-specs=nano.specs``,
+        so a gcc without newlib-nano fails late in the link with a cryptic "cannot read spec file
+        'nano.specs'".  Distro packages (notably Debian/Ubuntu/Kali ``gcc-arm-none-eabi``) ship without
+        it, so a system fallback must be checked before it is offered for a build.
+        """
+        archs = e.get("arch") or []
+        if e.get("compiler") != "gcc" or not any(a in ("arm", "riscv") for a in archs):
+            return True  # newlib-nano only matters for the bare-metal newlib targets
+        if bin_dir in self._nano_cache:
+            return self._nano_cache[bin_dir]
+        ok = False
+        gcc = os.path.join(bin_dir, self._probe_name(e) or "")
+        try:
+            out = subprocess.run([gcc, "-print-file-name=nano.specs"], capture_output=True, text=True, timeout=10).stdout.strip()
+            ok = bool(out) and out != "nano.specs" and os.path.isfile(out)  # gcc echoes the name unchanged when it cannot find the file
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        self._nano_cache[bin_dir] = ok
+        return ok
 
     def status(self, e: Dict[str, Any]) -> Dict[str, Any]:
         dl = self.download_for_host(e)
@@ -521,13 +545,23 @@ class ToolchainManager:
             if st["installed"]:
                 rank = 0 if not e.get("custom") else 1
                 cand = dict(st, use_bin=st["bin"], rank=rank, entry=e)
-            elif st["system"]:
+            elif st["system"] and self._gcc_has_newlib_nano(st["system"], e):
                 cand = dict(st, use_bin=st["system"], rank=2, entry=e)
             else:
+                # no managed install, and no usable system gcc (e.g. a distro arm-none-eabi-gcc without newlib-nano)
                 continue
             if best is None or cand["rank"] < best["rank"]:
                 best = cand
         return best
+
+    def system_gcc_lacking_nano(self, arch: str) -> Optional[str]:
+        """A system gcc for ``arch`` present on PATH but without newlib-nano, else None (for a clearer build error)."""
+        for e in self.entries():
+            if e.get("compiler") == "gcc" and arch in (e.get("arch") or []):
+                sysbin = self._system_bin(e)
+                if sysbin and not self._installed_bin(e) and not self._gcc_has_newlib_nano(sysbin, e):
+                    return sysbin
+        return None
 
     def make_bin(self) -> Optional[str]:
         """Directory holding ``make`` (bundled build tools on Windows, else system)."""

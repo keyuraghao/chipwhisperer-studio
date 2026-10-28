@@ -67,13 +67,11 @@ class Subscriber:
     def __init__(self, loop: asyncio.AbstractEventLoop, maxsize: int = 512):
         self.loop = loop
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
-        self.dropped = 0
 
     def _put(self, ev: Event):
         # Runs on the event loop thread.
         if self.queue.full():
             if ev.droppable:
-                self.dropped += 1
                 return
             # Make room by discarding the oldest droppable event, else the oldest.
             try:
@@ -83,12 +81,10 @@ class Subscriber:
                     item = self.queue.get_nowait()
                     if not victim_removed and item.droppable:
                         victim_removed = True
-                        self.dropped += 1
                         continue
                     items.append(item)
                 if not victim_removed and items:
                     items.pop(0)
-                    self.dropped += 1
                 for it in items:
                     self.queue.put_nowait(it)
             except Exception:
@@ -96,7 +92,7 @@ class Subscriber:
         try:
             self.queue.put_nowait(ev)
         except asyncio.QueueFull:
-            self.dropped += 1
+            pass
 
 
 HISTORY_KINDS = frozenset(("log", "capture", "glitch"))

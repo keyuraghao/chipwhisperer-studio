@@ -407,7 +407,7 @@ def test_search_backwards_without_a_start_point_searches_from_the_end(client):
     assert cap["samples"] > last["index"]
 
 
-def test_import_upload_of_foreign_files(client, tmp_path):
+def test_import_upload_of_foreign_files(client):
     for name, text in (("pv.vcd", PULSEVIEW_VCD), ("logic2.csv", SALEAE_ISO), ("sigrok.csv", SIGROK_CSV)):
         r = client.post("/api/la/import/upload", files={"file": (name, text.encode())})
         assert r.status_code == 200, r.text
@@ -443,7 +443,7 @@ def test_native_rewrites_the_oversampling_after_a_clock_change_and_waits_for_the
     assert job.capture.samplerate == pytest.approx(sr) and times["read"] - times["arm"] >= 200 / sr * 0.95
 
 
-def test_mcp_select_search_back_and_decode_while_big_capture_decodes(client, tmp_path):
+def test_mcp_select_search_back_and_decode_while_big_capture_decodes(client):
     from cwstudio.mcp_server import build_server
     from tests.test_logic_sources import TestClientAdapter
     m = build_server(TestClientAdapter(client))

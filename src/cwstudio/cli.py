@@ -60,18 +60,6 @@ def _free_port(host: str, preferred: int) -> int:
         return preferred  # uvicorn will report why it cannot listen
 
 
-def _wait_ready(host: str, port: int, timeout: float = 20.0) -> bool:
-    """Wait until something accepts connections on host:port (used by the MCP server for its embedded Studio)."""
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            with socket.create_connection((host, port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.1)
-    return False
-
-
 def _wait_started(server, timeout: float = 20.0, alive=None) -> bool:
     """Wait until this Studio's uvicorn server is listening (it sets started once its socket is open; connecting to the port instead could reach another program that holds it). Give up early once alive() says the server thread has stopped, for example because the port could not be opened."""
     end = time.time() + timeout
@@ -90,7 +78,7 @@ DESKTOP_ID = "chipwhisperer-studio"
 def desktop_entry(install: bool = True) -> int:
     """Add (or remove) a Linux applications-menu entry with Studio's icon. Executables carry no icon on Linux; desktop environments take it from a .desktop file."""
     if not sys.platform.startswith("linux"):
-        print("Desktop entries are for Linux. On Windows the executable has the icon; on macOS use ChipWhispererStudio.app from the bundle.")
+        print("Desktop entries are for Linux. On Windows the executable has the icon; on macOS use 'ChipWhisperer Studio.app' from the bundle.")
         return 1
     import shutil
     data = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
@@ -155,13 +143,13 @@ def main(argv=None):
 def _run(argv):
     ap = argparse.ArgumentParser(prog="cw-studio", description="ChipWhisperer Studio: opens in its own window. Use --browser to use your web browser instead, or --no-browser to run only the server (remote use, scripts).", epilog="Run 'cw-studio mcp --help' for the Model Context Protocol server. On Linux, 'cw-studio --install-desktop' adds Studio with its icon to the applications menu ('--remove-desktop' takes it out again).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address (use 0.0.0.0 for remote access)")
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="preferred port (default 8765); the next free port is used when it is taken")
     ap.add_argument("--browser", action="store_true", help="open the UI in your web browser instead of Studio's own window")
     ap.add_argument("--no-browser", action="store_true", help="run only the server: open no window and no browser")
     ap.add_argument("--window", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so older shortcuts still work
-    ap.add_argument("--simulate", action="store_true", help="pre-select the simulator on the Connect page")
-    ap.add_argument("--data-dir", default=None, help="folder for exports/firmware uploads")
-    ap.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    ap.add_argument("--simulate", action="store_true", help="pre-select the simulator on the Connect tab (no hardware needed)")
+    ap.add_argument("--data-dir", default=None, help="data folder for exports, firmware sources and builds, toolchains, notebooks, notes and logic captures (default ~/ChipWhispererStudio)")
+    ap.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"], help="console log level (default info)")
     ap.add_argument("--app-window", dest="window_mode", action="store_true", help="open Studio's own window (the default unless this is the Web build)")
     args = ap.parse_args(argv)
     default = default_mode()

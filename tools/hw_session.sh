@@ -3,7 +3,8 @@
 # Usage: tools/hw_session.sh [--prepare] [--sim] [extra pytest args]
 #   --prepare  set up the session data folder (private copy of the firmware sources, linked toolchains) and pre-build the target firmware, then exit
 #   --sim      run the stages against the simulator instead of a Husky
-# Env passed through: CWSTUDIO_HW_SN, CWSTUDIO_HW_PLATFORM (default CWHUSKY), CWSTUDIO_HW_PROGRAMMER, CWSTUDIO_HW_SKIP_PROGRAM=1, CWSTUDIO_HW_MANUAL=1, CWSTUDIO_HW_DATA
+# Env passed through: CWSTUDIO_HW_SN, CWSTUDIO_HW_PLATFORM (default CWHUSKY), CWSTUDIO_HW_TARGET (default SimpleSerial2), CWSTUDIO_HW_PROGRAMMER, CWSTUDIO_HW_SKIP_PROGRAM=1, CWSTUDIO_HW_MANUAL=1, CWSTUDIO_HW_DATA
+# CWSTUDIO_FW_DATA names the data folder whose firmware sources and toolchains are copied and linked (default ../.studio-dev/data)
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$REPO")"
@@ -39,7 +40,7 @@ from cwstudio.toolchains import ToolchainManager
 from cwstudio.firmware import FirmwareManager
 d = os.environ["CWSTUDIO_HW_DATA"]
 fm = FirmwareManager(d, ToolchainManager(d))
-r = fm.build({"project": "simpleserial-aes", "platform": os.environ["CWSTUDIO_HW_PLATFORM"], "ss_ver": "SS_VER_2_1", "crypto_target": "TINYAES128C", "compiler": "gcc"}, wait=True)
+r = fm.build({"project": "simpleserial-aes", "platform": os.environ["CWSTUDIO_HW_PLATFORM"], "ss_ver": "SS_VER_1_1" if os.environ.get("CWSTUDIO_HW_TARGET") == "SimpleSerial" else "SS_VER_2_1", "crypto_target": "TINYAES128C", "compiler": "gcc"}, wait=True)
 if r["state"] != "ok":
     print("\n".join(fm.build_log()["lines"][-20:]))
     raise SystemExit("build failed: %s" % r.get("error"))

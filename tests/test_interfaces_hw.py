@@ -322,10 +322,6 @@ class FakeSession:
         pass
 
 
-def _sets(scope, prefix=""):
-    return [(p, v) for p, v in scope.log if p.startswith(prefix)]
-
-
 def test_fake_husky_trigger_sequences():
     sc = FakeScope("husky")
     ifc = Interfaces(FakeSession(sc))
@@ -597,7 +593,7 @@ def _scripts_for(exe):
     return ocdmod.OpenOCD(type("S", (), {"toolchains": None})()).scripts_dir(exe)
 
 
-def test_openocd_server_lifecycle_with_cw_config(tmp_path):
+def test_openocd_server_lifecycle_with_cw_config():
     """Studio's own start/command/stop with the ChipWhisperer interface config; 'noinit' keeps the server up without a probe."""
     exe = _openocd_binary()
     if not _scripts_for(exe):

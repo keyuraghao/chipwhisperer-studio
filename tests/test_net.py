@@ -31,7 +31,7 @@ def test_falls_back_to_certifi(monkeypatch):
     assert ctx.cert_store_stats()["x509_ca"] > 50, certifi.where()
 
 
-def test_ssl_cert_file_wins(monkeypatch, tmp_path):
+def test_ssl_cert_file_wins(monkeypatch):
     certifi = pytest.importorskip("certifi")
     monkeypatch.setenv("SSL_CERT_FILE", certifi.where())
     ctx = net.ssl_context()

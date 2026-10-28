@@ -1,6 +1,6 @@
 # ChipWhisperer Studio MCP tool reference
 
-Generated from the MCP server of chipwhisperer-studio 0.5.1 by tools/skill_reference.py (106 tools). Do not edit by hand.
+Generated from the MCP server of chipwhisperer-studio 0.5.2 by tools/skill_reference.py (106 tools). Do not edit by hand.
 
 Each entry: `name(arguments)` with defaults (`?` means optional with no default), whether it changes anything, then the server's own description. Every result arrives wrapped as `{"result": ...}`.
 
@@ -19,11 +19,11 @@ Each entry: `name(arguments)` with defaults (`?` means optional with no default)
 - `scope_get_settings(filter=None, include_docs=False)` [read only]: All scope settings as a flat list of {path, value, type, writable, choices} read back from the hardware; filter keeps paths containing the text (e.g. 'glitch', 'adc', 'clock'); include_docs adds each setting's documentation.
 - `scope_set_setting(path, value)` [changes state]: Set one scope setting by dotted path (e.g. 'gain.db'=25, 'adc.samples'=5000, 'adc.offset'=0, 'trigger.triggers'='tio4', 'clock.clkgen_freq'=7.37e6, 'glitch.width'=10). Returns the value read back from the hardware.
 - `scope_set_settings(settings)` [changes state]: Set several scope settings in order, given as {path: value}; stops at the first error and reports what was applied.
-- `scope_action(action)` [changes state]: Run a scope action: default_setup (recommended defaults), arm_capture (arm and wait for one trigger without talking to the target, to test triggering) or reset_fpga.
+- `scope_action(action)` [changes state]: Run a scope action: default_setup (recommended defaults), arm_capture (arm and wait for one trigger without talking to the target, to test triggering), reset_fpga or glitch_disable (stop glitching and restore the clock and power outputs).
 
 ## Target and serial
 
-- `target_connect(kind='SimpleSerial2', options=None)` [changes state]: Connect the target interface. SimpleSerial2 matches current ChipWhisperer firmware, SimpleSerial is the legacy v1 protocol, sim is the simulated AES target. options are passed to chipwhisperer.target() (e.g. {'bitfile': ...} for CW305).
+- `target_connect(kind='SimpleSerial2', options=None)` [changes state]: Connect the target interface. SimpleSerial2 matches current ChipWhisperer firmware, SimpleSerial is the legacy v1 protocol, sim is the simulated AES target. options are passed to chipwhisperer.target() (e.g. {'bsfile': ...} for CW305).
 - `target_disconnect()` [changes state]: Disconnect the target interface.
 - `target_get_settings(filter=None, include_docs=False)` [read only]: All target interface settings (baud rate, protocol options...) as a flat list, same format as scope_get_settings.
 - `target_set_setting(path, value)` [changes state]: Set one target interface setting by dotted path (e.g. 'baud'=38400).
@@ -46,8 +46,8 @@ Each entry: `name(arguments)` with defaults (`?` means optional with no default)
 - `trace_get(index, max_points=1000)` [read only]: One stored trace: its plaintext, ciphertext and key (hex), summary statistics (min, max, mean, std, argmin, argmax) and at most max_points samples (min/max decimated for long traces).
 - `traces_stats(start=0, end=None, max_points=1000)` [read only]: Per-sample statistics over stored traces start..end (mean, min, max, std...) each decimated to at most max_points, useful to find where the target is computing.
 - `traces_clear()` [DESTRUCTIVE]: Delete all stored traces from memory (exports on disk are kept).
-- `traces_export(path='traces', format='npz')` [changes state]: Save stored traces with their inputs/outputs/keys: npz (numpy), cwp (ChipWhisperer project, opens in the Python API) or csv. Relative paths go into Studio's data folder.
-- `traces_import(path, replace=True)` [changes state]: Load traces from an .npz or ChipWhisperer .cwp file on the machine running Studio; replace=false appends to the stored traces.
+- `traces_export(path='traces', format='npz')` [changes state]: Save stored traces with their inputs/outputs/keys: npz (numpy), cwp (ChipWhisperer project, opens in the Python API), csv or npy (a set of .npy files). Relative paths go into Studio's data folder.
+- `traces_import(path, replace=True)` [changes state]: Load traces from an .npz, .npy or ChipWhisperer .cwp file (or a .zip holding a ChipWhisperer project) on the machine running Studio; replace=false appends to the stored traces.
 
 ## CPA
 
@@ -64,8 +64,8 @@ Each entry: `name(arguments)` with defaults (`?` means optional with no default)
 
 ## Toolchains
 
-- `toolchains_list()` [read only]: Compiler toolchains Studio knows (GCC for Arm, AVR and RISC-V, clang, make for Windows, plus custom ones): version, download size, whether installed, bin folder, a system copy on PATH, and any running download.
-- `toolchain_install(toolchain_id, wait=True, timeout_s=1800)` [network]: Download, verify (SHA-256) and unpack a toolchain by id (arm-gcc, avr-gcc, riscv-gcc, clang, win-build-tools or a custom id). Works offline afterwards.
+- `toolchains_list()` [read only]: Toolchains Studio knows (GCC for Arm, AVR and RISC-V, clang, make for Windows, OpenOCD, plus custom ones): version, download size, whether installed, bin folder, a system copy on PATH, and any running download.
+- `toolchain_install(toolchain_id, wait=True, timeout_s=1800)` [network]: Download, verify (SHA-256) and unpack a toolchain by id (arm-gcc, avr-gcc, riscv-gcc, clang, win-build-tools, openocd or a custom id). Works offline afterwards.
 - `toolchain_cancel(toolchain_id)` [changes state]: Cancel a running toolchain download.
 - `toolchain_remove(toolchain_id)` [DESTRUCTIVE]: Delete an installed toolchain from disk (it can be installed again later).
 - `toolchain_add_custom(name, compiler='gcc', arch=None, prefix='', url=None, sha256=None, path=None, version=None, bin='bin')` [changes state]: Register another toolchain, e.g. for targets Studio has no download for (TriCore, PowerPC, RX) or a specific GCC version: give an archive url (+ sha256) to download, or path to an existing install. arch lists the architectures it serves (arm, avr, riscv, tricore, ppc, rx...), prefix is the tool prefix (e.g. 'arm-none-eabi-').
@@ -110,7 +110,7 @@ Each entry: `name(arguments)` with defaults (`?` means optional with no default)
 
 ## Interfaces
 
-- `hardware_capabilities()` [read only]: What the connected ChipWhisperer (or the simulator's model) supports: UART pin modes, SimpleSerial versions, SPI, JTAG/SWD, GPIO, USERIO, bit-banger, 1-Wire, each trigger type and each programmer, as {available, reason, details}. Check this before using the other interface tools.
+- `hardware_capabilities()` [read only]: What the connected ChipWhisperer (or the simulator's model) supports: UART pin modes, SimpleSerial versions, SPI, JTAG/SWD, GPIO, USERIO, bit-banger, 1-Wire, each trigger type, each programmer, Arm trace, the logic analyser sources and whether clock.adc_mul exists, as {available, reason, details}. Check this before using the other interface tools.
 - `interfaces_status()` [read only]: State of every interface: capabilities, UART configuration and pins, SimpleSerial version, SPI master, the last trigger configured here, OpenOCD server and MPSSE mode.
 - `uart_configure(baud=None, parity=None, stop_bits=None, rx=None, tx=None)` [changes state]: Configure the target UART: baud (500 to 2000000), parity, stop bits (1, 1.5 or 2; data bits are always 8) and which TIO pins are RX and TX. Only pin modes valid for the connected model are accepted (the CW-Nano is fixed to RX on TIO1 and TX on TIO2; TIO4 can only transmit).
 - `spi_enable(speed=1000000.0, cs='pdid')` [changes state]: Turn on the SPI master on the 20-pin header (SCK, MOSI, MISO; chip select on the chosen pin). Needs the TARGET_SPI firmware feature; not on the CW-Nano. nRST is held high while SPI is on. On the simulator a W25Q128-style SPI flash (JEDEC ID EF 40 18) answers.

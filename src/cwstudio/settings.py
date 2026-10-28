@@ -4,7 +4,7 @@ Every ChipWhisperer settings object (`scope.adc`, `scope.gain`, `target`, ...) i
 
 * ``path``      dotted path relative to the root (``adc.samples``)
 * ``value``     JSON-safe current value
-* ``type``      one of bool/int/float/str/list/null/other
+* ``type``      one of bool/int/float/str/list/dict/null/other
 * ``writable``  whether the property has a setter (and is not marked read-only)
 * ``doc``       first paragraph of the property docstring
 * ``choices``   known enumeration values, if any
@@ -32,7 +32,6 @@ KNOWN_CHOICES: Dict[str, List[Any]] = {
     "clock.adc_src": ["clkgen_x4", "clkgen_x1", "extclk_x4", "extclk_x1", "extclk_dir"],
     "clock.clkgen_src": ["system", "extclk"],
     "clock.freq_ctr_src": ["clkgen", "extclk"],
-    "clock.adc_mul": [1, 2, 3, 4],
     "trigger.module": ["basic", "SAD", "DECODEIO", "UART", "edge_counter", "ADC", "trace", "bitbanger"],  # the union of all models; capabilities.gate_settings narrows it to the connected one (Pro: basic, SAD, DECODEIO; Husky: the rest)
     "trigger.triggers": ["tio1", "tio2", "tio3", "tio4", "nrst", "sma", "userio_d0", "userio_d1",
                          "userio_d2", "userio_d3", "userio_d4", "userio_d5", "userio_d6", "userio_d7"],
@@ -52,7 +51,6 @@ KNOWN_CHOICES: Dict[str, List[Any]] = {
     "glitch.trigger_src": ["continuous", "manual", "ext_single", "ext_continuous"],
     "glitch.enabled": [True, False],
     "glitch.arm_timing": ["no_glitch", "before_scope", "after_scope"],
-    "glitch.mmcm_locked": [],
     "adc.clk_src": ["int", "ext"],
     "adc.test_mode": [True, False],
     "adc.stream_mode": [True, False],
@@ -193,9 +191,8 @@ def coerce(value: Any, current: Any, choices: Optional[List[Any]] = None) -> Any
     if isinstance(value, str):
         s = value.strip()
         if s.lower() in ("none", "null", ""):
-            if current is None or (choices and None in choices) or s == "":
-                if current is None or (choices and None in choices):
-                    return None
+            if current is None or (choices and None in choices):
+                return None
         if isinstance(current, bool) or (choices and all(isinstance(c, bool) for c in choices if c is not None)):
             if s.lower() in ("true", "1", "yes", "on"):
                 return True
@@ -233,11 +230,6 @@ def coerce(value: Any, current: Any, choices: Optional[List[Any]] = None) -> Any
             return float(value)
         return value
     return value
-
-
-def get_value(root: Any, path: str) -> Any:
-    obj, name = _resolve(root, path)
-    return _json_safe(getattr(obj, name))
 
 
 def set_value(root: Any, path: str, value: Any) -> Any:

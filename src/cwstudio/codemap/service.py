@@ -75,7 +75,6 @@ class CodeMapService:
         self.P: Optional[np.ndarray] = None
         self.meta: Dict[str, Any] = {}
         self.source_roots: List[str] = []
-        self.pctrace: Optional[Dict[str, Any]] = None
 
     # --- helpers ------------------------------------------------------------------------------------
     def publish(self) -> None:
@@ -517,7 +516,6 @@ class CodeMapService:
         m = self.mapping
         for r in res.get("rows", []):
             r["sample"] = round(float(m.sample(r["cycle"] * (res.get("scale") or 1.0) + (res.get("offset") or 0.0))), 2)
-        self.pctrace = res
         return res
 
 
@@ -564,7 +562,7 @@ def register_routes(app, session) -> None:
 
     @app.post("/api/codemap/build")
     async def codemap_build(req: Request):
-        """Body: elf (path; default the programmed firmware or the newest build), sources (folder), trace (index; default the newest), key/text (hex, instead of a trace; text "" sends the command without data), cmd ('p'), raw (hex serial bytes fed as they are, for firmware that is not SimpleSerial; raw_text true: raw is text), core, protocol ('2.1', '1.1'), wait_states, mapping {adc_freq, target_freq, adc_offset, presamples, decimate, scale, shift}, align (true, false or 'auto'), options {skip: [...], getch: [...], putch: [...], trigger_high: [...], trigger_low: [...], max_instructions (per command, default 4000000)}."""
+        """Body: elf (path; default the programmed firmware or the newest build), sources (folder), trace (index; default the newest), key/text (hex, instead of a trace; text "" sends the command without data), cmd ('p'), raw (hex serial bytes fed as they are, for firmware that is not SimpleSerial; raw_text true: raw is text), core, protocol ('2.1', '1.1', '1.0'), wait_states, mapping {adc_freq, target_freq, adc_offset, presamples, decimate, scale, shift}, align (true, false or 'auto'), align_source ('mean' or 'trace'), options {skip: [...], getch: [...], putch: [...], trigger_high: [...], trigger_low: [...], noskip: [...] (functions never stubbed), trigger_port: [kind, address, bit] (AVR trigger port when no trigger function is known), max_instructions (per command, default 4000000), max_boot_instructions (default 5000000)}."""
         return await run(svc.build, await body(req))
 
     @app.post("/api/codemap/upload")

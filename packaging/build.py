@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Build a standalone ChipWhisperer Studio bundle for the current OS.
 
-    python packaging/build.py [--no-venv] [--out dist]
+    python packaging/build.py [--no-venv] [--out dist] [--variant app|web] [--skip-zip]
 
 Steps:
 1. create an isolated venv (unless --no-venv), install the repo plus pyinstaller and libusb-package;
 2. run PyInstaller with cwstudio.spec;
-3. copy launch helpers + udev rule + README next to the executable;
-4. zip the result as ChipWhispererStudio-<os>-<arch>.zip
+3. copy the launch helpers, the udev rule (Windows and Linux), the bundle README, LICENSE.txt and NOTICE.txt (plus the icon on Linux and the simulator .bat on Windows) next to the executable;
+4. zip the result as ChipWhispererStudio-<os>-<arch>.zip (ChipWhispererStudio-Web-<os>-<arch>.zip for --variant web)
 """
 from __future__ import annotations
 

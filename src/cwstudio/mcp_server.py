@@ -1,6 +1,6 @@
 """Model Context Protocol server for ChipWhisperer Studio.
 
-Every tool maps onto Studio's HTTP API, so an AI agent gets the same features and options as the UI: connecting scopes and targets, every scope and target setting, programming, serial and SimpleSerial I/O, capture, trace access and export, CPA, glitch sweeps, compiler toolchains and firmware builds.
+Every tool maps onto Studio's HTTP API, so an AI agent gets the same features and options as the UI: connecting scopes and targets, every scope and target setting, programming, serial and SimpleSerial I/O, capture, trace access and export, CPA, glitch sweeps, compiler toolchains and firmware builds, notebooks and their kernels, notes and the calculator, the hardware interfaces (UART, SPI, GPIO, USERIO, triggers, bit-banger, 1-Wire, OpenOCD), the logic analyser and the code map.
 
 ``cw-studio mcp`` attaches to a Studio that is already running (so the agent and the browser share one session) or, if none answers at ``--url``, starts a headless Studio inside the MCP process. Use ``--transport streamable-http`` to serve MCP over HTTP instead of stdio.
 """
@@ -24,7 +24,7 @@ import numpy as np
 log = logging.getLogger("cwstudio.mcp")
 
 INSTRUCTIONS = (
-    "ChipWhisperer Studio controls NewAE ChipWhisperer side-channel and fault-injection hardware (Nano, Lite, Pro, Husky) or a built-in simulator. "
+    "ChipWhisperer Studio controls NewAE ChipWhisperer side-channel and fault-injection hardware (Nano, Lite, Pro, Husky, Husky Plus) or a built-in simulator. "
     "Typical flow: studio_status, then scope_connect (kind='sim' when no hardware), target_connect, optionally toolchains_list, toolchain_install, firmware_fetch_sources, firmware_build and firmware_program, "
     "then capture_start with wait=true, traces_summary, cpa_start with wait=true and cpa_result. For fault injection configure glitch.* with scope_set_setting, then glitch_start and glitch_results. "
     "Settings are addressed by dotted paths from scope_get_settings / target_get_settings (e.g. 'gain.db', 'adc.samples', 'clock.clkgen_freq', 'glitch.width'). "
@@ -163,13 +163,13 @@ def build_server(client: StudioClient, url_note: str = ""):
     DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False}
     NET = {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}
 
-    def wait_job(timeout: float, name: Optional[str] = None) -> Dict[str, Any]:
+    def wait_job(timeout: float) -> Dict[str, Any]:
         end = time.time() + timeout
         st = client.get("/api/status")
         while time.time() < end:
             st = client.get("/api/status")
             job = st.get("job") or {}
-            if not job.get("running") and (name is None or job.get("name") == name):
+            if not job.get("running"):
                 break
             time.sleep(0.5)
         return st
@@ -238,14 +238,14 @@ def build_server(client: StudioClient, url_note: str = ""):
         return out
 
     @mcp.tool(annotations=HW)
-    def scope_action(action: Literal["default_setup", "arm_capture", "reset_fpga"]) -> Any:
-        """Run a scope action: default_setup (recommended defaults), arm_capture (arm and wait for one trigger without talking to the target, to test triggering) or reset_fpga."""
+    def scope_action(action: Literal["default_setup", "arm_capture", "reset_fpga", "glitch_disable"]) -> Any:
+        """Run a scope action: default_setup (recommended defaults), arm_capture (arm and wait for one trigger without talking to the target, to test triggering), reset_fpga or glitch_disable (stop glitching and restore the clock and power outputs)."""
         return client.post(f"/api/scope/action/{action}")
 
     # ----- target ----------------------------------------------------------------
     @mcp.tool(annotations=HW)
     def target_connect(kind: Literal["SimpleSerial2", "SimpleSerial", "SimpleSerial2_CDC", "CW305", "sim"] = "SimpleSerial2", options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Connect the target interface. SimpleSerial2 matches current ChipWhisperer firmware, SimpleSerial is the legacy v1 protocol, sim is the simulated AES target. options are passed to chipwhisperer.target() (e.g. {'bitfile': ...} for CW305)."""
+        """Connect the target interface. SimpleSerial2 matches current ChipWhisperer firmware, SimpleSerial is the legacy v1 protocol, sim is the simulated AES target. options are passed to chipwhisperer.target() (e.g. {'bsfile': ...} for CW305)."""
         return client.post("/api/target/connect", {"kind": kind, **(options or {})})
 
     @mcp.tool(annotations=HW)
@@ -349,13 +349,13 @@ def build_server(client: StudioClient, url_note: str = ""):
         return client.delete("/api/traces")
 
     @mcp.tool(annotations=HW)
-    def traces_export(path: str = "traces", format: Literal["npz", "cwp", "csv"] = "npz") -> Dict[str, Any]:
-        """Save stored traces with their inputs/outputs/keys: npz (numpy), cwp (ChipWhisperer project, opens in the Python API) or csv. Relative paths go into Studio's data folder."""
+    def traces_export(path: str = "traces", format: Literal["npz", "cwp", "csv", "npy"] = "npz") -> Dict[str, Any]:
+        """Save stored traces with their inputs/outputs/keys: npz (numpy), cwp (ChipWhisperer project, opens in the Python API), csv or npy (a set of .npy files). Relative paths go into Studio's data folder."""
         return client.post("/api/traces/export", {"path": path, "format": format})
 
     @mcp.tool(annotations=HW)
     def traces_import(path: str, replace: bool = True) -> Dict[str, Any]:
-        """Load traces from an .npz or ChipWhisperer .cwp file on the machine running Studio; replace=false appends to the stored traces."""
+        """Load traces from an .npz, .npy or ChipWhisperer .cwp file (or a .zip holding a ChipWhisperer project) on the machine running Studio; replace=false appends to the stored traces."""
         return client.post("/api/traces/import", {"path": path, "replace": replace})
 
     # ----- analysis ----------------------------------------------------------------------
@@ -422,12 +422,12 @@ def build_server(client: StudioClient, url_note: str = ""):
     # ----- toolchains ----------------------------------------------------------------------
     @mcp.tool(annotations=RO)
     def toolchains_list() -> Dict[str, Any]:
-        """Compiler toolchains Studio knows (GCC for Arm, AVR and RISC-V, clang, make for Windows, plus custom ones): version, download size, whether installed, bin folder, a system copy on PATH, and any running download."""
+        """Toolchains Studio knows (GCC for Arm, AVR and RISC-V, clang, make for Windows, OpenOCD, plus custom ones): version, download size, whether installed, bin folder, a system copy on PATH, and any running download."""
         return client.get("/api/toolchains")
 
     @mcp.tool(annotations=NET)
     def toolchain_install(toolchain_id: str, wait: bool = True, timeout_s: float = 1800) -> Dict[str, Any]:
-        """Download, verify (SHA-256) and unpack a toolchain by id (arm-gcc, avr-gcc, riscv-gcc, clang, win-build-tools or a custom id). Works offline afterwards."""
+        """Download, verify (SHA-256) and unpack a toolchain by id (arm-gcc, avr-gcc, riscv-gcc, clang, win-build-tools, openocd or a custom id). Works offline afterwards."""
         res = client.post(f"/api/toolchains/{toolchain_id}/install")
         end = time.time() + timeout_s
         while wait and time.time() < end:
@@ -735,10 +735,10 @@ def main(argv=None) -> int:
     ap.add_argument("--simulate", action="store_true", help="embedded Studio: pre-select the simulator")
     ap.add_argument("--data-dir", default=None, help="embedded Studio: data folder")
     ap.add_argument("--port", type=int, default=8765, help="embedded Studio: preferred HTTP port")
-    ap.add_argument("--transport", default="stdio", choices=["stdio", "streamable-http", "sse"])
+    ap.add_argument("--transport", default="stdio", choices=["stdio", "streamable-http", "sse"], help="stdio (default), or streamable-http / sse to serve MCP over HTTP")
     ap.add_argument("--mcp-host", default="127.0.0.1", help="streamable-http/sse: bind address")
     ap.add_argument("--mcp-port", type=int, default=8766, help="streamable-http/sse: port")
-    ap.add_argument("--log-level", default="warning", choices=["debug", "info", "warning", "error"])
+    ap.add_argument("--log-level", default="warning", choices=["debug", "info", "warning", "error"], help="log level, always on stderr (default warning)")
     args = ap.parse_args(argv)
 
     # stdout carries the MCP protocol on stdio, so all logging goes to stderr.

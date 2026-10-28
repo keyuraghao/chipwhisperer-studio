@@ -1,18 +1,16 @@
-"""Logic analyser capture sources, API, MCP tools and performance.
+"""Logic analyser capture sources, API and MCP tools.
 
 * The Husky path against a fake ``scope.LA`` that implements the documented API (packing samples the way the FPGA FIFO does, and decoding them with the chipwhisperer library's own ``LASettings.extract`` when it is installed).
 * The simulated Husky LA and the analog-to-logic path against the simulator, for every model.
 * The sigrok path against a fake ``sigrok-cli`` that writes a real .sr zip, and graceful refusal when sigrok-cli is missing.
-* Capability gating per simulated model, the ``/api/la/*`` routes, the MCP tools, and the visible-range query on 10 channels of 10 million samples.
+* Capability gating per simulated model, the ``/api/la/*`` routes and the MCP tools (the visible-range query speed on 10 million samples is in test_logic_perf.py).
 """
 import json
 import os
 import stat
 import sys
 import tempfile
-import textwrap
 import time
-import zipfile
 
 import numpy as np
 import pytest
@@ -21,9 +19,7 @@ from starlette.testclient import TestClient
 from cwstudio.aes import encrypt_block
 from cwstudio.app import create_app
 from cwstudio.capabilities import SIM_MODELS, Unsupported, capabilities
-from cwstudio.logic import decoders as D
 from cwstudio.logic import sigrok, synth
-from cwstudio.logic.model import Channel, LogicCapture
 from cwstudio.logic.sources import LogicJob, SimLA
 from cwstudio.session import Session
 from cwstudio.simulator import SimScope

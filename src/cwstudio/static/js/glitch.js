@@ -101,7 +101,7 @@ export function initGlitch(ctx, el) {
       h('div', { class: 'row' }, h('label', {}, 'Expected'), expIn, lenIn),
       h('div', { class: 'row' }, h('label', {}, 'Reset via'), resetSel, resetOn),
       h('div', { class: 'row' }, h('label', {}, 'Timeout ms'), timeoutIn),
-      h('div', { class: 'help' }, 'normal = valid response equal to expected · success = valid response but different · reset = no/invalid response'),
+      h('div', { class: 'help' }, 'normal = valid response equal to expected (with no expected value: any valid response unless the scope timed out) · success = valid response but different · reset = no or invalid response'),
       h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: start }, 'Start sweep'), h('button', { class: 'btn danger', onclick: () => post('/api/capture/stop') }, 'Stop'), h('button', { class: 'btn', onclick: exportCsv }, 'Export CSV')),
       status),
     h('h2', {}, 'Results'),

@@ -323,7 +323,6 @@ def scope_info(scope) -> Dict[str, Any]:
         info["name"] = scope.get_name()
     except Exception:  # noqa: BLE001
         info["name"] = _pretty_type(info.get("type", ""))
-    info["is_husky"] = bool(getattr(scope, "_is_husky", False))
     info["simulated"] = info.get("type") == "cwsim"
     if info["simulated"]:
         info["sim_model"] = getattr(scope, "sim_model", None)

@@ -449,6 +449,3 @@ class OpenOCD:
     def close(self):
         self.stop()
 
-
-def model_pid(scope) -> Optional[int]:
-    return PIDS.get(model_of(scope) or "")

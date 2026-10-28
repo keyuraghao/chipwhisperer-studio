@@ -766,7 +766,7 @@ def register_routes(app, session) -> None:
 
     @app.post("/api/la/capture")
     async def la_capture(req: Request):
-        """Body: source (native, adc, sim, sigrok), settings {...}, wait (bool), timeout (s). native: group, clk_source, oversampling, downsample, depth, trigger, fire, with_analog. adc: segments, samples, level (auto or volts), hysteresis, fire, invert. sim: samplerate, duration_ms or samples, pretrigger (%), channels, jitter_ns, glitches_per_ms. sigrok: device, samplerate, channels, samples or time_ms, triggers, config. persist keeps a .sr copy on disk."""
+        """Body: source (native, adc, sim, sigrok), settings {...}, wait (bool), timeout (s). native: group, clk_source, oversampling, downsample, depth, trigger, fire, with_analog. adc: segments, samples, level (auto or volts), hysteresis, fire, invert. sim: samplerate, duration_ms or samples, pretrigger (%), channels, jitter_ns, glitches_per_ms, fire, baud, clock_hz, ss_version. sigrok: device, samplerate, channels, samples or time_ms, triggers, config, timeout. native also takes timeout (s) and userio_inputs (default true). persist keeps a .sr copy on disk."""
         p = await body(req)
         return await run(la.capture, p.get("source", "sim"), p.get("settings") or {}, bool(p.get("wait", False)), float(p.get("timeout", 120)))
 
@@ -854,7 +854,7 @@ def register_routes(app, session) -> None:
 
     @app.post("/api/la/import")
     async def la_import(req: Request):
-        """Body: path (a .vcd, .csv or .sr file on the Studio machine), format (optional), samplerate (for CSV files with sample indices or no time column)."""
+        """Body: path (a .vcd, .csv or .sr file on the Studio machine), format (optional), samplerate (for CSV files with sample indices or no time column), name (shown in the Capture menu instead of the file name)."""
         p = await body(req)
         return await run(la.import_file, os.path.expanduser(str(p.get("path", ""))), p.get("format"), p.get("samplerate"), p.get("name"))
 

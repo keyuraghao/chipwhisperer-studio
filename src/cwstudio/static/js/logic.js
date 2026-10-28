@@ -29,7 +29,7 @@ const nice = (x) => { const p = Math.pow(10, Math.floor(Math.log10(x))); const m
 const UNITS = [[1, 's'], [1e-3, 'ms'], [1e-6, 'µs'], [1e-9, 'ns'], [1e-12, 'ps']];
 function unitFor(x) { const a = Math.abs(x); for (const u of UNITS) if (a >= u[0] * 0.9999) return u; return UNITS[UNITS.length - 1]; }
 /** Seconds with a unit picked from the magnitude (or from ``ref``) and enough digits. */
-export function fmtSec(t, ref, digits) {
+function fmtSec(t, ref, digits) {
   if (t == null || !isFinite(t)) return '-';
   const [scale, name] = unitFor(ref != null ? ref : t || 1e-9);
   const v = t / scale;
@@ -325,14 +325,14 @@ export function initLogic(ctx, sideEl, viewEl) {
     settings.persist = persistChk.checked;
     status.textContent = '';
     setRunning(true, 'starting');
-    try { await post('/api/la/capture', { source, settings }); } catch (e) { setRunning(false); repeat = false; status.innerHTML = ''; status.append(h('span', { class: 'err' }, errMsg(e))); setRunning(false); }
+    try { await post('/api/la/capture', { source, settings }); } catch (e) { setRunning(false); repeat = false; status.innerHTML = ''; status.append(h('span', { class: 'err' }, errMsg(e))); }
   }
   async function stopCapture() { repeat = false; try { await post('/api/la/stop'); } catch (e) { /* ignore */ } setRunning(running); }
   ctx.on('la', (ev) => {
     if (ev.kind === 'job') {
       if (ev.state === 'running') { setRunning(true, ev.phase); return; }
       setRunning(false);
-      if (ev.state === 'error') { repeat = false; status.innerHTML = ''; status.append(h('span', { class: 'err' }, errMsg(ev.error || 'capture failed'))); setRunning(false); }
+      if (ev.state === 'error') { repeat = false; status.innerHTML = ''; status.append(h('span', { class: 'err' }, errMsg(ev.error || 'capture failed'))); }
       else if (ev.state === 'stopped') status.textContent = 'stopped';
       else status.textContent = (ev.warnings && ev.warnings.length ? ev.warnings.join('; ') : '') || 'done';
       if (ev.capture) loadCapture(true);

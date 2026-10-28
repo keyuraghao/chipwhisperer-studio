@@ -52,7 +52,7 @@ export function initConnect(ctx, el) {
         devList.append(h('div', { class: d.error ? 'err' : '' }, line, use));
         if (d.hint) devList.append(h('div', { class: d.error ? 'help err' : 'help', style: 'white-space:pre-wrap' }, d.hint));
         if (d.command) devList.append(h('pre', { class: 'code' }, d.command), copyBtn(d.command));
-        if (d.url) devList.append(h('a', { href: d.url, target: '_blank', style: 'color:var(--accent2)' }, 'Driver instructions'));
+        if (d.url) devList.append(h('a', { href: d.url, target: '_blank', style: 'color:var(--info)' }, 'Driver instructions'));
       });
     } catch (e) { devList.textContent = 'Scan failed: ' + e.message; toast(e.message, 'err'); } finally { btnScan.disabled = false; }
   }
@@ -89,7 +89,7 @@ export function initConnect(ctx, el) {
     platCard.append(h('div', { class: 'help' }, 'Linux needs a udev rule so you can access the device without root:'),
       h('pre', { class: 'code' }, plat.udev_install_cmd), copyBtn(plat.udev_install_cmd));
   }
-  if (plat.driver_url) platCard.append(h('a', { href: plat.driver_url, target: '_blank', style: 'color:var(--accent2)' }, 'Windows driver instructions'));
+  if (plat.driver_url) platCard.append(h('a', { href: plat.driver_url, target: '_blank', style: 'color:var(--info)' }, 'Windows driver instructions'));
 
   el.append(
     h('h2', {}, 'Scope'),

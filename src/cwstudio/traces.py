@@ -26,7 +26,6 @@ class TraceStore:
         self.textouts: List[bytes] = []
         self.keys: List[bytes] = []
         self.meta: Dict[str, Any] = {}
-        self.created = time.time()
         self.generation = 0  # bumped on clear/import so clients can resync
         # Running totals so summary() is O(1) instead of a pass over every wave
         self._len_counts: Dict[int, int] = {}

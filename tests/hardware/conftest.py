@@ -1,6 +1,6 @@
 """Real-hardware session for ChipWhisperer Studio: skipped unless CWSTUDIO_HW is set (husky or sim).
 
-Env: CWSTUDIO_HW (husky|sim), CWSTUDIO_HW_SN, CWSTUDIO_HW_PLATFORM (default CWHUSKY), CWSTUDIO_HW_PROGRAMMER, CWSTUDIO_HW_SKIP_PROGRAM=1, CWSTUDIO_HW_MANUAL=1, CWSTUDIO_HW_DATA (Studio data folder for the session).
+Env: CWSTUDIO_HW (husky|sim), CWSTUDIO_HW_SN, CWSTUDIO_HW_PLATFORM (default CWHUSKY), CWSTUDIO_HW_TARGET (SimpleSerial or SimpleSerial2, default SimpleSerial2), CWSTUDIO_HW_PROGRAMMER, CWSTUDIO_HW_SKIP_PROGRAM=1, CWSTUDIO_HW_MANUAL=1, CWSTUDIO_HW_DATA (Studio data folder for the session).
 """
 import json
 import os
@@ -32,7 +32,7 @@ _failed = set()
 def cfg():
     return {"hw": HW, "sn": os.environ.get("CWSTUDIO_HW_SN") or None, "platform": os.environ.get("CWSTUDIO_HW_PLATFORM") or "CWHUSKY",
             "programmer": os.environ.get("CWSTUDIO_HW_PROGRAMMER") or None, "skip_program": os.environ.get("CWSTUDIO_HW_SKIP_PROGRAM") == "1",
-            "manual": os.environ.get("CWSTUDIO_HW_MANUAL") == "1"}
+            "manual": os.environ.get("CWSTUDIO_HW_MANUAL") == "1", "target": target_kind()}
 
 
 def stage_of(item):
@@ -74,7 +74,8 @@ def pytest_runtest_makereport(item, call):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    if HW not in ("husky", "sim"):
+    # only a run that executed stages replaces the recorded session (not --collect-only, not a run that stopped before the first stage)
+    if HW not in ("husky", "sim") or not _results["stages"] or session.config.getoption("collectonly", False):
         return
     for st in _results["stages"].values():
         outs = list(st["tests"].values())

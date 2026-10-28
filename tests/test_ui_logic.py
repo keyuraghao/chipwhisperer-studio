@@ -1,9 +1,10 @@
-"""Browser test of the Logic tab: capture the simulator's demo traffic, add UART and SPI decoders from the sidebar, zoom by dragging on the time axis, find a decoded value, hover it, place both cursors and measure between them. Screenshots of both themes go to ``$CWSTUDIO_LOGIC_SHOTS`` (default ``/tmp/claude-1000/logic``) for review.
+"""Browser test of the Logic tab: capture the simulator's demo traffic, add UART and SPI decoders from the sidebar, zoom by dragging on the time axis, find a decoded value, hover it, place both cursors and measure between them. Screenshots of both themes go to ``$CWSTUDIO_LOGIC_SHOTS`` (default ``<system temp folder>/cwstudio-shots/logic``) for review.
 
 Skipped when Playwright or its Chromium is not installed (``pip install playwright && playwright install chromium``).
 """
 import json
 import os
+import tempfile
 import socket
 import subprocess
 import sys
@@ -13,7 +14,7 @@ import urllib.request
 import pytest
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
-SHOTS = os.environ.get("CWSTUDIO_LOGIC_SHOTS", "/tmp/claude-1000/logic")
+SHOTS = os.environ.get("CWSTUDIO_LOGIC_SHOTS", os.path.join(tempfile.gettempdir(), "cwstudio-shots", "logic"))
 
 
 def _free_port() -> int:
