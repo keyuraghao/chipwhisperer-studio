@@ -21,7 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from screenshots import KEY_CHECK, LOGIC_HIDDEN, ROOT, Api, _free_port, _up, connect_sim, neutral_pythonpath, newest_build  # noqa: E402
+from screenshots import KEY_CHECK, LOGIC_HIDDEN, ROOT, Api, _free_port, _up, aes_build, connect_sim, neutral_pythonpath, newest_build  # noqa: E402
 
 KEY = "2b7e151628aed2a6abf7158809cf4f3c"
 
@@ -248,7 +248,7 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.chapter("Capture")
         d.tab("capture")
         d.caption("Capture traces", "Set how many traces to take and press Run; each one streams into the waveform view", 0.5)
-        count = pg.locator("#panel-capture input[type=number]").first
+        count = pg.locator("#cap-count")
         d.type(count, "500")
         d.click(pg.locator("#btn-run"), 0.5)
         d.wait(3)
@@ -336,7 +336,7 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.caption("Build succeeded: Build & program flashes it to the connected target", "", 3)
 
         d.chapter("Code on the waveform")
-        build = newest_build(api)
+        build = aes_build(api)  # the AES firmware the simulator emulates (not an arbitrary newest build in a shared data dir)
         if build:
             api("POST", "/api/target/program", {"programmer": "STM32F", "path": build})
             api("POST", "/api/capture/start", {"count": 100, "clear": True, "key_mode": "fixed", "key": KEY})
@@ -353,18 +353,28 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
             if not toggle.is_checked():
                 d.click(toggle, 0.5)
             d.caption("The code band under the plot: functions and source lines", "Aligned automatically with the measured traces", 2.5)
-            b = d.plot_box()
             d.caption("Ctrl+drag picks a region of the trace", "The Code tab lists the functions and source lines that ran there", 0.3)
-            d.move(b["x"] + b["width"] * 0.30, b["y"] + b["height"] * 0.5)
-            pg.keyboard.down("Control")
-            pg.mouse.down()
-            d.move(b["x"] + b["width"] * 0.38, b["y"] + b["height"] * 0.5, steps=20)
-            pg.mouse.up()
-            pg.keyboard.up("Control")
+            # pick a sample window inside the trigger window that has source lines (clang inlines functions, so a named lookup or a blind fraction is unreliable)
+            band = api("GET", "/api/codemap/band"); mp = band["mapping"]; tlb = band.get("band") or {}
+            nsmp0 = api("GET", "/api/traces")["samples"]
+            t1 = tlb.get("t1") or tlb.get("total") or 2000
+            ws0 = max(0.0, mp["intercept"]); ws1 = min(nsmp0 - 1, t1 * mp["samples_per_cycle"] + mp["intercept"])  # keep the region on screen
+            reg_lo, reg_hi = ws0, ws1
+            for lo_f, hi_f in [(0.4, 0.6), (0.2, 0.4), (0.6, 0.8), (0.05, 0.95)]:
+                a, b = ws0 + (ws1 - ws0) * lo_f, ws0 + (ws1 - ws0) * hi_f
+                if api("POST", "/api/codemap/region", {"start": a, "end": b}).get("lines"):
+                    reg_lo, reg_hi = a, b; break
+            # set the region exactly through the app (zoom and pixel independent)
+            pg.evaluate("([lo, hi]) => window.__ctx.wave.setRegion(lo, hi, 'drag')", [reg_lo, reg_hi])
+            d.wait(1.2)
             d.wait(1.5)
             pg.locator("#panel-code h2", has_text="Selection").scroll_into_view_if_needed()
             d.wait(0.8)
             d.caption("Click a source line: every sample where it ran is shaded", "Its source and disassembly open in the side panel", 0.3)
+            try:
+                pg.locator("#cm-lines > *").first.wait_for(timeout=8000)
+            except Exception:  # the region had no lines: widen to the whole code window
+                pg.evaluate("([lo, hi]) => window.__ctx.wave.setRegion(lo, hi, 'drag')", [ws0, ws1]); d.wait(1.0)
             d.click(pg.locator("#cm-lines > *").first, 2.5)
             pg.locator("#panel-code h2", has_text="Source").last.evaluate("e => e.scrollIntoView({block: 'start', behavior: 'smooth'})")
             d.wait(2.5)

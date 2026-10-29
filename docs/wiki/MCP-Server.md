@@ -1,6 +1,6 @@
 # MCP Server
 
-ChipWhisperer Studio includes a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, so AI agents such as Claude can drive everything the Studio window can do: connect hardware, change settings, build and flash firmware, capture traces, run CPA, sweep glitches, use the target's interfaces (UART, SPI, GPIO, triggers, OpenOCD), capture and decode logic signals, map firmware code onto traces, run notebooks and keep notes. This page explains how it works, how to set it up in each client, and lists all 106 tools.
+ChipWhisperer Studio includes a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, so AI agents such as Claude can drive everything the Studio window can do: connect hardware, change settings, build and flash firmware, capture traces, run CPA, sweep glitches, use the target's interfaces (UART, SPI, GPIO, triggers, OpenOCD), capture and decode logic signals, map firmware code onto traces, run notebooks and keep notes. This page explains how it works, how to set it up in each client, and lists all 123 tools.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="images/mcp-setup-light.png"><img alt="MCP setup instructions in the Help tab" src="images/mcp-setup.png"></picture>
 
@@ -116,6 +116,13 @@ Every tool carries MCP annotations that clients can use to decide when to ask yo
 | `get_logs` | Recent Studio and ChipWhisperer log messages, plus capture and glitch events. | `since_seq=0`, `limit=200`, `level=None` (DEBUG, INFO, WARNING, ERROR, CRITICAL) | read only |
 | `open_ui` | Returns the web UI URL and the API docs URL, and can open the UI in the default browser. | `open_browser=False` | read only |
 
+| `recipes` | The best way to reach each goal on the connected model (fast capture, long capture, a trigger without a GPIO, a first voltage or clock glitch, cleanest traces): the settings and actions each applies and the notes that matter; unavailable goals say why. | none | read only |
+| `recipe_apply` | Apply a recipe's settings and actions on the connected scope and return what was done plus the capture parameters to follow. | `goal` (fast_capture, long_capture, trigger_without_gpio, voltage_glitch, clock_glitch, clean_traces) | hardware |
+| `scope_pinout` | Pin diagram of the active device: every pin of the 20-pin header with its number, name, direction, function and `scope.io` alias, the USERIO header, the coax ports and model notes. | none | read only |
+| `scope_health` | FPGA temperature and rails with alarms (Husky), clock lock, external-clock drift, sticky capture errors, USB overflows, glitches fired and the last trigger length, plus `problems`: plain sentences about anything wrong and what to do. | `refresh=True` | read only |
+| `scope_clear_errors` | Clear the scope's sticky errors and alarms (a Husky powers its glitch, logic and SAD blocks down after an XADC alarm until this is done) and read the health afterwards. | none | hardware |
+| `scope_upgrade_firmware` | Flash the SAM firmware bundled with this library onto the connected scope (`studio_status` shows the current, library and upstream versions). The scope re-enumerates: unplug, replug and connect again. | none | hardware |
+
 ### Scope
 
 | Tool | What it does | Key parameters | Changes |
@@ -144,7 +151,7 @@ Every tool carries MCP annotations that clients can use to decide when to ask yo
 
 | Tool | What it does | Key parameters | Changes |
 |------|--------------|----------------|---------|
-| `capture_start` | Captures power traces. `count=0` runs until `capture_stop`. With `wait=True` it returns when the capture ends. | `count=100`, `mode="simpleserial"` or `"trigger_only"`, `key_mode="fixed"`, `text_mode="random"` (random, fixed, counter), `key`, `text` (hex), `length=16`, `seed`, `store=True`, `clear=False`, `ack=True`, `max_timeouts=10`, `max_rate=0`, `wait=True`, `timeout_s=600` | hardware |
+| `capture_start` | Captures power traces. `count=0` runs until `capture_stop`. With `wait=True` it returns when the capture ends. | `count=100`, `mode="simpleserial"` or `"trigger_only"`, `key_mode="fixed"`, `text_mode="random"` (random, fixed, counter, tvla), `key`, `text` (hex), `length=16`, `seed`, `store=True`, `clear=False`, `ack=True`, `max_timeouts=10`, `max_rate=0`, `disk=None` (a name or path streams every trace to `<name>_waves.npy`), `wait=True`, `timeout_s=600` | hardware |
 | `capture_single` | Captures exactly one trace and returns summary statistics plus a decimated copy of the samples. | `key`, `text`, `mode="simpleserial"`, `store=True`, `max_points=1000` | hardware |
 | `capture_stop` | Stops the running hardware job (capture or glitch sweep). | none | hardware |
 | `job_wait` | Waits until the running capture or glitch job finishes and returns the final status. | `timeout_s=60` | read only |
@@ -164,18 +171,28 @@ Every tool carries MCP annotations that clients can use to decide when to ask yo
 
 | Tool | What it does | Key parameters | Changes |
 |------|--------------|----------------|---------|
-| `cpa_start` | Runs a correlation power analysis attack on the stored traces. With `wait=True` it returns the final result. | `model="sbox_hw"` (sbox_hw, ptkey_hw, invsbox_hw, lastround_hd, lastround_hw), `trace_start=0`, `trace_end`, `point_start`, `point_end`, `bytes` (list of key bytes 0 to 15), `known_key`, `use_stored_key=True`, `report_every=50`, `wait=True`, `timeout_s=600` | hardware |
+| `cpa_start` | Runs a correlation power analysis attack on the stored traces. With `wait=True` it returns the final result. | `model="sbox_hw"` (sbox_hw, ptkey_hw, invsbox_hw, lastround_hd, lastround_hw, sbox_lsb, sbox_msb, aes256_round2_hw, custom), `trace_start=0`, `trace_end`, `point_start`, `point_end`, `bytes` (list of key bytes 0 to 15), `known_key`, `use_stored_key=True`, `report_every=50`, `expr` (for the custom model), `wait=True`, `timeout_s=600` | hardware |
 | `cpa_stop` | Stops a running CPA attack; the partial result stays available. | none | hardware |
 | `cpa_result` | Latest result: best key guess, per-byte ranking and correlation, PGE per byte when the key is known, progress. | none | read only |
 | `cpa_correlation` | Correlation versus sample index for the best guess of one key byte, decimated. Shows where the leakage happens. | `byte`, `max_points=1000` | read only |
+
+| `cpa_export` | Save the CPA result (per-guess maxima and samples, best correlation trace per byte as `.npz`; the summary with history as `.json`). | `path="cpa_result"` | hardware |
+| `dfa_aes` | Differential fault analysis of AES-128: recover the key from faulty ciphertexts (a glitch that corrupts one byte entering round 9 faults one MixColumns column; about two faults per column give the key). Uses the last glitch sweep, or a correct and faulty ciphertexts you give. | `correct=None`, `faulty=None` | read only |
+| `leakage_ttest` | TVLA: Welch's t-test per sample between the fixed-plaintext and random traces (capture with `text_mode` tvla). `|t|` above 4.5 means it leaks there. | `fixed_text=None`, `trace_start=0`, `trace_end`, `max_points=2000` | read only |
+| `leakage_snr` | Signal-to-noise ratio per sample for one key byte, classing traces by the S-box output Hamming weight under the known key, or by the plaintext byte. | `byte=0`, `classes="sbox_hw"` (sbox_hw, byte), `known_key=None`, `trace_start=0`, `trace_end`, `max_points=2000` | read only |
+| `trace_spectrum` | Magnitude spectrum (dB) of one stored trace or the mean trace, in Hz from the ADC rate when connected. Shows the clock harmonics and where a filter cutoff goes. | `trace=None`, `max_points=2000` | read only |
+| `traces_align` | Static alignment: find each trace's shift that best matches a reference over a window (jittered triggers); `apply` shifts them in place. | `reference=0`, `start=0`, `end=0`, `max_shift=50`, `apply=False` | hardware |
+| `traces_filter` | Filter every stored trace in place: windowed-sinc FIR low-pass, high-pass or band-pass with cutoffs as a fraction of the sample rate (or Hz), or a moving average. | `kind="lowpass"`, `cutoff=0.1`, `cutoff2=None`, `taps=63`, `sample_rate=None` | hardware |
 
 ### Glitch
 
 | Tool | What it does | Key parameters | Changes |
 |------|--------------|----------------|---------|
-| `glitch_start` | Sweeps glitch parameters. Each entry of `parameters` is `{path, start, stop, step}` or `{path, values: [...]}`. | `parameters`, `command="g"`, `data=""`, `expected=None` (hex), `output_len=4`, `repeats=1`, `order="nested"` or `"random"`, `reset="nrst"` (none, nrst, pdic), `reset_on="reset"` (never, reset, always), `reset_delay=0.05`, `glitch_timeout=1000`, `arm_scope=True`, `wait=False`, `timeout_s=1800` | hardware |
+| `glitch_start` | Sweeps glitch parameters. Each entry of `parameters` is `{path, start, stop, step}` or `{path, values: [...]}`. | `parameters`, `command="g"`, `data=""`, `expected=None` (hex), `output_len=4`, `repeats=1`, `order="nested"` or `"random"`, `reset="nrst"` (none, nrst, pdic), `reset_on="reset"` (never, reset, always), `reset_delay=0.05`, `glitch_timeout=1000`, `arm_scope=True`, `checker="expected"` (expected, loop_counter, aes_dfa, flag, expr, or a user file), `checker_expr=None`, `wait=False`, `timeout_s=1800` | hardware |
 | `glitch_results` | Counts per outcome and each point's parameter values, outcome and response. | `only=None` (success, reset, normal), `limit=500` | read only |
 | `glitch_export` | Saves the sweep results as CSV. | `path="glitch_results.csv"` | hardware |
+
+| `glitch_checkers` | The result checkers `glitch_start` accepts: the built-in ones (loop counter, AES fault, flag, expression), the user's own from the data folder's `checkers` directory, and the context fields an expression sees. | none | read only |
 
 ### Toolchains
 
@@ -259,6 +276,10 @@ The [Interfaces](Protocols-and-Interfaces) tab's features. Anything the connecte
 | `openocd_program` | Flashes a `.hex`, `.elf` or `.bin` through OpenOCD, then verifies and resets. | `path`, `verify=True`, `reset=True`, `address` (for .bin) | destructive |
 
 OpenOCD itself is installed with `toolchain_install(toolchain_id="openocd")`.
+
+| `trigger_outputs` | The trigger and clock output ports of the scope (Pro AUX SMA; Husky TRIG/GLITCH and AUX MCX, USERIO clock or HS2) and what each carries now. | none | read only |
+| `trigger_output_set` | Route a trigger or clock output port. | `port` (aux, trig_mcx, aux_mcx), `value` | hardware |
+| `trigger_sad_preview` | Score a SAD reference (a stored trace from a sample) over the stored traces offline, exactly as the model's SAD engine would: where each trace fires, how many fire at the expected position and a suggested threshold. No hardware. | `trace=-1`, `start=0`, `threshold=10`, `interval=10`, `emode=False`, `mask=None`, `traces=200` | read only |
 
 ### Logic analyser
 

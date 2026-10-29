@@ -94,7 +94,17 @@ The frozen bundles come in two variants built from one spec (`--variant app|web`
 | `capture.py` | `CaptureJob`: key and text generation, capture loop, publication. |
 | `glitch.py` | `GlitchJob`: parameter sweep, target reset, result classification. |
 | `traces.py` | `TraceStore`: in-memory traces, statistics, import and export (npz, npy, csv, cwp). |
-| `analysis.py` | Progressive CPA with five AES leakage models. |
+| `profiles.py` | Per-model profiles (Nano, Lite, Pro, Husky, Husky Plus): ADC and sample limits, clock and glitch kinds, triggers, monitors, firmware versions and a best-for note, feeding `/api/capabilities`. |
+| `accel.py` | GPU backend (CuPy) for the CPA, with warm-up and a CPU fallback (`CWSTUDIO_GPU`). |
+| `leakage.py` | Leakage assessment: TVLA t-test, SNR, static alignment, FIR filters and a spectrum. |
+| `dfa.py` | Differential fault analysis of AES-128 from faulted ciphertexts. |
+| `checkers.py` | Pluggable glitch result checkers (loop counter, AES fault, flag, expression, user files). |
+| `health.py` | Scope health: XADC temperature and rails, clock locks, external-clock drift, sticky errors and the glitch counter, decoded into problems. |
+| `recipes.py` | Per-model recipes that pick the best mechanism for a goal (fast capture, long capture, a trigger without a GPIO, a glitch). |
+| `activity.py` | One session-wide tracker of what analysis is in progress (code map, CPA, TVLA, SNR, DFA) for the header indicator. |
+| `sadmodel.py` | Offline SAD trigger model and preview (Pro sum, Husky interval count with a mask). |
+| `pinout.py` | Per-model pin diagram for the Quick Info card. |
+| `analysis.py` | Progressive CPA with nine leakage models. |
 | `toolchains.py` | Pinned, checksummed, on-demand compiler downloads; custom toolchains; registry refresh. |
 | `firmware.py` | Firmware sources from GitHub, project and platform catalogue, builds. |
 | `ccwrap.py` | Compiler wrapper that lets GCC-oriented makefiles build with clang. |
@@ -133,7 +143,7 @@ Studio uses a small in-process kernel instead of a Jupyter kernel, because a sep
 
 ## MCP server
 
-`mcp_server.py` builds an MCP server with `mcplite.py`, a compact implementation of the protocol that ships with Studio, and registers the 106 tools (70 of its own plus those of `mcp_interfaces.py`, `mcp_logic.py` and `mcp_codemap.py`). Each tool is a small function that calls the HTTP API, so the MCP server is just another API client. Unsupported requests come back as `{ok: false, supported: false, reason}` so agents can explain them. It attaches to a running Studio or starts one headless in the same process. Long operations accept `wait=true` and poll the API, so an agent can do "capture 500 traces" or "build and flash" in one call. See [MCP Server](MCP-Server).
+`mcp_server.py` builds an MCP server with `mcplite.py`, a compact implementation of the protocol that ships with Studio, and registers the 123 tools (70 of its own plus those of `mcp_interfaces.py`, `mcp_logic.py` and `mcp_codemap.py`). Each tool is a small function that calls the HTTP API, so the MCP server is just another API client. Unsupported requests come back as `{ok: false, supported: false, reason}` so agents can explain them. It attaches to a running Studio or starts one headless in the same process. Long operations accept `wait=true` and poll the API, so an agent can do "capture 500 traces" or "build and flash" in one call. See [MCP Server](MCP-Server).
 
 ## Frontend
 

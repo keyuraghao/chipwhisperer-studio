@@ -31,7 +31,7 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 
 **Capture traces and watch them live.** Capture single traces, a fixed number or continuously, with fixed, random or counter keys and plaintexts, and export to NumPy, CSV or a ChipWhisperer project. See [Capturing Traces](Capturing-Traces) and [Waveform Viewer](Waveform-Viewer).
 
-**Recover keys with CPA.** In the **Analysis** tab, run a progressive correlation power analysis attack with five AES leakage models and watch every key byte converge. The [Quick Start](Quick-Start) walks through a full attack.
+**Recover keys with CPA.** In the **Analysis** tab, run a progressive correlation power analysis attack with nine leakage models, on the GPU when one is present, and watch every key byte converge. The same tab assesses leakage (TVLA, SNR), conditions traces (alignment, filters) and runs differential fault analysis. See [CPA and leakage analysis](CPA-Analysis); the [Quick Start](Quick-Start) walks through a full attack.
 
 **Find glitches.** In the **Glitch** tab, sweep any glitch parameters, reset the target when it crashes and map successes on a live scatter plot.
 

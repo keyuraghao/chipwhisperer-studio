@@ -15,6 +15,8 @@
 - [Target and programming](Target-and-Programming)
 - [Capturing traces](Capturing-Traces)
 - [Waveform viewer](Waveform-Viewer)
+- [CPA and leakage analysis](CPA-Analysis)
+- [Glitching and fault analysis](Glitching)
 - [Protocols and interfaces](Protocols-and-Interfaces)
 - [Logic analyser](Logic-Analyser)
 - [Code on the waveform](Code-on-the-Waveform)

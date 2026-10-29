@@ -105,12 +105,22 @@ Inside the namespace, `import chipwhisperer` returns a thin wrapper of the real 
 | `capture.py` | `CaptureJob`: key and text generation, capture loop, publication. |
 | `glitch.py` | `GlitchJob`: parameter sweep, target reset, result classification. |
 | `traces.py` | `TraceStore`: in-memory traces, statistics, import and export (npz, npy, csv, cwp). |
-| `analysis.py` | Progressive CPA with five AES leakage models. |
+| `profiles.py` | Per-model profiles (Nano, Lite, Pro, Husky, Husky Plus): ADC and sample limits, clock and glitch kinds, triggers, monitors, firmware versions and a best-for note, feeding `/api/capabilities`. |
+| `accel.py` | GPU backend (CuPy) for the CPA, with warm-up and a CPU fallback (`CWSTUDIO_GPU`). |
+| `leakage.py` | Leakage assessment: TVLA t-test, SNR, static alignment, FIR filters and a spectrum. |
+| `dfa.py` | Differential fault analysis of AES-128 from faulted ciphertexts. |
+| `checkers.py` | Pluggable glitch result checkers (loop counter, AES fault, flag, expression, user files). |
+| `health.py` | Scope health: XADC temperature and rails, clock locks, external-clock drift, sticky errors and the glitch counter, decoded into problems. |
+| `recipes.py` | Per-model recipes that pick the best mechanism for a goal (fast capture, long capture, a trigger without a GPIO, a glitch). |
+| `activity.py` | One session-wide tracker of what analysis is in progress (code map, CPA, TVLA, SNR, DFA) for the header indicator. |
+| `sadmodel.py` | Offline SAD trigger model and preview (Pro sum, Husky interval count with a mask). |
+| `pinout.py` | Per-model pin diagram for the Quick Info card. |
+| `analysis.py` | Progressive CPA with nine leakage models. |
 | `aes.py` | Small AES-128 implementation used by the simulator and the leakage models. |
 | `toolchains.py` | Pinned, checksummed, on-demand compiler downloads and custom toolchains. |
 | `firmware.py` | Firmware sources from GitHub, project and platform catalogue, builds. |
 | `ccwrap.py` | Compiler wrapper that lets GCC-oriented makefiles build with clang. |
-| `mcp_server.py` | MCP server exposing every feature to AI agents (106 tools, with `mcp_interfaces.py`, `mcp_logic.py` and `mcp_codemap.py`). |
+| `mcp_server.py` | MCP server exposing every feature to AI agents (123 tools, with `mcp_interfaces.py`, `mcp_logic.py` and `mcp_codemap.py`). |
 | `notebook.py` | Notebook kernels, one per notebook (cells on the hardware thread, IPython syntax, ChipWhisperer stand-ins), `.ipynb` storage with conflict checks, tutorial download. |
 | `mplbackend.py` | Matplotlib backend for notebooks: `plt.show()` sends figures to the running cell. |
 | `tools.py` | Notes storage, the safe calculator and statistics. |

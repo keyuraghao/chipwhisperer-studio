@@ -111,10 +111,40 @@ def newest_build(api: Api):
     return (builds[0].get("path") or builds[0].get("hex")) if builds else None
 
 
+def aes_build(api: Api):
+    """Path of a simpleserial-aes build for CWLITEARM (clang preferred), the firmware the Code scene emulates and captures; the simulator runs it and its traces leak the AES, unlike an arbitrary newest build. Falls back to the newest build."""
+    builds = api("GET", "/api/firmware/builds")
+    builds = builds.get("builds", builds) if isinstance(builds, dict) else builds
+    cands = [(b.get("path") or b.get("hex") or "") for b in (builds or [])]
+    cands = [c for c in cands if "simpleserial-aes" in os.path.basename(c) and "CWLITEARM" in os.path.basename(c)]
+    cands.sort(key=lambda c: (0 if "clang" in c else 1, c))
+    if cands:
+        return os.path.splitext(cands[0])[0] + ".elf"
+    return newest_build(api)
+
+
 def connect_sim(api: Api, model: str = "husky"):
     """(Re)connect the simulator as a ChipWhisperer model, with its target. A fresh simulated scope also drops programmed firmware, so the built-in AES model is back."""
     api("POST", "/api/scope/connect", {"kind": "sim", "sim_model": model})
     api("POST", "/api/target/connect", {"kind": "sim"})
+
+
+def code_window(api: Api):
+    """A (start, end) sample window that is on screen (inside the captured trace) and has source lines, for a region selection that does not depend on a function name (clang inlines them)."""
+    band = api("GET", "/api/codemap/band")
+    m = band["mapping"]
+    tl = band.get("band") or {}
+    n = api("GET", "/api/traces")["samples"]
+    t1 = tl.get("t1") or tl.get("total") or 2000
+    s0 = max(0.0, m["intercept"])
+    s1 = min(n - 1, t1 * m["samples_per_cycle"] + m["intercept"])  # the trigger window can be far longer than the trace; keep the region visible
+    for lo_f, hi_f in [(0.4, 0.6), (0.2, 0.4), (0.6, 0.8), (0.05, 0.95)]:
+        a = s0 + (s1 - s0) * lo_f
+        b = s0 + (s1 - s0) * hi_f
+        reg = api("POST", "/api/codemap/region", {"start": a, "end": b})
+        if reg.get("lines"):
+            return a, b
+    return s0, s1
 
 
 def prepare_extras(api: Api, with_firmware: bool):
@@ -185,7 +215,7 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
                 await page.evaluate("() => { const t = document.getElementById('toasts'); if (t) t.innerHTML = ''; }")
 
             async def run_capture(count=300):
-                await page.fill("#panel-capture input[type=number] >> nth=0", str(count))
+                await page.fill("#cap-count", str(count))
                 await page.click("#btn-run")
                 await page.wait_for_timeout(2500)
 
@@ -256,14 +286,14 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             # Capture and waveform
             await tab("capture")
             await page.locator("#wave-toolbar label", has_text="mean").locator("input").check()
-            await page.fill("#panel-capture input[type=number] >> nth=0", "0")  # continuous, so the photo shows a capture in progress
+            await page.fill("#cap-count", "0")  # continuous, so the photo shows a capture in progress
             await page.click("#btn-run")
             await page.wait_for_timeout(2500)
             await snap("capture.png")
             await snap("capture-panel.png", "#sidebar")
             await page.click("#btn-stop")
             await page.wait_for_timeout(1500)
-            await page.fill("#panel-capture input[type=number] >> nth=0", "300")
+            await page.fill("#cap-count", "300")
             await page.locator("#wave-toolbar label", has_text="mean").locator("input").uncheck()
             await page.select_option("#wave-toolbar select >> nth=1", value="10")
             await run_capture()
@@ -378,27 +408,36 @@ async def shoot(base: str, out: str, width: int, height: int, with_firmware: boo
             await page.locator("#panel-logic .card", has=page.locator(".title", has_text="Decoders")).first.scroll_into_view_if_needed()
             await page.wait_for_timeout(400)
             await snap("logic-panel.png", "#sidebar")
-            if with_firmware and newest_build(api):
-                # Code on the waveform: the clang build runs in the simulator, so its traces and the code map match
-                api("POST", "/api/target/program", {"programmer": "STM32F", "path": newest_build(api)})
-                api("POST", "/api/capture/start", {"count": 100, "clear": True, "key_mode": "fixed", "key": KEY})
-                api.wait("/api/status", lambda st: not (st.get("job") or {}).get("running"))
+            if with_firmware and aes_build(api):
+                # Code on the waveform: a clean simulator, the clang AES build programmed into it, and its own traces, so each theme pass starts from the same known state (a previous pass may have reset the sim or left no traces)
+                elf = aes_build(api)
+                connect_sim(api, "husky")
+                api("POST", "/api/target/program", {"programmer": "STM32F", "path": elf})
+                for _ in range(3):
+                    api("POST", "/api/capture/start", {"count": 100, "clear": True, "key_mode": "fixed", "key": KEY})
+                    api.wait("/api/status", lambda st: not (st.get("job") or {}).get("running"))
+                    if api("GET", "/api/traces")["count"] and api("GET", "/api/traces")["samples"]:
+                        break
+                elf_src = os.path.splitext(elf)[0] + ".elf" if not elf.endswith(".elf") else elf
+                built = {}
+                for _ in range(2):  # build through the API with the explicit ELF so the result is deterministic (the UI dropdown can be stale), then show it in the tab
+                    built = api("POST", "/api/codemap/build", {"elf": elf_src})
+                    if (built.get("instructions") or 0) > 3000:
+                        break
+                print(f"  [{scheme}] codemap: aes_ok={built.get('aes_ok')} instructions={built.get('instructions')} traces={api('GET', '/api/traces')['count']}x{api('GET', '/api/traces')['samples']}")
                 await tab("code")
-                await page.click("#cm-build")
-                api.wait("/api/codemap", lambda r: bool(r.get("built")), timeout=300)
+                api.wait("/api/codemap", lambda r: bool(r.get("built")), timeout=60)
                 await page.wait_for_timeout(1500)
                 if not await page.locator("#wave-code-toggle").is_checked():
                     await page.check("#wave-code-toggle")
                 await page.wait_for_timeout(600)
-                box = await page.locator("#wave-plot").bounding_box()
-                await page.keyboard.down("Control")
-                await page.mouse.move(box["x"] + box["width"] * 0.30, box["y"] + box["height"] * 0.5)
-                await page.mouse.down()
-                await page.mouse.move(box["x"] + box["width"] * 0.38, box["y"] + box["height"] * 0.5, steps=8)
-                await page.mouse.up()
-                await page.keyboard.up("Control")
+                # select a region of the trace that has source lines, set exactly through the app so it does not depend on the pixel mapping or the zoom (clang inlines functions, so a named lookup is unreliable too)
+                reg_lo, reg_hi = code_window(api)
+                probe = api("POST", "/api/codemap/region", {"start": reg_lo, "end": reg_hi})
+                print(f"  [{scheme}] region {reg_lo:.0f}..{reg_hi:.0f}: {len(probe.get('lines') or [])} lines")
+                await page.evaluate("([lo, hi]) => window.__ctx.wave.setRegion(lo, hi, 'drag')", [reg_lo, reg_hi])
                 await page.wait_for_timeout(1500)
-                await page.locator("#cm-lines > *").first.click()  # the busiest source line: shades every sample where it ran
+                await page.locator("#cm-lines > *").first.click(timeout=8000)  # the busiest source line: shades every sample where it ran
                 await page.wait_for_timeout(1500)
                 await page.locator("#panel-code h2", has_text="Selection").scroll_into_view_if_needed()
                 await page.mouse.move(10, height - 10)

@@ -10,9 +10,9 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/wiki/images/capture-light.png"><img alt="ChipWhisperer Studio capturing traces with a live waveform" src="docs/wiki/images/capture.png"></picture>
 
-**See it in action:** every section below has a short clip that plays by itself. There is also a full [video walkthrough of every feature](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.5.0/chipwhisperer-studio-demo.mp4) (a few minutes, made with the built-in simulator), with chapters listed on the [Video Tour](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Video-Tour) wiki page. Screenshots on this page follow your GitHub theme.
+**See it in action:** every section below has a short clip that plays by itself. There is also a full [video walkthrough of every feature](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v1.0.0/chipwhisperer-studio-demo.mp4) (a few minutes, made with the built-in simulator), with chapters listed on the [Video Tour](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Video-Tour) wiki page. Screenshots on this page follow your GitHub theme.
 
-[![Video walkthrough: click to watch](docs/wiki/images/demo-poster.png)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v0.5.0/chipwhisperer-studio-demo.mp4)
+[![Video walkthrough: click to watch](docs/wiki/images/demo-poster.png)](https://github.com/keyuraghao/chipwhisperer-studio/releases/download/v1.0.0/chipwhisperer-studio-demo.mp4)
 
 > ChipWhisperer Studio is an independent community project. It is not affiliated with or endorsed by NewAE Technology Inc.; it uses their open source `chipwhisperer` Python library for all hardware access.
 
@@ -37,19 +37,20 @@ A desktop application for [NewAE ChipWhisperer](https://github.com/newaetech/chi
 | Area | What you get |
 |------|--------------|
 | Connect | Auto-detect ChipWhisperer Nano, Lite, Pro, Husky and Husky Plus, pick a device by serial number, and follow platform-specific driver and udev help. A built-in **simulator** lets you try everything without hardware, posing as any of these models and even running your own firmware in an emulator. |
-| Scope | Every setting of the connected scope (gain, ADC, clock, trigger, IO, glitch, Husky extras) as an editable tree with inline documentation and hardware read-back after each change. |
+| Scope | Every setting of the connected scope (gain, ADC, clock, trigger, IO, glitch, Husky extras) as an editable tree with inline documentation and hardware read-back after each change. A **model profile** (Nano, Lite, Pro, Husky, Husky Plus) drives what Studio offers and enforces the sample limits, so each scope looks and refuses like itself. |
 | Target | Program STM32F, XMEGA, AVR, SAM4S and NEORV32 targets and iCE40 and XC7A35T FPGAs, use a serial terminal (text or hex), send SimpleSerial commands, and edit target interface settings. |
 | Interfaces | UART with a terminal, SimpleSerial 1.0 to 2.1, an SPI master with flash shortcuts, GPIO, the Husky's USERIO header, every trigger type (Husky sequencer, UART pattern, edge counter, ADC level, SAD, Pro I/O decode), the bit-banger and 1-Wire, and JTAG/SWD through OpenOCD. Only what the connected model supports is enabled, the rest says why. |
 | Firmware | Build any ChipWhisperer firmware project for any platform with **GCC or clang**. Compilers download on demand and sources come straight from NewAE's GitHub. |
 | Waveform | Live view of every capture, an overlay of the last N traces, mean and min/max envelope, trace browsing, zoom (drag, buttons or +/- keys), two cursors with delta read-out, a time axis and PNG export. |
-| Code | **Code on the waveform**: Studio emulates your firmware (Arm Cortex-M, RISC-V, AVR/XMEGA) for a captured trace, aligns it automatically and shows functions and source lines under the plot; select part of the trace to see the code that made it. |
-| Capture | Single, N traces or continuous; fixed, random or counter keys and plaintexts; trigger-only mode; rate limiting; export to `.npz`, `.cwp` (ChipWhisperer project), `.csv` or a NumPy `.npy` set. |
-| Analysis | Progressive CPA with five AES leakage models, per-byte ranking, PGE convergence and correlation plots. |
-| Glitch | Cartesian or random sweeps over any `glitch.*` parameters with target reset handling and a live result scatter plot. |
+| Code | **Code on the waveform**: Studio emulates your firmware (Arm Cortex-M, RISC-V, AVR/XMEGA) for a captured trace, aligns it automatically (then refines the match window by window to follow real drift) and shows functions and source lines under the plot; select part of the trace to see the code that made it. The build reports its phase and instruction count as it runs. |
+| Capture | Single, N traces or continuous; fixed, random, counter or TVLA keys and plaintexts; trigger-only mode; **segmented capture** (many traces per arm on the Husky) and **streaming straight to disk** for runs too long to hold in memory; rate limiting; export to `.npz`, `.cwp` (ChipWhisperer project), `.csv` or a NumPy `.npy` set. |
+| Analysis | Progressive CPA with nine leakage models (S-box, last round, AES-256, a custom expression), per-byte ranking, PGE convergence and correlation plots, run on the **GPU** when one is present; **differential fault analysis** to recover a key from faulted ciphertexts; and a leakage toolkit (TVLA t-test, SNR, trace alignment, FIR filters, spectrum). An export writes the result out. |
+| Glitch | The connected model's engine (firmware crowbar, DCM or MMCM) with its parameters in the right units and a nanosecond readout, one-click Clock and Voltage presets, cartesian or random sweeps over any `glitch.*` parameters with target reset handling, a live result scatter plot, and a pluggable result checker (loop counter, AES fault, flag byte, a Python expression, or your own). |
 | Notebook | Jupyter-style `.ipynb` notebooks that run inside Studio and share its hardware connection, as tabs or two side by side, each with its own kernel; captured traces land in the Capture tab. Runs NewAE's tutorial notebooks unmodified. |
 | Logic | A logic analyser for every model: the Husky's built-in one, any scope's analog input, sigrok analysers, VCD/CSV/sigrok files or simulated traffic, with UART, SPI, I2C, 1-Wire, JTAG, SWD, CAN and SimpleSerial decoders, search, cursors, measurements and exports. |
+| Health | Temperature and rails (the Husky's XADC), clock locks, external-clock drift, sticky capture errors and the glitch counter, decoded into plain-language problems with a Clear action, in a header chip and the Connect card. A header indicator also shows what analysis is running (CPA, code map, TVLA, DFA) and what finished last. |
 | Notes and Calc | A text pad, a calculator with side-channel helpers (`hw`, `hd`, `sbox`, XOR), and live statistics of whatever you select. |
-| AI agents | `cw-studio mcp`: a Model Context Protocol server with 106 tools covering all of the above. |
+| AI agents | `cw-studio mcp`: a Model Context Protocol server with 123 tools covering all of the above. |
 | Everywhere | Its own application window (or your browser), light and dark themes, a documented HTTP API (`/api/docs`), and remote use from any browser on the network. |
 
 ## Install
@@ -129,7 +130,7 @@ Zoom with the magnifier buttons next to **Fit** (or the **+** and **-** keys): e
 
 ### 6. Recover the key with CPA
 
-Run a correlation power analysis attack with the leakage model that matches your target. With a known key the partial guessing entropy (PGE) plot shows every byte converging to rank 0; click a byte to see where it leaks in the trace.
+Run a correlation power analysis attack with the leakage model that matches your target, on the GPU when one is present. With a known key the partial guessing entropy (PGE) plot shows every byte converging to rank 0; click a byte to see where it leaks in the trace. The same tab holds a leakage toolkit (the TVLA t-test, SNR, trace alignment, FIR filters and a spectrum) and differential fault analysis to recover a key from ciphertexts a glitch faulted.
 
 ![CPA recovering the AES key, then the correlation overlaid on the waveform (animated)](docs/wiki/images/clips/cpa-key-recovery.webp)
 
@@ -137,7 +138,7 @@ Run a correlation power analysis attack with the leakage model that matches your
 
 ### 7. Sweep glitch parameters
 
-Configure the glitch module in the Scope tab, then sweep parameters such as `glitch.ext_offset` and `glitch.width`. Each point is classified as normal, success (a valid but wrong answer) or reset, and plotted live.
+The Glitch tab shows the connected model's engine with one-click Clock and Voltage presets. Sweep parameters such as `glitch.ext_offset` and `glitch.width`; each point is classified as normal, success (a valid but wrong answer), reset, garbled or, on a Husky, not fired, and plotted live. A result checker can read the reply (a loop counter, an AES fault, a flag byte, or your own Python) to decide what counts as a hit.
 
 ![A clock glitch sweep with the live result plot (animated)](docs/wiki/images/clips/glitch-sweep.webp)
 
@@ -145,7 +146,7 @@ Configure the glitch module in the Scope tab, then sweep parameters such as `gli
 
 ### 8. See the code on the waveform
 
-Give Studio the firmware's ELF (it uses the one you built or programmed automatically) and the **Code** tab emulates it for the inputs of a captured trace: Unicorn for Arm Cortex-M and RISC-V, Studio's own cycle-accurate emulator for AVR and XMEGA. It maps clock cycles to samples, aligns the result with the measured traces (with a confidence score) and draws the functions and source lines in a band under the waveform. Ctrl+drag across the trace to see the code, source lines and disassembly of that region; click a line to shade every sample where it ran. Peripherals and interrupts are not emulated, so timing is close rather than exact; on a Husky, SWO program counter sampling measures it. Programmed into the simulator, the same ELF runs for real: CPA works on its traces and a glitch skips instructions.
+Give Studio the firmware's ELF (it uses the one you built or programmed automatically) and the **Code** tab emulates it for the inputs of a captured trace: Unicorn for Arm Cortex-M and RISC-V, Studio's own cycle-accurate emulator for AVR and XMEGA. It maps clock cycles to samples, aligns the result with the measured traces (with a confidence score), then refines the match window by window to follow the drift between the emulator and the real core, and draws the functions and source lines in a band under the waveform. Ctrl+drag across the trace to see the code, source lines and disassembly of that region; click a line to shade every sample where it ran. Peripherals and interrupts are not emulated, so timing is close rather than exact; on a Husky, SWO program counter sampling measures it. Programmed into the simulator, the same ELF runs for real: CPA works on its traces and a glitch skips instructions.
 
 ![Building a code map and picking a region (animated)](docs/wiki/images/clips/code-on-the-waveform.webp)
 
@@ -226,7 +227,7 @@ Every Arm, AVR and RISC-V platform in ChipWhisperer builds with GCC, apart from 
 
 ## AI agents (MCP)
 
-`cw-studio mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server with 106 tools for everything in the UI: connecting, every scope and target setting, programming, serial and SimpleSerial I/O, capture with all its options, trace access and export, CPA, glitch sweeps, toolchains, firmware sources and builds, the hardware interfaces (UART, SPI, GPIO, triggers, bit-banger, OpenOCD), logic capture and decoding, the code map, running notebook code and whole notebooks (including NewAE's tutorials) in their own kernels, notes and the calculator. It also offers guided prompts (a CPA attack and a glitch search) and live status resources.
+`cw-studio mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server with 123 tools for everything in the UI: connecting, every scope and target setting, programming, serial and SimpleSerial I/O, capture with all its options, trace access and export, CPA, glitch sweeps, toolchains, firmware sources and builds, the hardware interfaces (UART, SPI, GPIO, triggers, bit-banger, OpenOCD), logic capture and decoding, the code map, running notebook code and whole notebooks (including NewAE's tutorials) in their own kernels, notes and the calculator. It also offers guided prompts (a CPA attack and a glitch search) and live status resources.
 
 If Studio is already running, the MCP server attaches to it, so you can watch the agent capture and analyse in Studio's window. Otherwise it starts a headless Studio in the background.
 
@@ -320,7 +321,7 @@ CWSTUDIO_HW=husky CWSTUDIO_HW_PLATFORM=CW308_SAM4S \
   CWSTUDIO_HW_TARGET=SimpleSerial python -m pytest tests/hardware -v -s   # a real Husky + SAM4S target
 ```
 
-It runs in dependency-ordered stages (environment, discovery, scope, firmware, target, capture, analysis, glitch, husky, notebook, mcp, robustness, disconnect; the husky stage covers the logic analyser and the other interfaces) and writes a per-stage summary to `tests/hardware/last_run.json`. `CWSTUDIO_HW_TARGET` selects the SimpleSerial version, and the firmware `ss_ver` and the emulator protocol follow it. [`tests/hardware/README.md`](tests/hardware/README.md) documents all the `CWSTUDIO_HW_*` knobs and records the latest verified run on a Husky with a CW308 SAM4S target: the full AES-128 key recovered by CPA (every byte at PGE 0) and a reliable voltage glitch, with the exported traces and the clock and voltage sweeps saved in the session's data folder (`hw_clock.csv`, `hw_voltage.csv`).
+It runs in dependency-ordered stages (environment, discovery, scope, firmware, target, capture, analysis, glitch, husky, notebook, mcp, robustness, disconnect; the husky stage covers the logic analyser and the other interfaces) and writes a per-stage summary to `tests/hardware/last_run.json`. `CWSTUDIO_HW_TARGET` selects the SimpleSerial version, and the firmware `ss_ver` and the emulator protocol follow it. [`tests/hardware/README.md`](tests/hardware/README.md) documents all the `CWSTUDIO_HW_*` knobs and records the latest verified run on a Husky with a CW308 SAM4S target: the full AES-128 key recovered by CPA (every byte at PGE 0) and a reliable voltage glitch, with the exported traces and the clock and voltage sweeps saved in the session's data folder (`hw_clock.csv`, `hw_voltage.csv`). The 1.0.0 features (per-model profiles, segmented capture, streaming to disk, the glitch checkers, differential fault analysis, the leakage toolkit, the code map with its window-by-window refinement, health and the analysis indicator) were verified on the same Husky as part of this release.
 
 | Task | Command |
 |------|---------|

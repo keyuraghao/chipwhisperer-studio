@@ -88,6 +88,17 @@ Measured on **2026-10-01** with Studio **0.4.4** (commit `1f274ab`) on AMD Ryzen
 | 100,000 x 5,000 | 1.86 GB | 5,000 traces | 26.6 s | 3,755 traces/s | +2.48 GB | yes |
 | 20,000 x 50,000 | 3.73 GB | 5,000 traces | 49.0 s | 408 traces/s | +9.14 GB | yes |
 
+### GPU acceleration (CPA)
+
+When a CUDA GPU with CuPy is present, Studio runs the CPA on it automatically for large attacks (`N x S` at least 200000), with a CPU fallback. Measured on an RTX 3060 Laptop GPU against the same traces:
+
+| Traces x samples | CPU time | GPU time | Speed-up |
+|---|---|---|---|
+| 2,000 x 5,000 | 11.6 s | 1.05 s | 11x |
+| 5,000 x 24,400 | 17.9 s | 1.3 s | 14x |
+
+The GPU backend costs about 430 MB of host memory once CuPy loads CUDA; `CWSTUDIO_GPU=0` keeps Studio near 100 MB. The compute backend shows in the Connect card and the Analysis status. Install with `pip install chipwhisperer-studio[gpu]`. The CPU figures also improved this cycle (the CPA reports in 500-trace chunks and frees its matrix and pools the moment it finishes).
+
 ### Capture throughput (simulator, end to end)
 
 | Samples per trace | Traces | Stored | Rate | Data rate | Extra memory |

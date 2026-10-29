@@ -99,6 +99,16 @@ The **Confidence** meter rates the fit from 0 to 1, from the strength of the cor
 | medium | 0.3 to 0.6 | Probably right; check a known function (such as the first AES round) against the trace. Applied. |
 | low | up to 0.3 | Not applied: the nominal mapping is kept, because the firmware or the trace is probably not the right one. |
 
+### Local refinement
+
+One shift and scale is a straight line, but the emulator's cycle counts drift from the real core's (wait states, bus stalls, branch timing), so a single line slowly loses the trace. After the linear fit Studio cuts the trace into windows and matches each to the model near where the previous one matched, following the drift piece by piece, and keeps the result as a piecewise correction of the mapping. The **Fit per window** bar shows one mark per window, coloured by how well that piece matches the model (green matches, amber weakly, grey not at all), so you can see which parts of the trace the code map is trustworthy for.
+
+The correction is applied only when it actually improves the match, so on a clean capture with no drift, or when the model is too weak to fit (a real target whose power the emulator predicts only loosely), nothing is warped and the window bars simply report where the map holds. Untick **local refinement** to fit a straight line only; **no warp** drops a correction while keeping the shift and scale.
+
+### While it builds
+
+A line under **Build code map** reports the build's phase as it runs: reading the ELF, emulating (with the instruction count so far), mapping to functions and lines, aligning and refining. A long emulation (RSA, a boot loader) therefore shows progress instead of sitting still, and the header's analysis indicator shows the same.
+
 You can also set the mapping by hand: type a **Shift** (in samples) or **Scale**, or nudge it with the buttons (**-cyc** / **+cyc** move by one target cycle, **-1** / **+1** by one sample, **-0.1%** / **+0.1%** stretch or shrink, **1:1** resets to shift 0 and scale 1).
 
 ## The code band

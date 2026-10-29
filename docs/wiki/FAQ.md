@@ -84,7 +84,7 @@ Yes. Every feature is available through the [HTTP API](HTTP-API), and AI agents 
 
 ### Can AI assistants control it?
 
-Yes, through the MCP server (`cw-studio mcp`), which offers 106 tools covering every feature, from capture and CPA to the hardware interfaces, the logic analyser and the code map. The agent can share your browser session so you watch what it does. See [MCP Server](MCP-Server).
+Yes, through the MCP server (`cw-studio mcp`), which offers 123 tools covering every feature, from capture and CPA to the hardware interfaces, the logic analyser and the code map. The agent can share your browser session so you watch what it does. See [MCP Server](MCP-Server).
 
 ### Why are the downloads so large?
 

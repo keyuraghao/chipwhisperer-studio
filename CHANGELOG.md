@@ -4,6 +4,36 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-29
+
+The first stable release. Studio now knows the scope it is driving, turns a glitch campaign into a recovered key, maps firmware onto a real trace window by window, and runs its heaviest analysis on the GPU. Everything below was verified on the simulator for all five scope models and on a real ChipWhisperer-Husky with a CW308 SAM4S target.
+
+### Added
+
+- **Every ChipWhisperer model, with its own shape.** A profile per model (Nano, Lite, Pro, Husky, Husky Plus) drives the whole app: the capture settings it offers, the sample limits it enforces, the glitch engine it exposes, the triggers it can arm and the monitors it reports. The simulator takes the same profile, so a simulated Nano, Lite, Pro and Husky each look and refuse like the real one. Served at `/api/capabilities` as `profile` and over MCP. See [Scope Settings](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Scope-Settings).
+- **GPU acceleration.** The CPA runs on the GPU through CuPy when one is present (`CWSTUDIO_GPU=0` turns it off), with a CPU fallback. A 5000-trace attack over 24400 samples drops from about 18 s to 1.3 s. The compute backend shows in the Connect card and the Analysis status. Install with `pip install chipwhisperer-studio[gpu]`. See [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance).
+- **Differential fault analysis.** Recover an AES-128 key from the ciphertexts a glitch campaign faults: the Analysis tab's DFA card and the `dfa_aes` MCP tool work from the last sweep's replies or from pasted ciphertexts, and the Glitch tab's "AES fault campaign" button sets the sweep up. See [Code on the Waveform](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Glitching).
+- **Glitch per model, with presets and checkers.** The Glitch tab shows the connected model's engine (the Nano's firmware crowbar, the Lite and Pro DCMs, the Husky MMCM phase shifter) with its parameters in the right units and a nanosecond readout, one-click Clock, Voltage and Disable presets, and a pluggable result checker (loop counter, AES fault, flag byte, a Python expression, or your own file) on top of the built-in classification. Results gain the `garbled` and `not_fired` classes.
+- **Segmented capture and streaming to disk.** The Husky captures many traces per arm (thousands of traces per second); any model can stream a capture straight to a `.npy` set on disk for runs too long to hold in memory. See [Capturing Traces](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Capturing-Traces).
+- **Leakage assessment and more CPA models.** TVLA (the fixed-versus-random t-test), signal-to-noise ratio, static trace alignment, FIR filtering and a spectrum, plus the S-box LSB and MSB, AES-256 and custom-expression CPA models and a CPA result export. See [CPA Analysis](https://github.com/keyuraghao/chipwhisperer-studio/wiki/CPA-Analysis).
+- **Triggers without a GPIO.** A SAD editor with an offline preview on stored traces, UART pattern rules, an N-slot trigger sequencer, trigger and clock routing on the MCX and AUX ports, and every USERIO mode, each offered only where the model supports it. See [Protocols and Interfaces](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Protocols-and-Interfaces).
+- **Health monitoring.** Temperature and rails (the Husky's XADC), clock locks, external-clock drift, the sticky capture-error register with its first-error snapshot, and the glitch counter, decoded into plain-language problems with a Clear action. A header chip, a Connect-card panel and the `scope_health` MCP tool. Captures that error show a decoded banner.
+- **Code map onto the real signal.** After the straight-line shift-and-scale fit, a local refinement matches the firmware to the trace window by window and keeps the result as a piecewise correction, so the drift between the emulator's cycle counts and the real core is followed; it is applied only when it improves the match, and shown as a per-window diagnostic either way. The alignment itself is faster (a 137k-sample fit went from 4.6 s to under 2 s), and the build reports its phase and instruction count as it runs. See [Code on the Waveform](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Code-on-the-Waveform).
+- **An analysis indicator.** The header shows what long analysis is running (code map, CPA with its trace progress, TVLA, SNR, alignment, filter, spectrum, DFA) and what finished last, from one session-wide tracker in `/api/status` and over the websocket.
+- **Firmware management and recipes.** The Connect card shows the bundled firmware version against the library and upstream with a one-click upgrade, and a small recipe layer picks the best mechanism on the connected model for a goal (fast capture, long capture, a trigger without a GPIO, a voltage or clock glitch, the cleanest traces), surfaced as Quick Info buttons.
+- **Quick Info pin diagram.** A per-model pinout card and the `scope_pinout` MCP tool.
+
+### Changed
+
+- The first stable release: Studio follows [Semantic Versioning](https://semver.org/) from here, and the MCP server exposes 123 tools.
+- Memory and startup: the CPA frees its trace matrix and GPU pools the moment it finishes, the settings tree is read once per describe (the Husky tree went from 470 ms to 160 ms), and reads of the settings during a capture no longer slow the capture.
+
+### Fixed
+
+- `adc.samples` above the connected scope's limit is refused up front with the limit and the way to go further (8-bit mode or streaming), instead of failing deep in the capture.
+- Five model-specific bugs found in the gap analysis: an MCP `cpa_start` point-range type error, known settings choices applied to the wrong model, the simulated trigger lacking the sequencer, the sequencer hard-coded to two pins, and mixed-length traces breaking the array view.
+- The library review's optimisations across the logic decoders, the CSV import, the code map alignment and hover lookup, the build zip and the icon builder.
+
 ## [0.5.3] - 2026-10-28
 
 ### Added

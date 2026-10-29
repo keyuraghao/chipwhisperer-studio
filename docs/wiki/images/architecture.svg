@@ -24,7 +24,7 @@
   <text x="232" y="166" font-size="12.5" font-weight="600" fill="#475569" letter-spacing="0.6">CHIPWHISPERER STUDIO PROCESS</text>
 
   <rect x="470" y="180" width="260" height="50" rx="9" fill="#ede9fe" stroke="#7c3aed"/>
-  <text x="600" y="203" text-anchor="middle" font-size="14.5" font-weight="600" fill="#4c1d95">MCP server (106 tools)</text>
+  <text x="600" y="203" text-anchor="middle" font-size="14.5" font-weight="600" fill="#4c1d95">MCP server (123 tools)</text>
   <text x="600" y="220" text-anchor="middle" font-size="11.5" fill="#6d28d9" font-family="ui-monospace, Menlo, Consolas, monospace">mcp_*.py  ·  mcplite.py</text>
 
   <rect x="80" y="258" width="1040" height="54" rx="9" fill="#e6f7f2" stroke="#12a383"/>

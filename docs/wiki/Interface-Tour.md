@@ -20,10 +20,12 @@ This page explains every part of the Studio window: the top bar, the navigation,
 ## Top bar
 
 - **Logo, name and version.** The small badge next to the name shows the version you are running.
-- **Status chips.** Three rounded chips show the scope, the target and the current job:
+- **Status chips.** Rounded chips show the scope, the target, the current job, and (when there is something to report) the scope's health and the running analysis:
   - The **scope** chip shows the device name and serial number (for example `ChipWhisperer-Simulator (Husky) · SIM000001`) with a green dot when connected, or **No scope**.
   - The **target** chip shows the target type (for example `SimpleSerial2`) or **No target**.
   - The **job** chip shows **Idle**, or the running job with its progress and rate (for example `capture: 120/500 · 850/s`) with a pulsing amber dot. It turns red if the last job ended with an error.
+  - The **health** chip appears when the scope reports a problem (temperature, a clock that is not locked, a sticky error) and shows how many problems and the temperature; green when all is well. See [CPA and leakage analysis](CPA-Analysis) and the health notes on each tab.
+  - The **analysis** chip shows what long analysis is running (code map, CPA, TVLA, SNR, DFA) with its phase and progress, and what finished last.
 - **Single** captures one trace. **Run** starts a capture with the settings of the [Capture tab](Capturing-Traces). **Stop** stops the running capture or glitch sweep. Single and Run are disabled until a scope is connected.
 - **Trace count** shows how many traces are stored in memory.
 - **Connection dot.** A small green dot means the browser has a live connection to Studio (used for streaming traces and messages). It turns red if Studio has stopped or the connection dropped; the page reconnects automatically when Studio is back.
@@ -42,10 +44,10 @@ Each tab has an icon and a short label. Hover over a tab to see a description. S
 | Firmware | Build ChipWhisperer firmware, manage firmware sources and compilers | [Firmware Builds](Firmware-Builds) |
 | Capture | Capture traces, export and import trace sets | [Capturing Traces](Capturing-Traces) |
 | Code | Which firmware functions and source lines run when, on the waveform | [Code on the Waveform](Code-on-the-Waveform) |
-| Analysis | CPA key recovery and its plots | [Quick Start](Quick-Start#4-recover-the-key-with-cpa) |
+| Analysis | CPA key recovery, leakage assessment (TVLA, SNR), trace conditioning and differential fault analysis | [CPA and Leakage Analysis](CPA-Analysis) |
 | Notebook | Python notebooks that share Studio's hardware connection, as tabs and side by side | [Notebooks](Notebooks) |
 | Logic | Logic analyser: capture digital signals and decode UART, SPI, I2C, 1-Wire, JTAG, SWD, CAN and SimpleSerial | [Logic Analyser](Logic-Analyser) |
-| Glitch | Glitch parameter sweeps and their results | [Scope Settings](Scope-Settings#glitch-the-fault-injection-module) |
+| Glitch | The model's glitch engine, parameter sweeps, result checkers and the AES fault campaign | [Glitching and Fault Analysis](Glitching) |
 | Notes | A text pad that saves automatically | [Notes and Calculator](Notes-and-Calculator) |
 | Calc | Calculator and statistics of the current selection | [Notes and Calculator](Notes-and-Calculator) |
 | Help | Quick start, shortcuts, remote use and AI agent (MCP) setup | [MCP Server](MCP-Server) |

@@ -25,8 +25,9 @@ The **Capture** tab of ChipWhisperer Studio records power traces: for each trace
 | Traces | How many traces **Run** records. `0` means capture continuously until you press **Stop**. | 1000 |
 | Mode | **SimpleSerial: send data, read reply** sends the key and plaintext to the target for every trace and reads its reply. **Trigger only: arm and wait** just arms the scope and waits for your own firmware to raise the trigger, without talking to the target. | SimpleSerial |
 | Key mode + value | **fixed** uses the hex key in the box for every trace. **random** generates a new random key for every trace. | fixed, `2b7e151628aed2a6abf7158809cf4f3c` |
-| Plaintext mode + value | **random** generates a new random plaintext for every trace. **fixed** uses the hex value in the box. **counter** starts from the value in the box and adds one for every trace. | random |
-| store traces | Keep every trace in memory (the trace set). Turn it off to only watch the waveform, for example while tuning settings. | on |
+| Plaintext mode + value | **random** generates a new random plaintext for every trace. **fixed** uses the hex value in the box. **counter** starts from the value in the box and adds one for every trace. **tvla** interleaves the fixed plaintext with random ones for the [leakage t-test](CPA-Analysis#leakage-assessment). | random |
+| store traces | Keep every trace in memory (the trace set). Turn it off to only watch the waveform, for example while tuning settings, or to stream to disk without filling memory. | on |
+| Save to disk | A name or path writes every trace to `<name>_waves.npy` (plus the text and key arrays) as it arrives, for streamed or very long captures that will not fit in memory. Leave empty for memory only. Import the set back later. | empty |
 | clear first | Delete the stored traces before this run starts. | off |
 | expect ack | In SimpleSerial mode, wait for the target's acknowledgement after each command, as ChipWhisperer's `capture_trace()` does. Turn it off for firmware that does not send one. | on |
 | Display fps | How many traces per second are sent to the waveform view (1 to 60). Capture itself runs as fast as the hardware allows; this only limits screen updates. | 25 |
@@ -35,6 +36,15 @@ The **Capture** tab of ChipWhisperer Studio records power traces: for each trace
 Under the progress bar, a line shows the trigger the scope is set to (module, pins and mode). Change it in the [Interfaces](Protocols-and-Interfaces#triggers) tab or the Scope tab; the line follows changes made anywhere.
 
 > **Tip:** For CPA on AES, the classic setup is a **fixed** key and **random** plaintexts, which is the default. Random keys are used for other experiments such as leakage assessment.
+
+## Capture settings (per model)
+
+The **Capture settings** card at the top holds the ADC settings the connected scope actually has, written straight to the scope: the sample count (with the live maximum for the model and bit depth), and where they exist, pre-trigger samples, the ADC offset, decimation, the bit depth (12 or 8 on a Husky), **segments** and **streaming**.
+
+- **Segmented capture** (Husky): set **Segments** above 1 and each arm captures that many triggers in one download, split into one trace each. This is the fast path, thousands of traces per second, because it removes the USB round trip per trace.
+- **Streaming** (Pro and Husky): tick **Stream** to capture past the normal sample limit at about 10 MS/s; pair it with **Save to disk** for a very long capture.
+
+After a capture the card shows a decoded banner if the scope reported an error (a Husky's sticky capture-error register), with a Clear action.
 
 ## Running a capture
 

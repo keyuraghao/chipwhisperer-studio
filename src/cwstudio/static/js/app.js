@@ -96,6 +96,7 @@ document.getElementById('log-toggle').addEventListener('click', () => { document
 
 // ---------- waveform ----------
 ctx.wave = new Waveform(document.getElementById('wave-plot'), document.getElementById('wave-toolbar'), document.getElementById('wave-footer'));
+window.__ctx = ctx;  // a debug handle for the console and for UI tests and screenshots (drive the waveform, read state); not used by the app itself
 ctx.wave.onBrowse = async (i) => {
   try { const { header, samples } = await getBinary(`/api/traces/${i}`); ctx.wave.setBrowse(samples, header); } catch (e) { /* no such trace */ }
 };

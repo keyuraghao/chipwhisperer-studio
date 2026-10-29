@@ -12,7 +12,7 @@ const ADC_ROWS = [
 ];
 
 export function initCapture(ctx, el) {
-  const countIn = h('input', { type: 'number', value: 1000, min: 0, class: 'flex', title: '0 = continuous' });
+  const countIn = h('input', { id: 'cap-count', type: 'number', value: 1000, min: 0, class: 'flex', title: '0 = continuous' });
   const modeSel = h('select', { class: 'flex' }, h('option', { value: 'simpleserial' }, 'SimpleSerial: send data, read reply'), h('option', { value: 'trigger_only' }, 'Trigger only: arm and wait'));
   const keyMode = h('select', { class: 'flex' }, h('option', { value: 'fixed' }, 'fixed'), h('option', { value: 'random' }, 'random'));
   const textMode = h('select', { class: 'flex' }, h('option', { value: 'random' }, 'random'), h('option', { value: 'fixed' }, 'fixed'), h('option', { value: 'counter' }, 'counter'));
