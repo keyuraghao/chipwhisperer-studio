@@ -183,6 +183,9 @@ class CPAAttack:
                 r.error = f"{type(e).__name__}: {e}"
         r.done = True
         r.elapsed = time.time() - r.started
+        # the attack's copy of the trace matrix (as large as the whole trace set) is not needed once the result is in; the result keeps only the per-guess maxima and the best correlation traces
+        self.waves = self.tin = self.tout = None
+        accel.release()  # the accumulators (16 x 256 x samples float64, hundreds of MB) are gone: hand the memory back instead of keeping it at the peak
         if self.callback:
             self.callback(r)
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 from typing import Any, Dict, Optional
 
@@ -109,3 +110,21 @@ def _blas_name() -> Optional[str]:
         return str(name) if name else None
     except Exception:  # noqa: BLE001
         return None
+
+
+def release() -> None:
+    """Return memory held after a computation: the GPU memory pools (CuPy keeps freed device and pinned host blocks for reuse) and, on Linux, glibc's freed heap (which otherwise stays at its peak after large temporaries)."""
+    b = _backend
+    if b is not None and b["name"] == "cuda":
+        try:
+            b["xp"].get_default_memory_pool().free_all_blocks()
+            b["xp"].get_default_pinned_memory_pool().free_all_blocks()
+        except Exception:  # noqa: BLE001
+            pass
+    if os.name == "posix" and not sys.platform.startswith(("darwin", "win")):
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except (OSError, AttributeError):
+            pass
+
