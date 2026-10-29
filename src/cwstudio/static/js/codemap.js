@@ -76,6 +76,11 @@ export function initCodeMap(ctx, el) {
   const alignBtn = h('button', { id: 'cm-align', class: 'btn', onclick: () => align() }, 'Auto align');
   const meter = h('div', { class: 'cm-meter', id: 'cm-conf' }, h('i', { style: 'width:0%' }));
   const confTxt = h('div', { class: 'help mono', id: 'cm-conf-txt' }, 'not aligned yet');
+  const refineChk = h('input', { type: 'checkbox', id: 'cm-refine', checked: true, title: 'after the linear fit, follow the drift between the emulated and the real cycle counts window by window' });
+  const windowsEl = h('div', { class: 'cm-windows', id: 'cm-windows', title: 'how well each piece of the trace matches the model after the refinement' });
+  const refineTxt = h('div', { class: 'help mono', id: 'cm-refine-txt' });
+  const phaseTxt = h('div', { class: 'help mono', id: 'cm-phase' });
+  let phaseTimer = null, building = false;
 
   // ----- selection card -----
   const regionTxt = h('div', { class: 'help mono', id: 'cm-region' }, 'no region: ctrl+drag on the waveform, or use the cursors');
@@ -107,13 +112,14 @@ export function initCodeMap(ctx, el) {
       h('div', { class: 'row' }, h('label', {}, 'SimpleSerial'), protoSel, h('label', {}, 'Wait states'), wsIn),
       h('div', { class: 'row' }, h('label', {}, 'Command'), cmdIn, dataIn),
       h('div', { class: 'row' }, buildBtn),
-      buildMsg, info),
+      buildMsg, phaseTxt, info),
     h('h2', {}, 'Cycles to samples'),
     h('div', { class: 'card' }, mapKv,
       h('div', { class: 'row', style: 'margin-top:10px' }, h('label', {}, 'Shift'), shiftIn, h('span', { class: 'cm-nudge' }, nudge('−cyc', 'one cycle earlier', { dshift: 'cycle-' }), nudge('−1', 'one sample earlier', { dshift: -1 }), nudge('+1', 'one sample later', { dshift: 1 }), nudge('+cyc', 'one cycle later', { dshift: 'cycle+' }))),
-      h('div', { class: 'row' }, h('label', {}, 'Scale'), scaleIn, h('span', { class: 'cm-nudge' }, nudge('−0.1%', 'shrink by 0.1%', { dscale: -0.001 }), nudge('+0.1%', 'stretch by 0.1%', { dscale: 0.001 }), nudge('1:1', 'shift 0, scale 1', { reset: true }))),
-      h('div', { class: 'row' }, h('label', {}, 'Align on'), alignSrc, alignBtn),
-      h('div', { class: 'row' }, h('label', {}, 'Confidence'), meter), confTxt),
+      h('div', { class: 'row' }, h('label', {}, 'Scale'), scaleIn, h('span', { class: 'cm-nudge' }, nudge('−0.1%', 'shrink by 0.1%', { dscale: -0.001 }), nudge('+0.1%', 'stretch by 0.1%', { dscale: 0.001 }), nudge('1:1', 'shift 0, scale 1, no warp', { reset: true }), nudge('no warp', 'drop the local refinement, keep shift and scale', { clear_warp: true }))),
+      h('div', { class: 'row' }, h('label', {}, 'Align on'), alignSrc, alignBtn, h('label', { title: refineChk.title }, refineChk, ' local refinement')),
+      h('div', { class: 'row' }, h('label', {}, 'Confidence'), meter), confTxt,
+      h('div', { class: 'row' }, h('label', { title: 'one bar per window of the trace: green matches the model, amber weakly, grey not at all' }, 'Fit per window'), windowsEl), refineTxt),
     h('h2', {}, 'Selection'),
     h('div', { class: 'card' }, regionTxt,
       h('div', { class: 'row', style: 'margin:8px 0' },
@@ -167,7 +173,8 @@ export function initCodeMap(ctx, el) {
     }
     const m = st.mapping;
     if (m) {
-      kv(mapKv, [['Target clock', fmtHz(m.target_freq)], ['ADC clock', `${fmtHz(m.adc_freq)}${m.decimate > 1 ? ' / ' + m.decimate : ''}`], ['Samples/cycle', (m.spc).toFixed(4) + (m.scale !== 1 ? ` × ${m.scale.toFixed(4)}` : '')], ['ADC offset', `${m.adc_offset} · pre-trigger ${m.presamples}`]]);
+      kv(mapKv, [['Target clock', fmtHz(m.target_freq)], ['ADC clock', `${fmtHz(m.adc_freq)}${m.decimate > 1 ? ' / ' + m.decimate : ''}`], ['Samples/cycle', (m.spc).toFixed(4) + (m.scale !== 1 ? ` × ${m.scale.toFixed(4)}` : '')], ['ADC offset', `${m.adc_offset} · pre-trigger ${m.presamples}`],
+        ['Warp', m.warp ? `${m.warp.knots} knots · up to ${m.warp.max_abs} samples (${m.warp.span[0]} to ${m.warp.span[1]})` : 'none (linear mapping)']]);
       if (document.activeElement !== shiftIn) shiftIn.value = (+m.shift).toFixed(2);
       if (document.activeElement !== scaleIn) scaleIn.value = (+m.scale).toFixed(5);
     }
@@ -180,7 +187,45 @@ export function initCodeMap(ctx, el) {
       meter.className = 'cm-meter'; meter.firstChild.style.width = '0%';
       confTxt.textContent = al && al.error ? `alignment failed: ${al.error}` : 'not aligned yet (needs stored traces)';
     }
+    renderRefine(al && !al.error ? al.refine : null);
+    renderPhase();
     gateNeedsMap();
+  }
+
+  /** The local refinement: one bar per window coloured by its correlation, and what happened. */
+  function renderRefine(ref) {
+    windowsEl.innerHTML = '';
+    if (!ref) { refineTxt.textContent = ''; windowsEl.append(h('span', { class: 'muted' }, 'no refinement yet')); return; }
+    (ref.windows || []).forEach((w) => {
+      const cls = w.r >= 0.7 ? 'good' : w.r >= 0.3 ? 'weak' : 'none';
+      windowsEl.append(h('i', { class: cls, title: `samples ${w.start} to ${w.end}: r ${w.r.toFixed(2)}, the model sits ${w.lag > 0 ? w.lag + ' samples late' : (-w.lag) + ' samples early'}${w.used ? '' : ' (not used)'}` }));
+    });
+    refineTxt.textContent = ref.applied ? `refined: ${ref.matched}/${(ref.windows || []).length} windows match (mean r ${ref.mean_r.toFixed(2)}) · drift up to ${ref.max_abs} samples corrected` : `not refined: ${ref.reason || ''}`;
+    refineTxt.className = 'help mono' + (ref.applied ? '' : ' warn');
+  }
+
+  /** The build or alignment in progress: its phase, instruction count and elapsed time, refreshed every half second while it runs. */
+  function renderPhase() {
+    const ph = st && st.phase;
+    const busy = ph && ['loading', 'emulating', 'timeline', 'aligning', 'refining'].includes(ph.phase);
+    if (busy) {
+      const since = ph.started ? ((Date.now() / 1000) - ph.started) : null;
+      const el = since != null && isFinite(since) && since >= 0 ? `${since.toFixed(1)} s` : (ph.elapsed != null ? `${ph.elapsed} s` : '');
+      const ins = ph.phase === 'emulating' && ph.instructions ? ` · ${fmt(ph.instructions)}${ph.limit ? ' / ' + fmt(ph.limit) : ''} instructions` : '';
+      phaseTxt.textContent = `${ph.phase}: ${ph.message || ''}${ins} · ${el}`;
+      phaseTxt.className = 'help mono busy';
+      phaseTxt.style.display = '';
+      if (!building) { buildBtn.disabled = true; alignBtn.disabled = true; }
+      if (!phaseTimer) phaseTimer = setInterval(renderPhase, 500);
+    } else {
+      if (phaseTimer) { clearInterval(phaseTimer); phaseTimer = null; }
+      if (ph && ph.phase === 'error') { phaseTxt.textContent = `error: ${ph.message || ph.error || ''}`; phaseTxt.className = 'help mono err'; phaseTxt.style.display = ''; }
+      else {  // ready: the build message carries the outcome (a build started from another window or an agent lands here too)
+        phaseTxt.style.display = 'none';
+        if (ph && ph.phase === 'ready' && ph.message && !building) { buildMsg.textContent = ph.message.charAt(0).toUpperCase() + ph.message.slice(1); buildMsg.className = 'help ok'; }
+      }
+      if (!building) { buildBtn.disabled = false; alignBtn.disabled = !(st && st.ready); }
+    }
   }
 
   /** Everything that works on a code map stays disabled, with the reason as its hint, until one is built (the API answers 404 before that). */
@@ -227,7 +272,8 @@ export function initCodeMap(ctx, el) {
     if (+wsIn.value) p.wait_states = +wsIn.value;
     if (cmdIn.value.trim()) p.cmd = cmdIn.value.trim();
     if (dataIn.value.trim()) p.text = dataIn.value.replace(/\s+/g, '');
-    buildBtn.disabled = true; buildMsg.className = 'help'; buildMsg.textContent = 'Emulating…';
+    p.refine = refineChk.checked;
+    buildBtn.disabled = true; building = true; buildMsg.className = 'help'; buildMsg.textContent = 'Building…';
     try {
       st = await post('/api/codemap/build', p);
       delete srcIn.dataset.dirty;
@@ -241,7 +287,7 @@ export function initCodeMap(ctx, el) {
     } catch (e) {
       buildMsg.textContent = e.message; buildMsg.className = 'help err';
       toast(e.message, 'err', 7000);
-    } finally { buildBtn.disabled = false; }
+    } finally { building = false; buildBtn.disabled = false; renderPhase(); }
   }
 
   async function setMapping(body) {
@@ -259,7 +305,7 @@ export function initCodeMap(ctx, el) {
   async function align() {
     alignBtn.disabled = true; confTxt.textContent = 'aligning…';
     try {
-      const r = await post('/api/codemap/align', { source: alignSrc.value, trace: st && st.trace != null ? st.trace : undefined });
+      const r = await post('/api/codemap/align', { source: alignSrc.value, trace: st && st.trace != null ? st.trace : undefined, refine: refineChk.checked });
       st.mapping = r.mapping; st.alignment = r.alignment; renderStatus(); band.setMapping(r.mapping);
       if (ctx.wave.region) query(ctx.wave.region);
     } catch (e) { confTxt.textContent = e.message; toast(e.message, 'err', 6000); } finally { alignBtn.disabled = !(st && st.ready); }
@@ -483,7 +529,7 @@ export function initCodeMap(ctx, el) {
     if (ctx.activeTab !== 'code') ctx.showTab('code');
     if (p.kind === 'function') { ctx.wave.setRegion(Math.round(p.samples[0]), Math.round(p.samples[1]), 'band'); pickFunction(p.name, null); } else pickLine(p.file, p.line, null);
   });
-  ctx.on('codemap', (ev) => { st = Object.assign(st || {}, ev); renderStatus(); if (ev.ready && ev.built !== builtAt) loadBand(); });
+  ctx.on('codemap', (ev) => { st = Object.assign(st || {}, ev); renderStatus(); if (ev.ready && ev.built != null && ev.built !== builtAt) loadBand(); });
   ctx.on('programmed', () => loadElfs());
   ctx.on('tab', (t) => { if (t === 'code') { loadElfs(); refresh(); } });
   ctx.on('status', (s) => {

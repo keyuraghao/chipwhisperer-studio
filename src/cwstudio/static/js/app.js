@@ -155,6 +155,22 @@ function initScope(el) {
 
 // ---------- header / status ----------
 function setChip(id, cls, text) { const c = document.getElementById(id); c.className = 'chip ' + cls; c.querySelector('.txt').textContent = text; }
+// what analysis is in progress (code map build, CPA, t-test, DFA) or what finished last: hidden until something has run
+function setAnalysisChip(an) {
+  const c = document.getElementById('chip-analysis');
+  if (!an || (!an.busy && !an.last)) { c.style.display = 'none'; return; }
+  c.style.display = '';
+  if (an.busy) {
+    const a = an.active[an.active.length - 1];
+    const pct = a.progress != null ? ` ${Math.round(a.progress * 100)}%` : '';
+    setChip('chip-analysis', 'busy', `${a.name}: ${a.phase}${pct}${a.detail && a.detail !== a.phase ? ' · ' + a.detail : ''} · ${a.elapsed != null ? a.elapsed + 's' : ''}`);
+    c.title = an.active.map((x) => `${x.name}: ${x.phase}${x.detail ? ' (' + x.detail + ')' : ''}`).join('\n');
+  } else {
+    const l = an.last;
+    setChip('chip-analysis', l.state === 'error' ? 'err' : 'on', `${l.name} ${l.state === 'error' ? 'failed' : 'done'} · ${l.seconds}s`);
+    c.title = l.error ? l.error : `${l.name} ${l.state}${l.detail ? ': ' + l.detail : ''} in ${l.seconds} s`;
+  }
+}
 let prevScope = false, prevTarget = false, prevScopeKey = null;
 function applyStatus(st) {
   ctx.status = st;
@@ -179,6 +195,7 @@ function applyStatus(st) {
     else setChip('chip-health', 'on', temp ? `${temp}` : 'Healthy');
     hc.title = probs.length ? probs.join('\n') : 'Scope health: no problems';
   }
+  setAnalysisChip(st.analysis);
   document.getElementById('btn-stop').disabled = !(job && job.running);
   document.getElementById('btn-run').disabled = !sc.connected || (job && job.running);
   document.getElementById('btn-single').disabled = !sc.connected || (job && job.running);
@@ -249,6 +266,7 @@ async function boot() {
   sock.on('serial', (ev) => ctx.emit('serial', ev));
   sock.on('setting', (ev) => ctx.emit('setting', ev));
   sock.on('cpa', (ev) => ctx.emit('cpa', ev));
+  sock.on('analysis', (ev) => { setAnalysisChip(ev); ctx.emit('analysis', ev); });
   sock.on('glitch', (ev) => { ctx.emit('glitch', ev); if (ev.state === 'running') ensureRunning(); else ctx.refreshStatus(); });
   sock.on('glitch_result', (ev) => ctx.emit('glitch_result', ev));
   for (const k of ['toolchain', 'firmware_sources', 'build', 'build_log', 'nb', 'tutorials', 'openocd', 'la', 'codemap', 'programmed']) sock.on(k, (ev) => ctx.emit(k, ev));

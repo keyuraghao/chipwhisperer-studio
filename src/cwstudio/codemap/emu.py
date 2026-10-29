@@ -17,7 +17,7 @@ from array import array
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -208,6 +208,7 @@ def _hook_read_after(uc, fn) -> None:
 # --- machines --------------------------------------------------------------------------------------------
 class _Machine:
     leak_bits = 32
+    CHUNK = 250_000  # instructions per emulator call: progress is reported between chunks (tests lower it)
 
     def __init__(self, prog: Program, core: str, wait_states: int, options: Dict[str, Any]):
         self.prog = prog
@@ -221,6 +222,7 @@ class _Machine:
         self.blocked = False
         self.halted: Optional[int] = None
         self.fault: Optional[str] = None
+        self.progress: Optional[Callable[[int], None]] = None  # called with the instructions run so far, every chunk of a long command (the code map build shows it)
         self.boot_limit = int(options.get("max_boot_instructions") or BOOT_LIMIT)
         self.run_limit = int(options.get("max_instructions") or RUN_LIMIT)
         self.getch = _first(prog, options.get("getch") or GETCH)
@@ -545,7 +547,7 @@ class UnicornMachine(_Machine):
         self.blocked = False
         self.halted = None
         self.fault = None
-        chunk = limit if keep else min(limit, 250_000)
+        chunk = min(limit, self.CHUNK)  # a long command runs in chunks so progress can be reported between them; start-up also drops the recorded trace between chunks
         while True:
             self.fault_addr = None
             n0 = len(self.pcs)
@@ -577,12 +579,15 @@ class UnicornMachine(_Machine):
                     begin = self.uc.reg_read(self.PC)
                     continue
                 raise EmuError(f"the emulation stopped unexpectedly after {self.where(last)}")
-            if keep or self.blocked or self.halted is not None or self.fault or limit - ran <= 0:
+            if self.blocked or self.halted is not None or self.fault or limit - ran <= 0:
                 break
-            limit -= ran  # start-up: next chunk, keeping only the tail of the trace (for the message if it never gets to getch)
-            del self.pcs[:-4096]
-            del self.mem_idx[:]
-            del self.mem_val[:]
+            limit -= ran
+            if self.progress is not None and keep:
+                self.progress(len(self.pcs))
+            if not keep:  # start-up: keep only the tail of the trace (for the message if it never gets to getch)
+                del self.pcs[:-4096]
+                del self.mem_idx[:]
+                del self.mem_val[:]
             begin = self.uc.reg_read(self.PC)
         if self.fault:
             raise EmuError("the firmware stopped: " + self.fault)
@@ -792,7 +797,15 @@ class AVRMachine(_Machine):
                         cpu.pc += 2 if self.avr._is_2word(cpu.word(cpu.pc)) else 1
                     cpu.run(limit - ran, (tp, tc, tl))
             else:
-                cpu.run(limit, (tp, tc, tl))
+                left = limit
+                while left > 0 and not self.blocked and self.halted is None:
+                    n = min(left, self.CHUNK)
+                    ran = cpu.run(n, (tp, tc, tl))
+                    left -= max(ran, 1)
+                    if ran < n:
+                        break
+                    if self.progress is not None and left > 0:
+                        self.progress(len(tp))
         except self.avr.Fault as e:
             raise EmuError(f"the firmware faulted: {e}") from e
         if not self.blocked and self.halted is None:

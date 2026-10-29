@@ -76,10 +76,46 @@ class CodeMapService:
         self.cum: Optional[np.ndarray] = None  # cumulative_power(P), resampled by the alignment and the model endpoint
         self.meta: Dict[str, Any] = {}
         self.source_roots: List[str] = []
+        self.phase: Dict[str, Any] = {"phase": "idle", "message": None, "started": None, "progress": None, "instructions": None, "limit": None, "elapsed": None, "error": None}
+        self._act: Optional[int] = None  # the session activity entry while a build or alignment runs
 
     # --- helpers ------------------------------------------------------------------------------------
     def publish(self) -> None:
         self.s.bus.publish("codemap", self.status())
+
+    def _set_phase(self, phase: str, message: Optional[str] = None, **extra) -> None:
+        """Move the code map to a phase (loading, emulating, timeline, aligning, refining, ready, error, idle) and tell every window; the session's activity list follows so the header shows it with the other analyses."""
+        now = time.time()
+        p = self.phase
+        if phase in ("loading", "emulating", "aligning") and p.get("phase") in ("idle", "ready", "error", None):
+            p["started"] = now
+            p["instructions"] = p["limit"] = p["progress"] = None
+            p["error"] = None
+        p["phase"] = phase
+        p["message"] = message
+        p.update(extra)
+        p["elapsed"] = round(now - p["started"], 2) if p.get("started") else None
+        act = getattr(self.s, "activity", None)
+        if act is not None:
+            if phase in ("loading", "emulating", "timeline", "aligning", "refining"):
+                detail = message or phase
+                if self._act is None:
+                    self._act = act.begin("code map", phase, detail)
+                else:
+                    act.update(self._act, phase=phase, detail=detail, progress=p.get("progress"))
+            elif self._act is not None:
+                act.end(self._act, error=p.get("error"), detail=message)
+                self._act = None
+        self.s.bus.publish("codemap", {"ready": self.timeline is not None, "phase": dict(p)}, droppable=phase in ("emulating",))
+
+    def _progress(self, limit: int):
+        """The emulator's chunk callback: instructions run so far against the command's limit."""
+        def cb(n: int) -> None:
+            self.phase["instructions"] = int(n)
+            self.phase["limit"] = int(limit)
+            self.phase["progress"] = min(0.99, n / limit) if limit else None
+            self._set_phase("emulating", f"emulating: {n:,} instructions")
+        return cb
 
     def _need(self) -> Timeline:
         if self.timeline is None:
@@ -208,73 +244,88 @@ class CodeMapService:
     def build(self, p: Dict[str, Any]) -> Dict[str, Any]:
         t_start = time.time()
         with self._lock:
-            elf = p.get("elf") or self.default_elf()
-            sources = p.get("sources")
-            if isinstance(sources, str):
-                sources = [x for x in sources.split(os.pathsep) if x]
             try:
-                prog = self.program(elf, sources if sources is not None else (self.source_roots or None))
-            except ProgramError as e:
-                raise Unsupported(str(e)) from e
-            if sources is not None:
-                self.source_roots = list(sources)
-            core = p.get("core") or None
-            fw = self._firmware(prog, core, p.get("protocol") or None, int(p.get("wait_states") or 0), dict(p.get("options") or {}))
-            # inputs: a stored trace's key and plaintext, or given ones
-            store = self.s.store
-            idx = p.get("trace")
-            textout = None
-            if idx is None and len(store) and not (p.get("key") or p.get("text")):
-                idx = len(store) - 1
-            if idx is not None and len(store):
-                idx = int(idx) if int(idx) >= 0 else len(store) + int(idx)
-                if not 0 <= idx < len(store):
-                    raise LookupError(f"no trace {idx} (the store has {len(store)})")
-                _w, tin, tout, key = store.get(idx)
-                textout = tout
+                return self._build(p, t_start)
+            except BaseException as e:
+                self._set_phase("error", f"{type(e).__name__}: {e}", error=f"{type(e).__name__}: {e}")
+                raise
+
+    def _build(self, p: Dict[str, Any], t_start: float) -> Dict[str, Any]:
+        self._set_phase("loading", "reading the ELF and its debug information")
+        elf = p.get("elf") or self.default_elf()
+        sources = p.get("sources")
+        if isinstance(sources, str):
+            sources = [x for x in sources.split(os.pathsep) if x]
+        try:
+            prog = self.program(elf, sources if sources is not None else (self.source_roots or None))
+        except ProgramError as e:
+            raise Unsupported(str(e)) from e
+        if sources is not None:
+            self.source_roots = list(sources)
+        core = p.get("core") or None
+        fw = self._firmware(prog, core, p.get("protocol") or None, int(p.get("wait_states") or 0), dict(p.get("options") or {}))
+        # inputs: a stored trace's key and plaintext, or given ones
+        store = self.s.store
+        idx = p.get("trace")
+        textout = None
+        if idx is None and len(store) and not (p.get("key") or p.get("text")):
+            idx = len(store) - 1
+        if idx is not None and len(store):
+            idx = int(idx) if int(idx) >= 0 else len(store) + int(idx)
+            if not 0 <= idx < len(store):
+                raise LookupError(f"no trace {idx} (the store has {len(store)})")
+            _w, tin, tout, key = store.get(idx)
+            textout = tout
+        else:
+            idx = None
+            tin = key = b""
+        key = bytes.fromhex(p["key"].replace(" ", "")) if p.get("key") else (key or DEFAULT_KEY)
+        text = bytes.fromhex(p["text"].replace(" ", "")) if p.get("text") is not None else (tin or bytes(16))  # "" sends a command without data
+        cmd = p.get("cmd") or "p"
+        raw = p.get("raw")
+        limit = int((p.get("options") or {}).get("max_instructions") or 0) or getattr(fw.machine, "run_limit", 0)
+        self._set_phase("emulating", f"emulating {os.path.basename(prog.path)} ({fw.core})", instructions=0, limit=limit, progress=0.0)
+        fw.machine.progress = self._progress(limit)
+        try:
+            if raw is not None:  # firmware that does not speak SimpleSerial (basic-passwdcheck): these serial bytes go in as they are
+                raw_b = raw.encode() if p.get("raw_text") else bytes.fromhex(str(raw).replace(" ", ""))
+                run, _snap = fw.command_raw(raw_b)
+                resp = run.output
+                key, text, cmd, textout = b"", raw_b, "raw", None
             else:
-                idx = None
-                tin = key = b""
-            key = bytes.fromhex(p["key"].replace(" ", "")) if p.get("key") else (key or DEFAULT_KEY)
-            text = bytes.fromhex(p["text"].replace(" ", "")) if p.get("text") is not None else (tin or bytes(16))  # "" sends a command without data
-            cmd = p.get("cmd") or "p"
-            raw = p.get("raw")
+                run, resp = fw.encrypt(key, text, cmd)
+        except EmuError as e:
+            raise Unsupported(f"emulation failed: {e}") from e
+        finally:
+            fw.machine.progress = None
+        self._set_phase("timeline", f"mapping {run.instructions:,} instructions to functions and lines", instructions=run.instructions, progress=None)
+        tl = Timeline.build(prog, run)
+        mapping = self._scope_mapping(dict(p.get("mapping") or {}))  # before anything changes: a bad mapping leaves the previous code map as it was
+        self.prog, self.fw, self.timeline = prog, fw, tl
+        self.P = power.cycle_power(run)
+        self.cum = power.cumulative_power(self.P)
+        self.mapping = mapping
+        self.alignment = None
+        expect = None
+        if cmd == "p" and len(text) == 16 and len(key) == 16:
+            from cwstudio.aes import encrypt_block
+            expect = encrypt_block(key, text)
+        hi, lo = run.trigger_window()
+        self.meta = {"elf": prog.path, "name": os.path.basename(prog.path), "trace": idx, "key": key.hex(), "text": text.hex(), "cmd": cmd,
+                     "response": resp.hex() if resp is not None else None, "aes_ok": (resp == expect) if expect is not None and resp is not None else None,
+                     "stored_textout": textout.hex() if textout else None, "matches_stored": (resp == textout) if textout and resp is not None else None,
+                     "instructions": run.instructions, "cycles": run.total_cycles, "trigger_cycles": (lo - hi) if hi is not None and lo is not None else None,
+                     "trigger_source": run.trigger_source, "halted": fw.machine.where(run.halted) if run.halted is not None else None, "output": run.output[:512].hex(),
+                     "built": time.time(), "seconds": None, "firmware": fw.info(), "program": prog.summary(),
+                     "sim_emulates": self._sim_emulates(prog)}
+        want = p.get("align", "auto")
+        if want is True or (want == "auto" and len(store) >= 1):
             try:
-                if raw is not None:  # firmware that does not speak SimpleSerial (basic-passwdcheck): these serial bytes go in as they are
-                    raw_b = raw.encode() if p.get("raw_text") else bytes.fromhex(str(raw).replace(" ", ""))
-                    run, _snap = fw.command_raw(raw_b)
-                    resp = run.output
-                    key, text, cmd, textout = b"", raw_b, "raw", None
-                else:
-                    run, resp = fw.encrypt(key, text, cmd)
-            except EmuError as e:
-                raise Unsupported(f"emulation failed: {e}") from e
-            tl = Timeline.build(prog, run)
-            mapping = self._scope_mapping(dict(p.get("mapping") or {}))  # before anything changes: a bad mapping leaves the previous code map as it was
-            self.prog, self.fw, self.timeline = prog, fw, tl
-            self.P = power.cycle_power(run)
-            self.cum = power.cumulative_power(self.P)
-            self.mapping = mapping
-            self.alignment = None
-            expect = None
-            if cmd == "p" and len(text) == 16 and len(key) == 16:
-                from cwstudio.aes import encrypt_block
-                expect = encrypt_block(key, text)
-            hi, lo = run.trigger_window()
-            self.meta = {"elf": prog.path, "name": os.path.basename(prog.path), "trace": idx, "key": key.hex(), "text": text.hex(), "cmd": cmd,
-                         "response": resp.hex() if resp is not None else None, "aes_ok": (resp == expect) if expect is not None and resp is not None else None,
-                         "stored_textout": textout.hex() if textout else None, "matches_stored": (resp == textout) if textout and resp is not None else None,
-                         "instructions": run.instructions, "cycles": run.total_cycles, "trigger_cycles": (lo - hi) if hi is not None and lo is not None else None,
-                         "trigger_source": run.trigger_source, "halted": fw.machine.where(run.halted) if run.halted is not None else None, "output": run.output[:512].hex(),
-                         "built": time.time(), "seconds": None, "firmware": fw.info(), "program": prog.summary(),
-                         "sim_emulates": self._sim_emulates(prog)}
-            want = p.get("align", "auto")
-            if want is True or (want == "auto" and len(store) >= 1):
-                try:
-                    self._align({"source": p.get("align_source") or "mean"})
-                except Exception as e:  # noqa: BLE001
-                    self.alignment = {"error": str(e)}
-            self.meta["seconds"] = round(time.time() - t_start, 3)
+                self._align({"source": p.get("align_source") or "mean", "refine": p.get("refine", True)})
+            except Exception as e:  # noqa: BLE001
+                self.alignment = {"error": str(e)}
+        self.meta["seconds"] = round(time.time() - t_start, 3)
+        self._set_phase("ready", f"built in {self.meta['seconds']} s: {run.instructions:,} instructions" + (f", aligned ({self.alignment.get('label')})" if self.alignment and not self.alignment.get("error") else ""))
         self.publish()
         return self.status(full=True)
 
@@ -287,7 +338,7 @@ class CodeMapService:
 
     # --- status -------------------------------------------------------------------------------------
     def status(self, full: bool = False) -> Dict[str, Any]:
-        st: Dict[str, Any] = {"ready": self.timeline is not None, "engines": engine_status(), "mapping": self.mapping.to_json(), "alignment": self.alignment,
+        st: Dict[str, Any] = {"ready": self.timeline is not None, "phase": dict(self.phase), "engines": engine_status(), "mapping": self.mapping.to_json(), "alignment": self.alignment,
                               "cores": {k: cy.CORE_LABELS[k] for k in cy.ALL_CORES}, "source_roots": self.source_roots, "pathsep": os.pathsep, "programmed": getattr(self.s, "programmed", None)}
         st.update(self.meta)
         if full and self.timeline is not None:
@@ -318,7 +369,9 @@ class CodeMapService:
                 if p.get(k):
                     setattr(m, k, float(p[k]))
             if p.get("reset"):
-                m.shift, m.scale = 0.0, 1.0
+                m.shift, m.scale, m.knots = 0.0, 1.0, None
+            if p.get("clear_warp"):
+                m.knots = None
             _check_mapping(m)
             m.spc = (m.adc_freq or 4 * 7.37e6) / (m.target_freq or 7.37e6) / max(1, m.decimate)
             self.mapping = m
@@ -350,21 +403,44 @@ class CodeMapService:
         ms = int(p["max_shift"]) if p.get("max_shift") else None
         if ms is not None and not 1 <= ms <= 200_000:
             raise ValueError("max_shift must be 1 to 200000 samples")
-        res = power.align(np.asarray(x), self.P, tl.t0, self.mapping, max_shift=ms, scale_range=sr, cum=self.cum)
+        self._set_phase("aligning", f"fitting shift and scale on the {'trace' if src == 'trace' else 'mean trace'}")
+        x = np.asarray(x)
+        res = power.align(x, self.P, tl.t0, self.mapping, max_shift=ms, scale_range=sr, cum=self.cum)
         res["source"] = src
         res["samples"] = int(len(x))
         apply = p.get("apply", "auto")
         if apply == "auto":  # a low confidence fit is more likely wrong than the nominal mapping from the scope settings: keep the mapping
             apply = res["label"] != "low"
         res["applied"] = bool(apply)
+        self.mapping.knots = None
         if apply:
             self.mapping.shift, self.mapping.scale = res["shift"], res["scale"]
+        want = p.get("refine", True)
+        if want and apply:  # local refinement: follow the drift between the emulated cycle counts and the real core, window by window
+            self._set_phase("refining", "following the drift window by window")
+            try:
+                windows = int(p["windows"]) if p.get("windows") else 24
+                if not 3 <= windows <= 400:
+                    raise ValueError("windows must be 3 to 400")
+                ref = power.refine(x, self.P, tl.t0, self.mapping, windows=windows, cum=self.cum)
+            except Exception as e:  # noqa: BLE001  the refinement is a bonus on top of the linear fit
+                ref = {"applied": False, "reason": f"{type(e).__name__}: {e}", "knots": [], "windows": []}
+            if ref.get("applied"):
+                self.mapping.knots = ref["knots"]
+            res["refine"] = {k: v for k, v in ref.items() if k != "knots"}
+        elif want:
+            res["refine"] = {"applied": False, "reason": "the linear fit was not applied (low confidence), so there is nothing to refine", "windows": []}
         self.alignment = res
         return res
 
     def align(self, p: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
-            res = self._align(p)
+            try:
+                res = self._align(p)
+            except BaseException as e:
+                self._set_phase("error" if self.timeline is None else "ready", f"alignment failed: {e}", error=None)
+                raise
+            self._set_phase("ready", f"aligned ({res['label']}" + (", refined" if (res.get("refine") or {}).get("applied") else "") + ")")
         self.publish()
         return {"alignment": res, "mapping": self.mapping.to_json()}
 
@@ -554,7 +630,7 @@ def register_routes(app, session) -> None:
 
     @app.get("/api/codemap")
     async def codemap_status():
-        """Code map state: firmware (ELF, architecture, core, SimpleSerial version), the inputs it ran with, whether the emulated response is the correct AES and matches the stored trace, the cycle to sample mapping and the last alignment."""
+        """Code map state: phase (idle, loading, emulating with the instruction count, timeline, aligning, refining, ready, error) with its message and elapsed time, firmware (ELF, architecture, core, SimpleSerial version), the inputs it ran with, whether the emulated response is the correct AES and matches the stored trace, the cycle to sample mapping (with its warp when refined) and the last alignment."""
         return await run(svc.status)
 
     @app.get("/api/codemap/elfs")
@@ -592,12 +668,12 @@ def register_routes(app, session) -> None:
 
     @app.post("/api/codemap/align")
     async def codemap_align(req: Request):
-        """Body: source ('mean' or 'trace'), trace, scale_min, scale_max, max_shift, apply (true, false or 'auto': apply unless the confidence is low). Fits shift and scale of the mapping by correlating the emulated power model with the traces."""
+        """Body: source ('mean' or 'trace'), trace, scale_min, scale_max, max_shift, apply (true, false or 'auto': apply unless the confidence is low), refine (default true: after the linear fit, follow the drift between emulated and real cycle counts window by window and keep it as a piecewise correction of the mapping), windows (pieces, default 24). Fits shift and scale of the mapping by correlating the emulated power model with the traces."""
         return await run(svc.align, await body(req))
 
     @app.put("/api/codemap/mapping")
     async def codemap_mapping(req: Request):
-        """Body: shift, scale (absolute), dshift (samples) or dscale (fraction) to nudge, adc_offset, presamples, decimate, adc_freq, target_freq, reset."""
+        """Body: shift, scale (absolute), dshift (samples) or dscale (fraction) to nudge, adc_offset, presamples, decimate, adc_freq, target_freq, reset (shift 0, scale 1, no warp), clear_warp (drop the local refinement, keep shift and scale)."""
         return await run(svc.set_mapping, await body(req))
 
     @app.get("/api/codemap/source")

@@ -91,6 +91,8 @@ class Session:
         self.notebooks.on_change = lambda ev: self.bus.publish("nb", ev)  # open notebook tabs in every window follow saves and deletes
         self.tutorials = Tutorials(self.notebooks, self.firmware, publish)
         self.notes = NotesStore(os.path.join(self.data_dir, "notes"))
+        from cwstudio.activity import Activity
+        self.activity = Activity(publish=lambda kind, data: self.bus.publish(kind, data, droppable=True))  # what analysis is in progress (code map, CPA, t-test, DFA) for the header chip
         self.calc_vars: Dict[str, Any] = {}
         self.programmed: Optional[Dict[str, Any]] = None  # the firmware programmed in this session: path, its ELF, whether the simulator emulates it
         self.worker.start()
@@ -152,6 +154,7 @@ class Session:
             "clients": self.bus.subscriber_count,
             "hardware_stuck": self.worker.stuck(),
             "health": self._health,
+            "analysis": self.activity.status(),
         }
         return st
 
@@ -730,6 +733,11 @@ class Session:
 
         def cb(res):
             self.bus.publish("cpa", res.to_json(), droppable=not res.done)
+            if res.done:
+                self.activity.end(act, error=res.error, detail=f"{res.traces_used} traces")
+            else:
+                self.activity.update(act, progress=res.traces_used / res.total if res.total else None, detail=f"{res.traces_used}/{res.total} traces")
+        act = self.activity.begin("CPA", "running", f"{model} on {int(W.shape[0])} traces")
         self.cpa = CPAAttack(W, tin, tout, model=model, point_range=pr,
                              report_every=int(params.get("report_every", 50)), known_key=known_b, callback=cb,
                              bytes_to_attack=params.get("bytes"), params={"expr": params.get("expr")})
@@ -763,6 +771,10 @@ class Session:
         return W, tin, tout, key
 
     def ttest(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        with self.activity.track('TVLA t-test'):
+            return self._ttest(params)
+
+    def _ttest(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """TVLA: fixed plaintext traces against random ones (the fixed text from the capture's tvla mode unless given)."""
         from cwstudio import leakage
         W, tin, _tout, _key = self._trace_matrix(int(params.get("trace_start", 0) or 0), params.get("trace_end"))
@@ -776,6 +788,10 @@ class Session:
         return {**res, "traces": int(W.shape[0]), "series": [float(x) for x in series], "step": step, "fixed_text": str(fixed)}
 
     def snr(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        with self.activity.track('SNR'):
+            return self._snr(params)
+
+    def _snr(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Signal-to-noise ratio per sample, classes by a plaintext byte or by the S-box Hamming weight under the known (or stored) key."""
         from cwstudio import leakage
         W, tin, _tout, key = self._trace_matrix(int(params.get("trace_start", 0) or 0), params.get("trace_end"))
@@ -789,6 +805,10 @@ class Session:
         return {"byte": byte, "classes": kind, "traces": int(W.shape[0]), "max_snr": float(out.max()) if out.size else 0.0, "argmax": int(out.argmax()) if out.size else 0, "series": [float(x) for x in series], "step": step, "known_key": kb.hex() if kb else None}
 
     def align_traces(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        with self.activity.track('trace alignment'):
+            return self._align_traces(params)
+
+    def _align_traces(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Static alignment: shift every trace so its window matches the reference trace's; preview returns the shifts, apply writes the shifted traces back."""
         from cwstudio import leakage
         with self.store._lock:
@@ -825,6 +845,10 @@ class Session:
         return out
 
     def filter_traces(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        with self.activity.track('trace filter'):
+            return self._filter_traces(params)
+
+    def _filter_traces(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Filter every stored trace in place: lowpass, highpass or bandpass (windowed-sinc FIR, cutoffs as a fraction of the sample rate or in Hz with sample_rate) or a moving average of N samples."""
         from cwstudio import leakage
         kind = str(params.get("kind", "lowpass"))
@@ -849,6 +873,10 @@ class Session:
         return {"traces": int(out.shape[0]), "kind": kind, "cutoff": cutoff, "cutoff2": cutoff2, "taps": int(kernel.size)}
 
     def spectrum(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        with self.activity.track('spectrum'):
+            return self._spectrum(params)
+
+    def _spectrum(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Magnitude spectrum of one stored trace (index, -1 newest) or of the mean trace, in dB below the peak; frequencies in Hz when the ADC rate is known."""
         from cwstudio import leakage
         with self.store._lock:
@@ -920,6 +948,10 @@ class Session:
         return {"checkers": cwcheckers.available(self.data_dir), "folder": cwcheckers.user_dir(self.data_dir), "help": cwcheckers.CONTEXT_HELP}
 
     def dfa(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        with self.activity.track("DFA"):
+            return self._dfa(params)
+
+    def _dfa(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Differential fault analysis of AES-128: from the last glitch sweep's replies (source glitch) or from given ciphertexts (correct plus faulty, hex)."""
         from cwstudio import dfa as cwdfa
         source = params.get("source") or ("ciphertexts" if ("correct" in params or "faulty" in params) else "glitch")

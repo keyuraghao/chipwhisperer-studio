@@ -64,11 +64,11 @@ def register_codemap_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]) 
 
     @mcp.tool(annotations=HW)
     def code_map_align(source: Literal["mean", "trace"] = "mean", trace: Optional[int] = None, scale_min: float = 0.9, scale_max: float = 1.1, max_shift: Optional[int] = None,
-                       shift: Optional[float] = None, scale: Optional[float] = None) -> Dict[str, Any]:
-        """Fit the cycle to sample mapping by cross-correlating the emulated power model with the mean of the stored traces (or one trace): returns the shift (samples), scale, correlation, a confidence (0..1, label high/medium/low: high means a strong correlation with no rival match within the search window) and whether the fit was applied (a low confidence fit is not: the nominal mapping is kept). Giving shift and/or scale instead sets the mapping by hand."""
-        if shift is not None or scale is not None:
-            return call("PUT", "/api/codemap/mapping", clean(shift=shift, scale=scale))
-        return call("POST", "/api/codemap/align", clean(source=source, trace=trace, scale_min=scale_min, scale_max=scale_max, max_shift=max_shift))
+                       refine: bool = True, windows: int = 24, shift: Optional[float] = None, scale: Optional[float] = None, clear_warp: bool = False) -> Dict[str, Any]:
+        """Fit the cycle to sample mapping by cross-correlating the emulated power model with the mean of the stored traces (or one trace): returns the shift (samples), scale, correlation, a confidence (0..1, label high/medium/low: high means a strong correlation with no rival match within the search window) and whether the fit was applied (a low confidence fit is not: the nominal mapping is kept). With refine (default) the trace is then cut into `windows` pieces and each is matched to the model near where the previous one matched, so the drift between the emulated cycle counts and the real core is followed and kept as a piecewise correction (the mapping's knots); the result's refine field lists every window's correlation and lag and the largest correction. Giving shift and/or scale instead sets the mapping by hand; clear_warp drops the piecewise correction."""
+        if shift is not None or scale is not None or clear_warp:
+            return call("PUT", "/api/codemap/mapping", clean(shift=shift, scale=scale, clear_warp=clear_warp or None))
+        return call("POST", "/api/codemap/align", clean(source=source, trace=trace, scale_min=scale_min, scale_max=scale_max, max_shift=max_shift, refine=refine, windows=windows))
 
     @mcp.tool(annotations=RO)
     def code_map_disassemble(function: Optional[str] = None, file: Optional[str] = None, line: Optional[int] = None) -> Dict[str, Any]:

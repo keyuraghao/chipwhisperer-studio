@@ -69,12 +69,37 @@ export class CodeBand {
   }
 
   setMapping(m) {
-    if (m) this.map = { a: m.samples_per_cycle, b: m.intercept };
+    if (m) {
+      // the local refinement's knots: (cycle, delta samples) on top of the linear mapping, flat beyond the ends
+      const knots = (m.knots || []).map(([c, d]) => [c, d]);
+      this.map = { a: m.samples_per_cycle, b: m.intercept, kc: knots.map((k) => k[0]), kd: knots.map((k) => k[1]) };
+      this.map.ks = this.map.kc.map((c, i) => c * this.map.a + this.map.b + this.map.kd[i]);
+    }
     this.draw();
   }
 
-  sample(c) { return c * this.map.a + this.map.b; }
-  cycle(s) { return (s - this.map.b) / this.map.a; }
+  warp(c) {
+    const { kc, kd } = this.map;
+    if (!kc || !kc.length) return 0;
+    if (c <= kc[0]) return kd[0];
+    if (c >= kc[kc.length - 1]) return kd[kd.length - 1];
+    let lo = 0, hi = kc.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (kc[mid] <= c) lo = mid; else hi = mid; }
+    const t = (c - kc[lo]) / (kc[hi] - kc[lo] || 1);
+    return kd[lo] + t * (kd[hi] - kd[lo]);
+  }
+
+  sample(c) { return c * this.map.a + this.map.b + this.warp(c); }
+  cycle(s) {
+    const { ks, kc, kd, a, b } = this.map;
+    if (!kc || !kc.length) return (s - b) / a;
+    if (s <= ks[0]) return (s - b - kd[0]) / a;
+    if (s >= ks[ks.length - 1]) return (s - b - kd[kd.length - 1]) / a;
+    let lo = 0, hi = ks.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (ks[mid] <= s) lo = mid; else hi = mid; }
+    const t = (s - ks[lo]) / (ks[hi] - ks[lo] || 1);
+    return kc[lo] + t * (kc[hi] - kc[lo]);
+  }
   fname(i) { const f = this.band && this.band.functions[i]; return f ? f.name : '?'; }
   iname(i) { const f = this.band && this.band.inlines && this.band.inlines[i]; return f ? f.name : '?'; }
 
