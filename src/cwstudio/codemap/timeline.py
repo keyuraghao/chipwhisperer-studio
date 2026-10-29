@@ -71,10 +71,11 @@ class Timeline:
         """Runs of instructions from inlined functions, one level below the call they were inlined into (so the band can draw them like calls)."""
         n = len(self.start)
         depth = np.zeros(n, np.int64)
-        for k in np.argsort(self.sp_depth, kind="stable"):
-            i0 = int(np.searchsorted(self.start, self.sp_start[k], "left"))
-            i1 = int(np.searchsorted(self.start, self.sp_end[k], "left"))
-            depth[i0:i1] = self.sp_depth[k]
+        i0s = np.searchsorted(self.start, self.sp_start, "left").tolist()  # all spans at once: a search per span costs more than the assignment
+        i1s = np.searchsorted(self.start, self.sp_end, "left").tolist()
+        depths = self.sp_depth.tolist()
+        for k in np.argsort(self.sp_depth, kind="stable").tolist():
+            depth[i0s[k]:i1s[k]] = depths[k]
         parts = []
         # the outermost inlined function one level below its caller, a nested one (if different) another level down
         for arr, extra in ((self.outer, 1), (np.where(self.inline != self.outer, self.inline, -1), 2)):
@@ -241,7 +242,7 @@ class Timeline:
 
     def at(self, c: float) -> Optional[Dict[str, Any]]:
         """The instruction executing at cycle ``c``."""
-        i = int(np.searchsorted(self.start, c, side="right")) - 1
+        i = int(np.searchsorted(self.start, int(np.floor(c)), side="right")) - 1  # an integer key: a float makes numpy cast the whole array on every call
         if i < 0 or i >= len(self.start) or c >= self.end[i]:
             return None
         prog = self.prog

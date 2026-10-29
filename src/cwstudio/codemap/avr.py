@@ -97,7 +97,7 @@ class AVRCore:
         self.ops: List[Optional[Callable[[int], int]]] = [None] * (self.nwords + 2)
         self.base: List[int] = [0] * (self.nwords + 2)
         self.leak: List[int] = [-1] * (self.nwords + 2)
-        self.kind: List[int] = [0] * (self.nwords + 2)  # 1 call, 2 return
+        self.kind = array("b", bytes(self.nwords + 2))  # 1 call, 2 return (an array, so a run turns it into numpy without converting a list)
         self.hooks: Dict[int, Callable[["AVRCore"], Optional[int]]] = {}
         self.write_watch: Dict[int, Callable[["AVRCore", int, int], None]] = {}
         self.cycles = 0

@@ -73,6 +73,7 @@ class CodeMapService:
         self.mapping = power.Mapping()
         self.alignment: Optional[Dict[str, Any]] = None
         self.P: Optional[np.ndarray] = None
+        self.cum: Optional[np.ndarray] = None  # cumulative_power(P), resampled by the alignment and the model endpoint
         self.meta: Dict[str, Any] = {}
         self.source_roots: List[str] = []
 
@@ -252,6 +253,7 @@ class CodeMapService:
             mapping = self._scope_mapping(dict(p.get("mapping") or {}))  # before anything changes: a bad mapping leaves the previous code map as it was
             self.prog, self.fw, self.timeline = prog, fw, tl
             self.P = power.cycle_power(run)
+            self.cum = power.cumulative_power(self.P)
             self.mapping = mapping
             self.alignment = None
             expect = None
@@ -348,7 +350,7 @@ class CodeMapService:
         ms = int(p["max_shift"]) if p.get("max_shift") else None
         if ms is not None and not 1 <= ms <= 200_000:
             raise ValueError("max_shift must be 1 to 200000 samples")
-        res = power.align(np.asarray(x), self.P, tl.t0, self.mapping, max_shift=ms, scale_range=sr)
+        res = power.align(np.asarray(x), self.P, tl.t0, self.mapping, max_shift=ms, scale_range=sr, cum=self.cum)
         res["source"] = src
         res["samples"] = int(len(x))
         apply = p.get("apply", "auto")
@@ -373,7 +375,7 @@ class CodeMapService:
         n = int(n)
         if not 0 <= n <= 2_000_000:
             raise ValueError("n must be 0 to 2000000 samples")
-        return power.model_samples(self.P, tl.t0, self.mapping, n).astype(np.float32)
+        return power.model_samples(self.P, tl.t0, self.mapping, n, cum=self.cum).astype(np.float32)
 
     # --- queries -------------------------------------------------------------------------------------
     def _with_samples(self, d: Dict[str, Any]) -> Dict[str, Any]:

@@ -443,13 +443,16 @@ class UnicornMachine(_Machine):
                     x = uc.reg_read(XPSR)
                     if x & IT_BITS:
                         uc.reg_write(XPSR, x & ~IT_BITS)
-                end = its.get(addr)
-                if end is not None:
-                    it_range[0], it_range[1] = addr + 2, end
+
+            def it_start(uc, addr, size, end):  # end comes in as the hook's user data
+                it_range[0], it_range[1] = addr + 2, end
         else:
             def code(uc, addr, size, ud):
                 app(addr)
+            its = {}
         uc.hook_add(U.UC_HOOK_CODE, code)
+        for a, end in its.items():  # one hook per IT instruction (hooks run in the order added, so after ``code``) instead of a dictionary lookup on every instruction
+            uc.hook_add(U.UC_HOOK_CODE, it_start, user_data=end, begin=a, end=a)
         midx, mval = self.mem_idx.append, self.mem_val.append
 
         def mem(uc, access, addr, size, value, ud):
@@ -630,10 +633,11 @@ class UnicornMachine(_Machine):
             raise EmuError(f"the command did not finish within {limit:,} instructions" + self.loop_hint(self.pcs[-4096:]))
         pcs = np.frombuffer(self.pcs, np.uint32).astype(np.int64) if len(self.pcs) else np.zeros(0, np.int64)
         info = self.info
-        for u in np.unique(pcs).tolist():
+        uniq = np.unique(pcs)
+        for u in uniq.tolist():
             if u not in info:
                 info[u] = self._classify(u)
-        dur, cls = cy.cycles_for(self.prog.arch, self.core, pcs, info, self.ws)
+        dur, cls = cy.cycles_for(self.prog.arch, self.core, pcs, info, self.ws, uniq=uniq)
         start = np.zeros(len(pcs), np.int64)
         if len(pcs):
             np.cumsum(dur[:-1], out=start[1:])
@@ -801,7 +805,7 @@ class AVRMachine(_Machine):
         if len(start):
             dur[:-1] = np.diff(start)
             dur[-1] = total - start[-1]
-        kinds = np.asarray(cpu.kind, np.int8)[pcs // 2] if len(pcs) else np.zeros(0, np.int8)
+        kinds = np.frombuffer(cpu.kind, np.int8)[pcs // 2] if len(pcs) else np.zeros(0, np.int8)
         cls = np.where(kinds == 1, cy.CALL, np.where(kinds == 2, cy.RET, cy.ALU)).astype(np.int8)
         leak = np.frombuffer(tl, np.int32).astype(np.int64) if len(tl) else np.zeros(0, np.int64)
         trig = [(k, int(start[i]) if 0 <= i < len(start) else 0) for k, i in self.trig]
@@ -912,15 +916,11 @@ def _function_window(prog: Program, run: Run) -> List[Tuple[str, int]]:
         if not len(hit):
             continue
         i = int(hit[0])
-        depth = 0
-        for j in range(i, len(run.pcs)):
-            c = run.cls[j]
-            if c == cy.CALL:
-                depth += 1
-            elif c == cy.RET:
-                if depth == 0:
-                    end = int(run.start[j] + run.dur[j])
-                    return [("high", int(run.start[i])), ("low", end)]
-                depth -= 1
+        c = run.cls[i:]
+        depth = np.cumsum((c == cy.CALL).astype(np.int64) - (c == cy.RET).astype(np.int64))  # call depth after each instruction; the function's own return takes it to -1
+        ret = np.flatnonzero((c == cy.RET) & (depth == -1))
+        if len(ret):
+            j = i + int(ret[0])
+            return [("high", int(run.start[i])), ("low", int(run.start[j] + run.dur[j]))]
         return [("high", int(run.start[i])), ("low", run.total_cycles)]
     return []

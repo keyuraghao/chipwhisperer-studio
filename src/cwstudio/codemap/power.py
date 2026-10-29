@@ -19,6 +19,7 @@ from cwstudio.codemap import cycles as cy
 from cwstudio.codemap.emu import Run
 
 HW8 = np.array([bin(i).count("1") for i in range(256)], np.int64)
+_BITCOUNT = getattr(np, "bitwise_count", None)  # numpy 2.0+: one ufunc instead of four byte table lookups
 BASE = np.ones(len(cy.CLASS_NAMES))
 BASE[[cy.LOAD, cy.STORE, cy.LDM, cy.STM, cy.LOADPC]] = 1.15
 BASE[[cy.MUL, cy.MLA, cy.MULL, cy.DIV]] = 1.3
@@ -102,7 +103,10 @@ class Mapping:
 
 
 def popcount(v: np.ndarray) -> np.ndarray:
+    """Hamming weight of the low 32 bits of each value."""
     v = np.asarray(v, np.int64) & 0xFFFFFFFF
+    if _BITCOUNT is not None:
+        return _BITCOUNT(v.astype(np.uint32)).astype(np.int64)
     return HW8[v & 0xFF] + HW8[(v >> 8) & 0xFF] + HW8[(v >> 16) & 0xFF] + HW8[(v >> 24) & 0xFF]
 
 
@@ -134,13 +138,21 @@ def cycle_power(run: Run) -> np.ndarray:
     return np.repeat(p, dur)
 
 
-def model_samples(P: np.ndarray, t0: int, mapping: Mapping, n: int, first: int = 0) -> np.ndarray:
-    """Average model power in each of ``n`` samples starting at sample index ``first``. ``P`` is per cycle from the run start, ``t0`` the trigger cycle in the same counting."""
+def cumulative_power(P: np.ndarray) -> np.ndarray:
+    """Running sum of the per-cycle power with a leading 0 (``cum[i]`` is the energy of cycles 0 to i-1), computed once per run for :func:`model_samples`."""
+    return np.concatenate([[0.0], np.cumsum(P, dtype=np.float64)])
+
+
+def model_samples(P: np.ndarray, t0: int, mapping: Mapping, n: int, first: int = 0, cum: Optional[np.ndarray] = None) -> np.ndarray:
+    """Average model power in each of ``n`` samples starting at sample index ``first``. ``P`` is per cycle from the run start, ``t0`` the trigger cycle in the same counting; ``cum`` is :func:`cumulative_power` of ``P`` when the caller has it (the alignment resamples the same run many times)."""
     k = np.arange(first, first + n + 1, dtype=np.float64) - 0.5  # sample boundaries
     c = mapping.cycle(k) + t0 + EDGE_PHASE  # absolute cycles at the boundaries; a cycle's current flows mostly just after its clock edge
-    cum = np.concatenate([[0.0], np.cumsum(P, dtype=np.float64)])
+    if cum is None:
+        cum = cumulative_power(P)
     L = len(P)
-    inside = np.interp(np.clip(c, 0, L), np.arange(L + 1, dtype=np.float64), cum)
+    cc = np.clip(c, 0, L)
+    i = np.minimum(cc.astype(np.int64), max(L - 1, 0))  # the cycle each boundary falls in: linear interpolation of cum by hand (np.interp would search the whole run per boundary)
+    inside = cum[i] + (cc - i) * P[i] if L else np.zeros_like(cc)
     val = inside + np.where(c < 0, c * IDLE, 0) + np.where(c > L, (c - L) * IDLE, 0)
     width = np.diff(c)
     return np.diff(val) / np.where(width > 0, width, 1)
@@ -190,8 +202,8 @@ def _ncc(x: np.ndarray, m: np.ndarray) -> np.ndarray:
     return num / (xn * np.sqrt(var))
 
 
-def align(trace: np.ndarray, P: np.ndarray, t0: int, mapping: Mapping, max_shift: Optional[int] = None, scale_range: Tuple[float, float] = (0.9, 1.1), coarse: int = 41, fine: int = 21) -> Dict[str, Any]:
-    """Fit ``shift`` (samples) and ``scale`` of ``mapping`` so the power model best matches ``trace`` (the mean trace, or one trace). Returns the fit with its correlation and a confidence in 0..1.
+def align(trace: np.ndarray, P: np.ndarray, t0: int, mapping: Mapping, max_shift: Optional[int] = None, scale_range: Tuple[float, float] = (0.9, 1.1), coarse: int = 41, fine: int = 21, cum: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    """Fit ``shift`` (samples) and ``scale`` of ``mapping`` so the power model best matches ``trace`` (the mean trace, or one trace). Returns the fit with its correlation and a confidence in 0..1. ``cum`` is :func:`cumulative_power` of ``P`` if already known.
 
     The shift is searched within ``max_shift`` samples of the nominal mapping (default 200 target cycles, at least 256 samples): the trigger pins cycle 0 to within a few cycles on real hardware, and a wider search lets repetitive code (AES rounds, loops) match a whole round early or late. Confidence combines the correlation with how far the best peak stands above the best other local peak in the window (outside the main lobe of a couple of cycles), so a periodic match that could be off by a loop iteration reads as low.
     """
@@ -204,25 +216,25 @@ def align(trace: np.ndarray, P: np.ndarray, t0: int, mapping: Mapping, max_shift
         max_shift = int(min(max(256, round(200 * spc)), 20000))
     xp = _prep(x, spc)
     base = Mapping(**{**mapping.__dict__, "shift": 0.0})
+    if cum is None:
+        cum = cumulative_power(P)
 
     def scan(scales):
-        out = []
+        """The best (abs correlation, scale, lag, correlation, curve) over ``scales``; only the winner's curve is kept (one per scale would be a gigabyte on a long trace)."""
+        best = None
         for s in scales:
             base.scale = float(s)
-            m = model_samples(P, t0, base, L + 2 * max_shift, first=-max_shift)
+            m = model_samples(P, t0, base, L + 2 * max_shift, first=-max_shift, cum=cum)
             mp = _prep(m, spc * s)
             r = _ncc(xp, mp)
             j = int(np.argmax(np.abs(r)))
-            out.append((abs(r[j]), float(s), j - max_shift, float(r[j]), r))
-        return out
+            if best is None or abs(r[j]) > best[0]:
+                best = (abs(r[j]), float(s), j - max_shift, float(r[j]), r)
+        return best
     lo, hi = scale_range
-    res = scan(np.linspace(lo, hi, coarse))
-    res.sort(key=lambda t: -t[0])
     step = (hi - lo) / max(1, coarse - 1)
-    s0 = res[0][1]
-    res2 = scan(np.linspace(max(lo, s0 - step), min(hi, s0 + step), fine))
-    res2.sort(key=lambda t: -t[0])
-    a, s, lag, r, curve = res2[0]
+    s0 = scan(np.linspace(lo, hi, coarse))[1]
+    a, s, lag, r, curve = scan(np.linspace(max(lo, s0 - step), min(hi, s0 + step), fine))
     # sub-sample peak position from a parabola through the peak and its neighbours
     j0 = lag + max_shift
     frac = 0.0

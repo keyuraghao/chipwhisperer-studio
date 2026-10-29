@@ -7,7 +7,7 @@ Sources: the Cortex-M0, M0+, M3 and M4 Technical Reference Manuals (instruction 
 from __future__ import annotations
 
 import os
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -212,12 +212,14 @@ def _riscv_params(core: str, ws: int) -> Dict[str, int]:
     return {"alu": 1, "shift": 1, "load": 2 + ws, "store": 1, "b_taken": 3 + ws, "b_not": 1, "jal": 2 + ws, "jalr": 3 + ws, "mul": 2, "div": 34, "system": 1}
 
 
-def cycles_for(arch: str, core: str, pcs: np.ndarray, info: Dict[int, Tuple[int, int, int]], wait_states: int = 0) -> Tuple[np.ndarray, np.ndarray]:
-    """Per executed instruction: (cycles it took, class). ``info`` maps every program counter in ``pcs`` to its (size, class, registers) from the classifiers above."""
+def cycles_for(arch: str, core: str, pcs: np.ndarray, info: Dict[int, Tuple[int, int, int]], wait_states: int = 0, uniq: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
+    """Per executed instruction: (cycles it took, class). ``info`` maps every program counter in ``pcs`` to its (size, class, registers) from the classifiers above; ``uniq`` is ``np.unique(pcs)`` when the caller already has it."""
     n = len(pcs)
     if n == 0:
         return np.zeros(0, np.int64), np.zeros(0, np.int8)
-    uniq, inv = np.unique(pcs, return_inverse=True)
+    if uniq is None:
+        uniq = np.unique(pcs)
+    inv = np.searchsorted(uniq, pcs)  # the index of each pc in the sorted unique list (np.unique's return_inverse is several times slower on millions of entries)
     size = np.array([info[int(u)][0] for u in uniq], np.int64)[inv]
     cls = np.array([info[int(u)][1] for u in uniq], np.int8)[inv]
     nreg = np.array([info[int(u)][2] for u in uniq], np.int64)[inv]
@@ -225,33 +227,33 @@ def cycles_for(arch: str, core: str, pcs: np.ndarray, info: Dict[int, Tuple[int,
     nxt[:-1] = pcs[1:]
     nxt[-1] = -1
     taken = (nxt != pcs + size) & (nxt >= 0)
-    cyc = np.ones(n, np.int64)
+    tab = np.ones(len(CLASS_NAMES), np.int64)  # cost per class; the data dependent classes are fixed up below
     if arch == "arm":
         p = _arm_params(core, wait_states)
-        ls = (cls == LOAD) | (cls == STORE)
-        c_ls = np.full(n, p["ls"], np.int64)
+        tab[[LOAD, STORE]] = p["ls"]
+        tab[LOADPC] = p["ls"] + p["refill"]
+        tab[CALL] = p["bl"]
+        tab[JUMPREG] = p["bx"]
+        tab[MUL], tab[MLA], tab[MULL], tab[DIV], tab[TBB] = p["mul"], p["mla"], p["mull"], p["div"], p["tbb"]
+        cyc = tab[cls]
         if p["pipe"]:
+            ls = (cls == LOAD) | (cls == STORE)
             prev = np.zeros(n, bool)
             prev[1:] = ls[:-1]
-            c_ls[prev] = p["ls"] - 1  # neighbouring single loads and stores pipeline on the M3/M4
-        cyc = np.where(ls, c_ls, cyc)
-        cyc = np.where(cls == LOADPC, p["ls"] + p["refill"], cyc)
-        cyc = np.where((cls == LDM) | (cls == STM), 1 + nreg, cyc)
-        cyc = np.where(cls == RET, np.where(nreg > 0, nreg + p["pop_pc"], p["bx"]), cyc)
-        cyc = np.where(cls == BRANCH, np.where(taken, p["b_taken"], 1), cyc)
-        cyc = np.where(cls == CALL, p["bl"], cyc)
-        cyc = np.where(cls == JUMPREG, p["bx"], cyc)
-        cyc = np.where(cls == MUL, p["mul"], cyc)
-        cyc = np.where(cls == MLA, p["mla"], cyc)
-        cyc = np.where(cls == MULL, p["mull"], cyc)
-        cyc = np.where(cls == DIV, p["div"], cyc)
-        cyc = np.where(cls == TBB, p["tbb"], cyc)
+            cyc[ls & prev] = p["ls"] - 1  # neighbouring single loads and stores pipeline on the M3/M4
+        m = (cls == LDM) | (cls == STM)
+        cyc[m] = 1 + nreg[m]
+        m = cls == RET
+        cyc[m] = np.where(nreg[m] > 0, nreg[m] + p["pop_pc"], p["bx"])
+        m = cls == BRANCH
+        cyc[m] = np.where(taken[m], p["b_taken"], 1)
     else:
         p = _riscv_params(core, wait_states)
-        table = {ALU: p["alu"], SHIFT: p["shift"], LOAD: p["load"], STORE: p["store"], CALL: p["jal"], RET: p["jalr"], JUMPREG: p["jalr"], MUL: p["mul"], DIV: p["div"], SYSTEM: p["system"]}
-        for k, v in table.items():
-            cyc = np.where(cls == k, v, cyc)
-        cyc = np.where(cls == BRANCH, np.where(taken, p["b_taken"], p["b_not"]), cyc)
+        for k, v in ((ALU, p["alu"]), (SHIFT, p["shift"]), (LOAD, p["load"]), (STORE, p["store"]), (CALL, p["jal"]), (RET, p["jalr"]), (JUMPREG, p["jalr"]), (MUL, p["mul"]), (DIV, p["div"]), (SYSTEM, p["system"])):
+            tab[k] = v
+        cyc = tab[cls]
+        m = cls == BRANCH
+        cyc[m] = np.where(taken[m], p["b_taken"], p["b_not"])
     return cyc, cls
 
 

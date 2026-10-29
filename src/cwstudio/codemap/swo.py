@@ -63,9 +63,9 @@ def compare(samples: Sequence[Tuple[int, int]], timeline) -> Dict[str, Any]:
     start = timeline.start
     cyc = np.array([s[0] for s in samples], np.float64)
     pc = np.array([s[1] & ~1 for s in samples], np.int64)
-    uniq, counts = np.unique(pcs, return_counts=True)
-    once = set(uniq[counts == 1].tolist())
-    pairs = [(c, float(start[int(np.flatnonzero(pcs == p)[0])])) for c, p in zip(cyc, pc) if int(p) in once]
+    uniq, first, counts = np.unique(pcs, return_index=True, return_counts=True)
+    once = dict(zip(uniq[counts == 1].tolist(), start[first[counts == 1]].tolist()))  # pc -> emulated cycle, for the PCs that ran exactly once
+    pairs = [(c, float(once[int(p)])) for c, p in zip(cyc, pc) if int(p) in once]
     if len(pairs) >= 2:
         a = np.array(pairs)
         k, b = np.polyfit(a[:, 0], a[:, 1], 1)
