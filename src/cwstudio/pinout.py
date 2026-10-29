@@ -123,6 +123,12 @@ def pinout(info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     out = pinout_for_model(model)
     out["connected"] = True
     out["device"] = {"name": info.get("name"), "sn": info.get("sn"), "simulated": bool(info.get("simulated")), "hw_loc": info.get("hw_loc")}
+    from cwstudio.profiles import MODEL_PROFILES
+    prof = MODEL_PROFILES.get(model or "")
+    if prof:
+        out["brain"] = prof["brain"]
+        out["best_for"] = list(prof["best_for"])
+        out["avoid"] = list(prof["avoid"])
     if model is None:
         out["message"] = f"No pin diagram for this scope type ({info.get('name') or info.get('type') or 'unknown'})"
     return out

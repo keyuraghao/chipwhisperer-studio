@@ -180,7 +180,7 @@ def _compute_capabilities(scope, target=None) -> Dict[str, Any]:
     t["uart_pattern"] = cap(husky and (_has(scope, "UARTTrigger") or out["simulated"]), "the UART pattern trigger needs a ChipWhisperer-Husky" if not husky else "the Husky trace component is not available", rules=8 if m == "huskyplus" else 2, data_bits=[5, 6, 7, 8, 9], parity=["none", "odd", "even"], stop_bits=[1, 2])
     t["edge_counter"] = cap(husky, "edge counting needs a ChipWhisperer-Husky")
     t["adc_level"] = cap(husky, "ADC level triggering needs a ChipWhisperer-Husky")
-    t["sequencer"] = cap(husky, "the trigger sequencer needs a ChipWhisperer-Husky")
+    t["sequencer"] = cap(husky, "the trigger sequencer needs a ChipWhisperer-Husky", slots=4 if m == "huskyplus" else 2, steps=["basic", "uart_pattern", "edge_counter", "adc_level", "sad"])
     t["trace"] = cap(out["trace"]["available"], out["trace"]["reason"])
     t["bitbanger"] = cap(bb, out["bitbanger"]["reason"])
     t["outputs"] = cap(m == "pro" or husky, "a trigger output needs a ChipWhisperer-Pro (AUX) or Husky (MCX)", pins=["aux"] if m == "pro" else ["trig_mcx", "aux_mcx"])

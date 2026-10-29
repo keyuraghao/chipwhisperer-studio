@@ -16,8 +16,8 @@ TRAFFIC_MAX = 256  # traffic entries kept between arms (serial console use witho
 
 # trigger.module each configured kind sets; a module changed afterwards (Scope tab) means the stored parameters no longer apply
 MODULE_OF = {"uart_pattern": "UART", "uart_decode": "DECODEIO", "edge_counter": "edge_counter", "adc_level": "ADC", "sad": "SAD"}
-SAD_LENGTH = {"pro": 128, "husky": 32, "huskyplus": 32}  # reference samples the SAD module compares
-SAD_BITS = {"pro": 10, "husky": 8, "huskyplus": 8}  # resolution of the comparison (the threshold is in these units)
+SAD_LENGTH = {"pro": 128, "husky": 256, "huskyplus": 256}  # reference samples the SAD module compares (the Husky doubles it in extended mode; sadmodel.reference_length)
+SAD_BITS = {"pro": 10, "husky": 8, "huskyplus": 8}  # resolution of the comparison
 
 
 class Line:
@@ -245,13 +245,60 @@ def fire_time(scope, cfg: Dict[str, Any]) -> Tuple[Optional[float], Optional["Wi
     if kind == "uart_decode":
         return tl.uart(cfg.get("pin", "tio1"), cfg.get("baud", 38400), list(cfg.get("pattern") or [])), None
     if kind == "sequencer":
+        if cfg.get("steps"):
+            return sequence(scope, tl, list(cfg["steps"]), list(cfg.get("windows") or []), str(scope.adc.basic_mode))
         return tl.sequencer(list(cfg.get("pins") or []), int(cfg.get("window_start", 0)), int(cfg.get("window_end", 0)), str(scope.adc.basic_mode)), None
     if kind in ("adc_level", "sad"):
         w = Window(scope, tl.start, tl.end + 2 * tl.spb)
         if kind == "adc_level":
             return w.level_crossing(float(cfg.get("level", 0.1))), w
-        return w.sad(np.asarray(getattr(scope, "_sim_sad_ref", None), np.float64), int(cfg.get("threshold", 10)), SAD_BITS.get(scope.sim_model, 8)), w
+        return w.sad(np.asarray(getattr(scope, "_sim_sad_ref", None), np.float64), int(cfg.get("threshold", 10)), int(cfg.get("interval", 10)), getattr(scope, "_sim_sad_mask", None)), w
     return 0.0, None
+
+
+def step_candidates(scope, tl: "Timeline", step: Dict[str, Any], mode: str, window: Optional["Window"]) -> Tuple[List[float], Optional["Window"]]:
+    """Every time one sequencer step could fire on this run (a basic step fires on each matching event, the others once), and the rendered window when the step looked at the trace."""
+    kind = step.get("kind", "basic")
+    if kind == "basic":
+        pins = list(step.get("pins") or [step.get("pin") or "tio4"])
+        ev: List[float] = []
+        for pin in pins:
+            ev += tl.step_events(pin, mode)
+        return sorted(set(ev)), window
+    if kind == "edge_counter":
+        t = tl.edge_counter(step.get("pin", "tio4"), int(step.get("edges", 1)))
+        return ([t] if t is not None else []), window
+    if kind in ("uart_pattern", "uart_decode"):
+        t = tl.uart(step.get("pin", "tio1"), step.get("baud", 38400), list(step.get("pattern") or []), int(step.get("data_bits", 8)), step.get("parity", "none"), float(step.get("stop_bits", 1)))
+        return ([t] if t is not None else []), window
+    if kind in ("adc_level", "sad"):
+        if window is None:
+            window = Window(scope, tl.start, tl.end + 2 * tl.spb)
+        if kind == "adc_level":
+            t = window.level_crossing(float(step.get("level", 0.1)))
+        else:
+            ref = getattr(scope, "_sim_sad_ref", None)
+            t = None if ref is None else window.sad(np.asarray(ref, np.float64), int(step.get("threshold", 10)), int(step.get("interval", 10)), getattr(scope, "_sim_sad_mask", None))
+        return ([t] if t is not None else []), window
+    return [], window
+
+
+def sequence(scope, tl: "Timeline", steps: List[Dict[str, Any]], windows: List[List[int]], mode: str) -> Tuple[Optional[float], Optional["Window"]]:
+    """Chain the steps as the Husky sequencer does: step i+1 must fire window_start..window_end ADC cycles after step i (0 = no limit); an event too early is ignored, none in time means the sequence never completes."""
+    win: Optional[Window] = None
+    cands, win = step_candidates(scope, tl, steps[0], mode, win)
+    if not cands:
+        return None, win
+    t = cands[0]
+    for i, step in enumerate(steps[1:]):
+        ws, we = (windows[i] if i < len(windows) else [0, 0])
+        cands, win = step_candidates(scope, tl, step, mode, win)
+        lo = t + max(0, int(ws))
+        nxt = next((c for c in cands if c > t and c >= lo and (not we or c <= t + int(we))), None)
+        if nxt is None:
+            return None, win
+        t = nxt
+    return t, win
 
 
 class Window:
@@ -271,23 +318,17 @@ class Window:
         hit = np.flatnonzero(seg > level) if level >= 0 else np.flatnonzero(seg < level)
         return float(self.start + hit[0]) if hit.size else None
 
-    def sad(self, ref: np.ndarray, threshold: int, bits: int) -> Optional[float]:
-        """Where the reference matches: the best position (lowest sum of absolute differences, in ``bits``-bit ADC units) of the first run of positions under the threshold; the trigger comes when the last reference sample is in, as on the hardware."""
+    def sad(self, ref: np.ndarray, threshold: int, interval: int = 10, mask=None) -> Optional[float]:
+        """Where the reference matches, scored as the model's engine does (sadmodel: the Pro sums absolute differences, the Husky counts samples over the interval threshold, with its mask); the trigger comes when the last reference sample is in, as on the hardware."""
+        from cwstudio import sadmodel
         n = int(ref.size)
         seg = self.wave[self.start - self.base:self.end - self.base].astype(np.float64)
         if n == 0 or seg.size < n:
             return None
-        q = lambda x: np.floor((np.clip(x, -0.5, 0.5 - 1e-9) + 0.5) * (1 << bits))  # noqa: E731
-        win = np.lib.stride_tricks.sliding_window_view(q(seg), n)
-        score = np.abs(win - q(ref)).sum(axis=1)
-        under = np.flatnonzero(score <= threshold)
-        if not under.size:
+        score = sadmodel.scores(seg, ref, self.scope.sim_model, interval, mask)
+        best = sadmodel.first_hit(score, threshold)
+        if best is None:
             return None
-        i0 = under[0]
-        i1 = i0
-        while i1 + 1 < score.size and score[i1 + 1] <= threshold:
-            i1 += 1
-        best = i0 + int(np.argmin(score[i0:i1 + 1]))
         return float(self.start + best + n)
 
     def trace(self, t0: int, n: int) -> Optional[np.ndarray]:

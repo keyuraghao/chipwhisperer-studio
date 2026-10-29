@@ -192,7 +192,9 @@ def test_userio(client):
     u = client.put("/api/interfaces/userio", json={"direction": 0b101, "drive": 0b100}).json()
     assert u["direction"] == 5 and u["status"] & 0b101 == 0b100
     assert client.put("/api/interfaces/userio", json={"direction": 1024}).status_code == 400
-    refused(client.put("/api/interfaces/userio", json={"mode": "target_debug_jtag"}), "OpenOCD")
+    assert client.put("/api/interfaces/userio", json={"mode": "target_debug_jtag"}).json()["mode"] == "target_debug_jtag"  # every header mode the model has
+    refused(client.put("/api/interfaces/userio", json={"mode": "bogus"}), "one of")
+    assert client.put("/api/interfaces/userio", json={"mode": "normal"}).status_code == 200
     client.put("/api/interfaces/userio", json={"direction": 0, "drive": 0})
     use(client, "pro")
     refused(client.get("/api/interfaces/userio"), "Husky only")

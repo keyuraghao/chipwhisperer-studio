@@ -358,6 +358,44 @@ def firmware_outdated(scope) -> Optional[str]:
     return f"firmware {ver} is older than this ChipWhisperer library needs; upgrade it {how}, then unplug and replug the scope and connect again. See {FIRMWARE_URL}"
 
 
+def firmware_status(scope, model: Optional[str]) -> Dict[str, Any]:
+    """The scope's SAM firmware against what this chipwhisperer library bundles (what an upgrade would install) and what NewAE's repository holds. Hardware thread only."""
+    from cwstudio.profiles import MODEL_PROFILES
+    out: Dict[str, Any] = {}
+    try:
+        v = scope.fw_version
+        out["version"] = f"{v['major']}.{v['minor']}.{v.get('debug', 0)}"
+    except Exception:  # noqa: BLE001
+        return out
+    try:
+        out["library"] = str(scope.latest_fw_str)
+    except Exception:  # noqa: BLE001
+        out["library"] = None
+    out["upstream"] = ((MODEL_PROFILES.get(model or "") or {}).get("firmware") or {}).get("upstream")
+
+    def tup(x):
+        try:
+            return tuple(int(p) for p in str(x).split("."))
+        except Exception:  # noqa: BLE001
+            return None
+    cur, lib = tup(out["version"]), tup(out.get("library"))
+    out["upgrade_available"] = bool(cur and lib and cur < lib)
+    out["can_upgrade"] = hasattr(scope, "upgrade_firmware") and not getattr(scope, "sim_model", None) or bool(getattr(scope, "sim_model", None))
+    return out
+
+
+def usb_pipe_hint(e: BaseException) -> Optional[str]:
+    """When an exception chain holds a USB pipe error (the SAM firmware stalled a request it does not know), the sentence to show instead of the raw error."""
+    seen = 0
+    while e is not None and seen < 5:
+        name = type(e).__name__
+        if name == "USBErrorPipe" or "LIBUSB_ERROR_PIPE" in str(e):
+            return "the scope's USB controller refused this request (a USB pipe error): its SAM firmware does not know it, or a bulk transfer was left half way; upgrade the scope firmware, or unplug and replug if it keeps happening"
+        e = e.__cause__ or e.__context__
+        seen += 1
+    return None
+
+
 def is_device_lost(e: BaseException) -> bool:
     """True when an exception means the USB device went away (unplugged, reset or powered off)."""
     seen = 0

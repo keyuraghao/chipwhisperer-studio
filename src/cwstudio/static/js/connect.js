@@ -118,6 +118,17 @@ export function initConnect(ctx, el) {
       quick.append(kv);
     }
     (po.notes || []).forEach((n) => quick.append(h('div', { class: 'help' }, n)));
+    if (po.best_for) {
+      quick.append(h('div', { class: 'card-head', style: 'margin:8px 0 2px' }, h('span', { class: 'title' }, 'Best for')), h('div', { class: 'help' }, po.brain || ''),
+        h('ul', { class: 'help' }, ...po.best_for.map((b) => h('li', {}, b))), h('div', { class: 'help muted' }, 'Avoid: ' + (po.avoid || []).join('; ')));
+      const rec = h('div', { class: 'row' });
+      quick.append(h('div', { class: 'card-head', style: 'margin:8px 0 2px' }, h('span', { class: 'title' }, 'Recipes')), h('div', { class: 'help' }, 'The best way to reach a goal on this scope: each button applies the settings and tells you what to do next.'), rec);
+      get('/api/recipes').then((rs) => rs.forEach((r) => {
+        const b = h('button', { class: 'btn sm', title: r.available ? (r.notes || []).join('\n') : r.reason, onclick: async () => { try { const a = await post(`/api/recipes/${r.id}/apply`); toast(`${a.title}: ${a.applied.length ? a.applied.join(', ') : 'nothing to set'}. ${(a.notes || [])[0] || ''}`, 'ok', 12000); if (ctx.scopeTree && ctx.scopeTree.refreshValues) ctx.scopeTree.refreshValues(); ctx.refreshCaps && ctx.refreshCaps(); } catch (e) { toast(e.message, 'err', 8000); } } }, r.title);
+        if (!r.available) { b.disabled = true; b.classList.add('gated'); }
+        rec.append(b);
+      })).catch(() => {});
+    }
   }
   paintQuick({ connected: false });
   async function refreshQuick(sc) {
@@ -156,11 +167,23 @@ export function initConnect(ctx, el) {
     platCard,
   );
 
+  function fwText(sc) {
+    const f = sc.firmware;
+    if (!f || !f.version) return sc.fw_version ? `${sc.fw_version.major}.${sc.fw_version.minor}.${sc.fw_version.debug || 0}` : '-';
+    let t = `SAM ${f.version}`;
+    if (f.library) t += f.upgrade_available ? ` (this library bundles ${f.library}: upgrade available)` : ` (up to date with this library's ${f.library})`;
+    if (f.upstream && f.upstream !== f.library) t += `; NewAE's repository is at ${f.upstream}`;
+    return t;
+  }
+  async function upgradeFw() {
+    if (!confirm('Flash the SAM firmware bundled with this chipwhisperer library onto the scope? The scope re-enumerates afterwards: unplug and replug it, then connect again.')) return;
+    try { const r = await post('/api/scope/firmware/upgrade'); toast(r.replug ? `Firmware upgraded from ${r.before} to ${r.after}: unplug and replug the scope, then connect again` : `Firmware now ${r.after}`, 'ok', 10000); ctx.refreshStatus(); } catch (e) { toast(e.message, 'err', 10000); }
+  }
   ctx.on('status', (st) => {
     refreshQuick(st.scope);
     info.innerHTML = '';
     const rows = [['Scope', st.scope.connected ? `${st.scope.name || st.scope.type}${st.scope.sn ? ' (sn ' + st.scope.sn + ')' : ''}` : (st.scope.lost ? 'lost: ' + st.scope.lost : 'not connected')],
-      ['Firmware', st.scope.fw_version ? JSON.stringify(st.scope.fw_version) : '-'],
+      ['Firmware', fwText(st.scope)],
       ['Target', st.target.connected ? st.target.type : 'not connected'],
       ['Traces', `${st.traces.count} (${st.traces.samples} samples)`],
       ['Data dir', st.data_dir],
@@ -174,7 +197,7 @@ export function initConnect(ctx, el) {
       if (hl.sam_errors) rows.push(['USB controller', hl.sam_errors]);
       if (hl.glitches_fired != null) rows.push(['Glitches fired', String(hl.glitches_fired)]);
     }
-    rows.forEach(([k, v]) => info.append(h('span', { class: 'k' }, k), h('span', {}, String(v))));
+    rows.forEach(([k, v]) => info.append(h('span', { class: 'k' }, k), k === 'Firmware' && st.scope.firmware && st.scope.firmware.upgrade_available ? h('span', {}, String(v), ' ', h('button', { class: 'btn sm', onclick: upgradeFw }, 'Upgrade firmware')) : h('span', {}, String(v))));
     if (st.scope.connected && hl.model) {
       const probs = hl.problems || [];
       const box = h('div', { class: 'help ' + (probs.length ? 'warn' : ''), style: 'grid-column: 1 / -1' }, probs.length ? h('ul', {}, ...probs.map((p) => h('li', {}, p))) : 'Health: no problems reported.',

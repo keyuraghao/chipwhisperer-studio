@@ -265,10 +265,11 @@ class SimTrigger(_Settings):
     FIELDS = [
         ("triggers", "tio4", "Trigger pin(s), e.g. 'tio4' or 'tio1 or tio2'."),
         ("module", "basic", "Trigger module."),
+        ("aux_out", False, "Drive the AUX SMA with the trigger (Pro)."),
     ]
 
-    def __init__(self):
-        pass
+    def __init__(self, model: str = "husky"):
+        self._hidden = frozenset() if model == "pro" else frozenset({"aux_out"})
 
 
 @_make_props
@@ -286,11 +287,24 @@ class SimIO(_Settings):
         ("glitch_hp", False, "High-power crowbar MOSFET."),
         ("glitch_lp", False, "Low-power crowbar MOSFET."),
         ("clkout", 7.5e6, "Target clock output in Hz: 240 MHz divided by 1, 2, 4, 8, 16, 32 or 64, or None for high-Z (Nano)."),
+        ("glitch_trig_mcx", "trigger", "TRIG/GLITCH OUT MCX port: glitch, trigger, inverted glitch or inverted trigger (Husky)."),
+        ("aux_io_mcx", "high_z", "AUX MCX port: high_z (input), userio_ck or hs2 clock output (Husky)."),
     ]
 
     def __init__(self, model: str = "husky"):
         self.model = model
-        self._hidden = frozenset({"hs2", "target_pwr", "glitch_hp", "glitch_lp"} if model == "nano" else {"clkout"})
+        mcx = {"glitch_trig_mcx", "aux_io_mcx"}
+        self._hidden = frozenset(({"hs2", "target_pwr", "glitch_hp", "glitch_lp"} | mcx) if model == "nano" else ({"clkout"} | (set() if model in ("husky", "huskyplus") else mcx)))
+
+    def _validate_glitch_trig_mcx(self, v):
+        if v not in ("glitch", "trigger", "inverted glitch", "inverted trigger"):
+            raise ValueError("glitch_trig_mcx must be glitch, trigger, inverted glitch or inverted trigger")
+        return v
+
+    def _validate_aux_io_mcx(self, v):
+        if v not in ("high_z", "userio_ck", "hs2"):
+            raise ValueError("aux_io_mcx must be high_z, userio_ck or hs2")
+        return v
 
     def _validate_clkout(self, v):
         from cwstudio.profiles import NANO_BASE_HZ, NANO_DIVISORS
@@ -445,11 +459,15 @@ class SimScope:
     def __init__(self, seed: Optional[int] = None, sim_model: str = "husky"):
         self.sim_model = sim_model  # which ChipWhisperer the simulator stands in for (capabilities.SIM_MODELS); decides which protocols and features Studio offers
         self.sn = "SIM000001"
-        self.fw_version = {"major": 0, "minor": 1, "debug": 0}
+        from cwstudio.profiles import MODEL_PROFILES
+        bundled = (MODEL_PROFILES.get(sim_model) or {}).get("firmware", {}).get("bundled") or "0.1.0"
+        maj, mi, dbg = (int(x) for x in bundled.split("."))
+        self.fw_version = {"major": maj, "minor": mi, "debug": dbg}  # the SAM firmware this library bundles for the model, as a freshly upgraded scope reports
+        self.latest_fw_str = bundled
         self.gain = SimGain()
         self.adc = SimADC(sim_model)
         self.clock = SimClock(husky=sim_model in ("husky", "huskyplus"))
-        self.trigger = SimTrigger()
+        self.trigger = SimTrigger(sim_model)
         self.io = SimIO(sim_model)
         self.glitch = SimGlitch(sim_model)
         if sim_model == "nano":
@@ -572,6 +590,11 @@ class SimScope:
     def con(self, **kwargs):
         self.connectStatus = True
         return True
+
+    def upgrade_firmware(self, fw_path=None):
+        """Flash the library's bundled SAM firmware (the simulated scope just reports it)."""
+        maj, mi, dbg = (int(x) for x in self.latest_fw_str.split("."))
+        self.fw_version = {"major": maj, "minor": mi, "debug": dbg}
 
     def dis(self):
         self.connectStatus = False
@@ -786,17 +809,18 @@ class SimScope:
         f = self._spc() / 4
         return max(2, int(round(40 * f))), max(1.0, 15.0 * f)
 
-    def _background(self, n: int) -> np.ndarray:
-        """Clock ripple + slow envelope for `n` samples (key independent, cached)."""
+    def _background(self, n: int, offset: int = 0) -> np.ndarray:
+        """Clock ripple + slow envelope for `n` samples from `offset` samples after the trigger rise (key independent, cached): a function of absolute time, so a window rendered from before the trigger (the simulated SAD and ADC-level triggers) lines up with a capture that started at the trigger."""
         spc = self._spc()
         bg = self._bg_cache
-        if bg is None or bg.shape[0] != n or getattr(self, "_bg_spc", 4) != spc:
-            t = np.arange(n, dtype=np.float32)
+        if bg is None or bg.shape[0] != n or getattr(self, "_bg_spc", 4) != spc or getattr(self, "_bg_offset", 0) != offset:
+            t = np.arange(offset, offset + n, dtype=np.float32)
             clk = 0.03 * np.sin(2 * np.pi * t / float(spc))  # one ripple period per target clock cycle
             env = 0.02 * np.sin(2 * np.pi * t / (700.0 * spc / 4))
             bg = clk + env
             self._bg_cache = bg
             self._bg_spc = spc
+            self._bg_offset = offset
         return bg
 
     def _leak_geometry(self, n: int, offset: int):
@@ -840,8 +864,8 @@ class SimScope:
         n = int(self.adc.samples) if n is None else int(n)
         gain_scale = (0.6 + self.gain.gain / 78.0) * (1.4 if self.gain.mode == "high" else 0.7)
         # Background: clock ripple + slow envelope + noise
-        wave = self._background(n) + self._rng.normal(0, self.noise, n).astype(np.float32)
         offset = int(self.adc.offset) if offset is None else int(offset)
+        wave = self._background(n, offset) + self._rng.normal(0, self.noise, n).astype(np.float32)
         has_key = bool(pt and key and len(pt) >= 16 and len(key) >= 16)
         geo = self._leak_geometry(n, offset)
         if geo is not None:

@@ -326,7 +326,17 @@ def test_fake_husky_trigger_sequences():
     sc = FakeScope("husky")
     ifc = Interfaces(FakeSession(sc))
     ifc.trigger_configure("sequencer", pins=["tio4", "tio3"], window_start=5, window_end=100)
-    assert sc.log == [("trigger.sequencer_enabled", True), ("trigger.num_triggers", 2), ("trigger.module", ["basic", "basic"]), ("trigger.triggers", ["tio4", "tio3"]), ("trigger.window_start", 5), ("trigger.window_end", 100)]
+    assert sc.log == [("trigger.sequencer_enabled", True), ("trigger.num_triggers", 2), ("trigger.module", ["basic", "basic"]), ("trigger.triggers", ["tio4", "tio3"]), ("trigger.window_start", 5), ("trigger.window_end", 100), ("adc.basic_mode", "rising_edge")]
+    sc.log.clear()
+    # three steps of mixed kinds on a Plus: per-step modules and pin expressions, windows as lists, the UART rule set up alongside
+    plus = FakeScope("huskyplus")
+    ifc2 = Interfaces(FakeSession(plus))
+    ifc2.trigger_configure("sequencer", steps=[{"kind": "basic", "pins": ["tio4"]}, {"kind": "uart_pattern", "pin": "tio1", "pattern": "'r'"}, {"kind": "edge_counter", "pin": "tio3", "edges": 4}], windows=[[1, 50], [0, 0]])
+    d = dict(plus.log)
+    assert d["trigger.num_triggers"] == 3 and d["trigger.module"] == ["basic", "UART", "edge_counter"] and d["trigger.triggers"] == ["tio4", "tio1", "tio3"]
+    assert d["trigger.window_start"] == [1, 0] and d["trigger.window_end"] == [50, 0] and d["trigger.edges"] == 4 and d["UARTTrigger.enabled"] is True
+    with pytest.raises(Unsupported):
+        ifc.trigger_configure("sequencer", steps=[{"kind": "basic", "pins": ["tio4"]}] * 3)  # the Husky has two slots
     sc.log.clear()
     ifc.trigger_configure("basic", pins=["tio1", "tio2"], op="nand", edge="high")
     # the sequencer is turned off first, otherwise the library would treat the trigger string as a per-step list
@@ -356,10 +366,12 @@ def test_fake_sad_reference_per_model():
     sc = FakeScope("husky")
     s = FakeSession(sc)
     s.store = FakeStore([np.linspace(-0.3, 0.3, 600).astype(np.float32)])
-    Interfaces(s).trigger_configure("sad", start=100, threshold=20)
+    Interfaces(s).trigger_configure("sad", start=100, threshold=20, interval=12)
     ref = dict(sc.log)["SAD.reference"]
-    assert isinstance(ref, np.ndarray) and ref.dtype == np.float64 and len(ref) == 500  # the whole tail: the Husky takes twice its length when emode is off
-    assert [p for p, _ in sc.log][-3:] == ["trigger.module", "SAD.reference", "SAD.threshold"]
+    assert isinstance(ref, np.ndarray) and ref.dtype == np.float64 and len(ref) == 128  # what this build compares (sad_reference_length), from the start sample
+    assert [p for p, _ in sc.log][-5:] == ["SAD.emode", "trigger.module", "SAD.reference", "SAD.threshold", "SAD.interval_threshold"]
+    with pytest.raises(ValueError):
+        Interfaces(s).trigger_configure("sad", start=100, threshold=200)  # a 7-bit count on the Husky
     pro = FakeScope("pro")
     s = FakeSession(pro)
     s.store = FakeStore([np.linspace(-0.3, 0.3, 600)])
@@ -403,8 +415,10 @@ def test_fake_userio_mode_written_only_on_change():
     assert sc.log[-1] == ("userio.mode", "fpga_debug")
     with pytest.raises(Unsupported):
         ifc.userio_set(direction=1)  # pins are driven in normal mode only
+    ifc.userio_set(mode="target_debug_swd")  # every mode of the header, for OpenOCD and trace
+    assert sc.log[-1] == ("userio.mode", "target_debug_swd")
     with pytest.raises(Unsupported):
-        ifc.userio_set(mode="target_debug_swd")
+        ifc.userio_set(mode="bogus")
 
 
 def test_fake_gpio_husky_and_nano():

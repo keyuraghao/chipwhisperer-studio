@@ -450,8 +450,8 @@ class Interfaces:
         for name, v in (("direction", direction), ("drive", drive)):
             if v is not None and not 0 <= int(v) <= mx:
                 raise ValueError(f"{name} must be 0 to {mx} ({width} pins)")
-        if mode is not None and mode not in ("normal", "fpga_debug"):
-            raise Unsupported("set the USERIO mode to normal here; JTAG/SWD routing is done by the OpenOCD section and trace by NewAE's trace notebooks")
+        if mode is not None and mode not in c["userio"]["modes"]:
+            raise Unsupported(f"the USERIO mode is one of {', '.join(c['userio']['modes'])}")
         scope = self.s.scope
 
         def _do():
@@ -489,52 +489,78 @@ class Interfaces:
                     out[path] = v if isinstance(v, (str, int, float, type(None))) else str(v)
                 except Exception:  # noqa: BLE001
                     out[path] = None
+            if (self.trigger_state or {}).get("kind") == "uart_pattern" and not self._sim():  # how often each rule matched since the trigger was set: the first thing to look at when it never fires
+                try:
+                    out["uart_matches"] = [int(x) for x in scope.UARTTrigger.matched_pattern_counts]
+                except Exception:  # noqa: BLE001
+                    pass
+            if (self.trigger_state or {}).get("kind") == "edge_counter":
+                try:
+                    out["edges_seen"] = int(scope.trigger.edges_seen)
+                except Exception:  # noqa: BLE001
+                    pass
             return out
         return {"current": self._call(_do), "applied": self.trigger_state}
 
     def trigger_configure(self, kind: str = "basic", **p) -> Dict[str, Any]:
-        """Configure a trigger. kinds: basic, uart_decode (Pro), uart_pattern (Husky), edge_counter, adc_level, sequencer (Husky), sad (Pro, Husky)."""
+        """Configure a trigger. kinds: basic, uart_decode (Pro), uart_pattern (Husky), edge_counter, adc_level, sequencer (Husky: steps of any of the others, each with its own window), sad (Pro, Husky)."""
         if kind not in TRIGGER_KINDS:
             raise ValueError(f"kind must be one of {TRIGGER_KINDS}")
         c = self._gate(what="triggers")
         t = c["triggers"]
         m = c["model"]
-        cap_key = {"basic": "basic", "uart_decode": "uart_decode", "uart_pattern": "uart_pattern", "edge_counter": "edge_counter", "adc_level": "adc_level", "sequencer": "sequencer", "sad": "sad"}[kind]
-        require(t[cap_key], kind.replace("_", " "))
-        basic = t["basic"]
-        pins_ok = basic["pins"]
-
-        def pins_of(v) -> List[str]:
-            ps = [v] if isinstance(v, str) else list(v or [])
-            ps = [x.strip().lower() for x in ps if x and x.strip()]
-            for x in ps:
-                if x not in pins_ok:
-                    raise Unsupported(f"{x} cannot be a trigger input on this ChipWhisperer" + (" (the CW-Nano triggers on TIO4 only)" if m == "nano" else ""))
-            return ps
-
-        def check_pattern(pattern: List[Any], max_value: int = 255) -> List[Any]:
-            if not 1 <= len(pattern) <= 8:
-                raise ValueError("the pattern is 1 to 8 bytes")
-            for b in pattern:
-                if b == "XX" and kind == "uart_decode":
-                    continue
-                if isinstance(b, str) and len(b) == 1:
-                    b = ord(b)
-                if not isinstance(b, int) or isinstance(b, bool) or not 0 <= b <= max_value:
-                    raise ValueError(f"pattern values must be 0 to {max_value} (0x{max_value:x})" + (" or XX" if kind == "uart_decode" else ""))
-            return [ord(b) if isinstance(b, str) and len(b) == 1 else b for b in pattern]
-
-        cfg: Dict[str, Any] = {"kind": kind}
-        sets: List[tuple] = []  # (path, value) applied in order
+        require(t[kind], kind.replace("_", " "))
         scope = self.s.scope
         husky = m in ("husky", "huskyplus")
+        sets: List[tuple] = []  # (path, value) applied in order
         if husky and kind != "sequencer":
             # with the sequencer on, the Husky library treats trigger.triggers and trigger.module as per-step lists, so leave sequencing first
             sets.append(("trigger.sequencer_enabled", False))
-        if husky and kind != "uart_pattern" and (self.trigger_state or {}).get("kind") == "uart_pattern":
+        if husky and (self.trigger_state or {}).get("kind") == "uart_pattern" and kind != "uart_pattern":
             sets.append(("UARTTrigger.enabled", False))  # release the TraceWhisperer hardware the UART trigger borrowed
+        if kind == "sequencer":
+            cfg, step_sets = self._sequencer_cfg(c, p)
+            sets += step_sets
+        else:
+            cfg, step_sets, _module, _expr = self._step_cfg(c, kind, p, single=True)
+            sets += step_sets
+        self._apply_trigger(sets, cfg, m)
+        return {"applied": cfg, **self.trigger_get()}
+
+    # --- one trigger step: validation and the settings it needs ---------------------------
+    def _pins_of(self, c, v) -> List[str]:
+        pins_ok = c["triggers"]["basic"]["pins"]
+        ps = [v] if isinstance(v, str) else list(v or [])
+        ps = [x.strip().lower() for x in ps if x and x.strip()]
+        for x in ps:
+            if x not in pins_ok:
+                raise Unsupported(f"{x} cannot be a trigger input on this ChipWhisperer" + (" (the CW-Nano triggers on TIO4 only)" if c["model"] == "nano" else ""))
+        return ps
+
+    @staticmethod
+    def _check_pattern(kind: str, pattern: List[Any], max_value: int = 255) -> List[Any]:
+        if not 1 <= len(pattern) <= 8:
+            raise ValueError("the pattern is 1 to 8 bytes")
+        for b in pattern:
+            if b == "XX" and kind == "uart_decode":
+                continue
+            if isinstance(b, str) and len(b) == 1:
+                b = ord(b)
+            if not isinstance(b, int) or isinstance(b, bool) or not 0 <= b <= max_value:
+                raise ValueError(f"pattern values must be 0 to {max_value} (0x{max_value:x})" + (" or XX" if kind == "uart_decode" else ""))
+        return [ord(b) if isinstance(b, str) and len(b) == 1 else b for b in pattern]
+
+    def _step_cfg(self, c, kind: str, p: Dict[str, Any], single: bool):
+        """(cfg, sets, module, trigger expression) of one trigger of ``kind``: as the whole trigger when ``single``, else as one step of the sequencer (the module and pin expression go into the per-step lists, the module's own settings are applied as usual)."""
+        t = c["triggers"]
+        m = c["model"]
+        basic = t["basic"]
+        scope = self.s.scope
+        cfg: Dict[str, Any] = {"kind": kind}
+        sets: List[tuple] = []
+        module, expr = "basic", "tio4"
         if kind == "basic":
-            pins = pins_of(p["pins"] if p.get("pins") is not None else "tio4")
+            pins = self._pins_of(c, p["pins"] if p.get("pins") is not None else (p.get("pin") or "tio4"))
             op = str(p.get("op") or "OR").upper()
             if op not in ("OR", "AND", "NAND"):
                 raise ValueError("op must be OR, AND or NAND")
@@ -548,23 +574,25 @@ class Interfaces:
             if edge not in basic["edges"]:
                 raise Unsupported(f"{edge}: " + ("the CW-Nano triggers on a rising edge only" if m == "nano" else "unknown trigger mode"))
             cfg.update(pins=pins, op=op, edge=edge)
-            if m != "nano":
+            expr = f" {op} ".join(pins)
+            if single and m != "nano":
                 if m != "lite":
                     sets.append(("trigger.module", "basic"))
-                sets.append(("trigger.triggers", f" {op} ".join(pins)))
+                sets.append(("trigger.triggers", expr))
                 sets.append(("adc.basic_mode", edge))
         elif kind == "uart_decode":
-            pin = pins_of(p.get("pin") or "tio1")[0]
+            pin = self._pins_of(c, p.get("pin") or "tio1")[0]
             baud = float(p.get("baud") or 38400)
             lo, hi = t["uart_decode"]["baud"]
             if not lo < baud <= hi:
                 raise ValueError(f"baud must be up to {hi:g}")
-            pattern = check_pattern(parse_pattern(p.get("pattern") or "'r'", allow_dontcare=True))
+            pattern = self._check_pattern(kind, parse_pattern(p.get("pattern") or "'r'", allow_dontcare=True))
             cfg.update(pin=pin, baud=baud, pattern=pattern)
-            sets += [("trigger.triggers", pin), ("adc.basic_mode", "rising_edge"), ("trigger.module", "DECODEIO"), ("decode_IO.decode_type", "USART"), ("decode_IO.rx_baud", baud), ("decode_IO.trigger_pattern", pattern)]
+            module, expr = "DECODEIO", pin
+            sets += ([("trigger.triggers", pin), ("adc.basic_mode", "rising_edge"), ("trigger.module", "DECODEIO")] if single else []) + [("decode_IO.decode_type", "USART"), ("decode_IO.rx_baud", baud), ("decode_IO.trigger_pattern", pattern)]
         elif kind == "uart_pattern":
             u = t["uart_pattern"]
-            pin = pins_of(p.get("pin") or "tio1")[0]
+            pin = self._pins_of(c, p.get("pin") or "tio1")[0]
             rule = int(p.get("rule", 0))
             if not 0 <= rule < u["rules"]:
                 raise Unsupported(f"this ChipWhisperer has {u['rules']} UART trigger rules (0 to {u['rules'] - 1})")
@@ -573,15 +601,16 @@ class Interfaces:
             parity = p.get("parity") or "none"
             if data_bits not in u["data_bits"] or stop_bits not in u["stop_bits"] or parity not in u["parity"]:
                 raise ValueError("data bits 5 to 9, stop bits 1 or 2, parity none, odd or even")
-            pattern = check_pattern(parse_pattern(p.get("pattern") or "'r'"), (1 << data_bits) - 1)
+            pattern = self._check_pattern(kind, parse_pattern(p.get("pattern") or "'r'"), (1 << data_bits) - 1)
             baud = int(p.get("baud") or 38400)
             if not 1 <= baud <= 20_000_000:
                 raise ValueError("baud must be 1 to 20000000")
             cfg.update(pin=pin, rule=rule, baud=baud, data_bits=data_bits, stop_bits=stop_bits, parity=parity, pattern=pattern)
-            sets += [("trigger.triggers", pin), ("trigger.module", "UART"), ("UARTTrigger.enabled", True), ("UARTTrigger.baud", baud), ("UARTTrigger.data_bits", data_bits), ("UARTTrigger.stop_bits", stop_bits), ("UARTTrigger.parity", parity),
-                     ("UARTTrigger.set_pattern_match()", (rule, pattern)), ("UARTTrigger.trigger_source", rule)]
+            module, expr = "UART", pin
+            sets += ([("trigger.triggers", pin), ("trigger.module", "UART")] if single else []) + [("UARTTrigger.enabled", True), ("UARTTrigger.baud", baud), ("UARTTrigger.data_bits", data_bits), ("UARTTrigger.stop_bits", stop_bits), ("UARTTrigger.parity", parity),
+                                                                                                      ("UARTTrigger.set_pattern_match()", (rule, pattern)), ("UARTTrigger.trigger_source", rule)]
         elif kind == "edge_counter":
-            pin = pins_of(p.get("pin") or "tio4")[0]
+            pin = self._pins_of(c, p.get("pin") or "tio4")[0]
             edges = int(p.get("edges", 1))
             if not 1 <= edges <= 2 ** 16:
                 raise ValueError("edges must be 1 to 65536")
@@ -589,65 +618,128 @@ class Interfaces:
             if edge not in basic["edges"]:
                 raise ValueError(f"edge must be one of {basic['edges']}")
             cfg.update(pin=pin, edges=edges, edge=edge)
-            sets += [("trigger.triggers", pin), ("trigger.module", "edge_counter"), ("trigger.edges", edges), ("adc.basic_mode", edge)]
+            module, expr = "edge_counter", pin
+            sets += ([("trigger.triggers", pin), ("trigger.module", "edge_counter")] if single else []) + [("trigger.edges", edges)] + ([("adc.basic_mode", edge)] if single else [])
         elif kind == "adc_level":
             level = float(p.get("level", 0.1))
             if not -0.5 <= level <= 0.5:
                 raise ValueError("level must be -0.5 to 0.5")
             cfg.update(level=level)
-            sets += [("trigger.module", "ADC"), ("trigger.level", level)]
-        elif kind == "sequencer":
-            if not p.get("enabled", True):
-                cfg.update(enabled=False)
-                sets += [("trigger.sequencer_enabled", False)]
-            else:
-                pins = pins_of(p.get("pins") or ["tio4", "tio3"])
-                if len(pins) != 2:
-                    raise ValueError("the sequencer here combines two trigger pins (first, then second)")
-                ws, we = int(p.get("window_start", 0)), int(p.get("window_end", 0))
-                for v in (ws, we):
-                    if not 0 <= v < 2 ** 16:
-                        raise ValueError("windows are 0 to 65535 ADC clock cycles")
-                cfg.update(enabled=True, pins=pins, window_start=ws, window_end=we)
-                sets += [("trigger.sequencer_enabled", True), ("trigger.num_triggers", 2), ("trigger.module", ["basic", "basic"]), ("trigger.triggers", pins), ("trigger.window_start", ws), ("trigger.window_end", we)]
+            module = "ADC"
+            sets += ([("trigger.module", "ADC")] if single else []) + [("trigger.level", level)]
         elif kind == "sad":
+            from cwstudio import sadmodel
+            eng = sadmodel.engine(m) or sadmodel.ENGINES["husky"]
             threshold = int(p.get("threshold", 10))
             start = int(p.get("start", 0))
+            trace_i = p.get("trace")
+            trace_i = int(trace_i) if trace_i not in (None, "") else -1
+            emode = bool(p.get("emode", False)) and eng["emode"]
+            interval = int(p.get("interval", 10))
+            mask_text = p.get("mask")
             if m == "pro":
-                max_threshold = 100_000
-            elif self._sim():
-                # the simulator scores SAD as a sum of absolute differences, a much wider range than the hardware counter
-                max_threshold = 2 ** 31
+                max_threshold = eng["threshold_max"]
             else:
                 # Husky / Husky Plus: the hardware caps the threshold at 2**(counter_width-1) (64 on a 7-bit counter);
-                # read it so the error is clear up front instead of failing later at the SAD setter.
+                # read it so the error is clear up front instead of failing later at the SAD setter; the simulator takes the full 7-bit range.
                 width = None
                 try:
                     width = getattr(getattr(scope, "SAD", None), "_sad_counter_width", None)
                 except Exception:  # noqa: BLE001
                     width = None
-                max_threshold = (1 << (int(width) - 1)) if width else 64
+                max_threshold = (1 << (int(width) - 1)) if width else eng["threshold_max"]
             if not 1 <= threshold <= max_threshold:
-                raise ValueError(f"threshold must be 1 to {max_threshold} on {'the Pro' if m == 'pro' else 'this scope'}")
+                raise ValueError(f"threshold must be 1 to {max_threshold} on {'the Pro (sum of absolute differences)' if m == 'pro' else 'this scope (samples allowed to differ by more than the interval)'}")
+            if eng["interval"] and not 1 <= interval <= 255:
+                raise ValueError("the interval threshold is 1 to 255 (8-bit ADC units)")
             if start < 0:
                 raise ValueError("the reference start sample must be 0 or more")
-            cfg.update(threshold=threshold, start=start)
-            sets += [("trigger.module", "SAD"), ("SAD.reference()", start), ("SAD.threshold", threshold)]
+            n_ref = sadmodel.reference_length(m, emode)
+            mask = sadmodel.parse_mask(mask_text, n_ref) if eng["mask"] else None
+            cfg.update(threshold=threshold, start=start, trace=trace_i, samples=n_ref)
+            if eng["interval"]:
+                cfg.update(interval=interval, emode=emode, mask=mask_text or None)
+            module = "SAD"
+            if eng["emode"]:
+                sets.append(("SAD.emode", emode))  # before the reference: the length depends on it
+            sets += ([("trigger.module", "SAD")] if single else []) + [("SAD.reference()", (trace_i, start, n_ref)), ("SAD.threshold", threshold)]
+            if eng["interval"]:
+                sets.append(("SAD.interval_threshold", interval))
+            if eng["mask"] and mask is not None:
+                sets.append(("SAD.enabled_samples", mask))
+        else:
+            raise ValueError(f"{kind} cannot be a trigger step")
+        return cfg, sets, module, expr
+
+    def _sequencer_cfg(self, c, p: Dict[str, Any]):
+        """The Husky trigger sequencer: steps (each a trigger of any kind but sequencer) fired in order, with a window of ADC cycles between consecutive steps. Legacy form: pins (two basic steps) with window_start and window_end."""
+        t = c["triggers"]
+        if not p.get("enabled", True):
+            return {"kind": "sequencer", "enabled": False}, [("trigger.sequencer_enabled", False)]
+        slots = int(t["sequencer"].get("slots") or 2)
+        steps_in = p.get("steps")
+        if steps_in is None:  # legacy: two basic pins in order
+            pins = self._pins_of(c, p.get("pins") or ["tio4", "tio3"])
+            if len(pins) != 2:
+                raise ValueError("the sequencer needs two trigger pins (first, then second) or a list of steps")
+            steps_in = [{"kind": "basic", "pins": [pins[0]]}, {"kind": "basic", "pins": [pins[1]]}]
+            windows_in = [[int(p.get("window_start", 0)), int(p.get("window_end", 0))]]
+        else:
+            windows_in = p.get("windows") or []
+        if not 2 <= len(steps_in) <= slots:
+            raise Unsupported(f"this ChipWhisperer sequences 2 to {slots} triggers")
+        if len(windows_in) < len(steps_in) - 1:
+            windows_in = list(windows_in) + [[0, 0]] * (len(steps_in) - 1 - len(windows_in))
+        windows = []
+        for w in windows_in[:len(steps_in) - 1]:
+            ws, we = (int(w[0]), int(w[1])) if isinstance(w, (list, tuple)) else (0, int(w))
+            for v in (ws, we):
+                if not 0 <= v < 2 ** 16:
+                    raise ValueError("windows are 0 to 65535 ADC clock cycles")
+            windows.append([ws, we])
+        steps, sets, modules, exprs = [], [], [], []
+        for st in steps_in:
+            kind = str((st or {}).get("kind") or "basic")
+            if kind == "sequencer" or kind not in TRIGGER_KINDS:
+                raise ValueError(f"a sequencer step is one of {', '.join(k for k in TRIGGER_KINDS if k != 'sequencer')}")
+            require(t[kind], f"sequencer step {kind.replace('_', ' ')}")
+            cfg_i, sets_i, module, expr = self._step_cfg(c, kind, {k: v for k, v in st.items() if k != "kind"}, single=False)
+            if module != "basic" and module in modules:
+                raise ValueError(f"the {module} module can appear once in a sequence (it has one configuration)")
+            steps.append(cfg_i)
+            sets += sets_i
+            modules.append(module)
+            exprs.append(expr)
+        edge = p.get("edge") or next((s.get("edge") for s in steps if s.get("edge")), "rising_edge")
+        cfg = {"kind": "sequencer", "enabled": True, "steps": steps, "windows": windows, "edge": edge, "pins": [s.get("pins", [s.get("pin")])[0] if s.get("pins") or s.get("pin") else None for s in steps]}
+        # the library's window setters take one value for a two-step sequence and a list per transition for longer ones
+        ws_val = [w[0] for w in windows] if len(windows) > 1 else windows[0][0]
+        we_val = [w[1] for w in windows] if len(windows) > 1 else windows[0][1]
+        sets += [("trigger.sequencer_enabled", True), ("trigger.num_triggers", len(steps)), ("trigger.module", modules), ("trigger.triggers", exprs),
+                 ("trigger.window_start", ws_val), ("trigger.window_end", we_val), ("adc.basic_mode", edge)]
+        if "SAD" in modules:
+            sets.append(("trigger.sad_always_active", bool(p.get("sad_always_active", False))))
+        return cfg, sets
+
+    def _apply_trigger(self, sets: List[tuple], cfg: Dict[str, Any], m: str):
+        scope = self.s.scope
 
         def _apply():
             sim = self._sim()
             for path, value in sets:
                 if sim:
                     if path == "SAD.reference()":  # the simulated SAD trigger compares against this (none yet: it triggers on TIO4 and says so)
-                        from cwstudio.simtrigger import SAD_LENGTH
-                        n = SAD_LENGTH.get(m, 32)
+                        trace_i, start, n = value
                         try:
-                            ref = self._reference_trace()[value:value + n]
+                            ref = self._reference_trace(trace_i)[start:start + n]
                         except RuntimeError:
                             ref = None
                         if ref is not None and len(ref) < n:
-                            raise ValueError(f"the SAD reference needs {n} samples from sample {value}; capture a longer trace or start earlier")
+                            raise ValueError(f"the SAD reference needs {n} samples from sample {start}; capture a longer trace or start earlier")
                         scope._sim_sad_ref = ref
+                        scope._sim_sad_mask = None
+                    if path == "SAD.enabled_samples":
+                        scope._sim_sad_mask = value
                     if path in ("trigger.module", "trigger.triggers", "adc.basic_mode") and not isinstance(value, list):
                         obj, _, attr = path.partition(".")
                         setattr(getattr(scope, obj), attr, value)
@@ -656,11 +748,13 @@ class Interfaces:
                     scope.UARTTrigger.set_pattern_match(value[0], value[1])
                     continue
                 if path == "SAD.reference()":
-                    wave = self._reference_trace()
-                    n = 128 if m == "pro" else int(getattr(scope.SAD, "sad_reference_length", 128))
-                    ref = wave[value:value + n] if m == "pro" else wave[value:]  # the Pro takes exactly 128 samples; the Husky takes what it needs (twice its length when emode is off)
+                    trace_i, start, n = value
+                    wave = self._reference_trace(trace_i)
+                    if m != "pro":
+                        n = int(getattr(scope.SAD, "sad_reference_length", n) or n)  # what this build compares (doubles in extended mode)
+                    ref = wave[start:start + n]
                     if len(ref) < n:
-                        raise ValueError(f"the SAD reference needs {n} samples from sample {value}; capture a longer trace or start earlier")
+                        raise ValueError(f"the SAD reference needs {n} samples from sample {start}; capture a longer trace or start earlier")
                     scope.SAD.reference = ref
                     continue
                 obj = scope
@@ -674,16 +768,87 @@ class Interfaces:
         self.trigger_state = cfg
         log.info("Trigger configured: %s", ", ".join(f"{k}={v}" for k, v in cfg.items()))
         self.s.bus.publish("setting", {"target": "scope", "path": "trigger", "value": dict(cfg)})
-        return {"applied": cfg, **self.trigger_get()}
 
-    def _reference_trace(self):
+    def _reference_trace(self, index: int = -1):
+        """Stored trace ``index`` (negative counts from the newest), or the scope's last trace when nothing is stored."""
         import numpy as np
-        if len(self.s.store):
-            return np.asarray(self.s.store.waves[-1], dtype=float)
+        n = len(self.s.store)
+        if n:
+            i = index if index >= 0 else n + index
+            if not 0 <= i < n:
+                raise ValueError(f"trace {index} does not exist ({n} traces stored)")
+            return np.asarray(self.s.store.waves[i], dtype=float)
         w = self.s.scope.get_last_trace()
         if w is None or not len(w):
-            raise RuntimeError("capture a trace first: the SAD reference is cut from the newest trace")
+            raise RuntimeError("capture a trace first: the SAD reference is cut from a stored trace")
         return np.asarray(w, dtype=float)
+
+    def sad_preview(self, trace: int = -1, start: int = 0, threshold: int = 10, interval: int = 10, emode: bool = False, mask: Optional[str] = None, traces: int = 200) -> Dict[str, Any]:
+        """Score the reference (stored trace ``trace`` from ``start``) over the stored traces exactly as the connected model's SAD engine would, offline: where it fires, on how many traces, and a threshold suggestion. No hardware access."""
+        import numpy as np
+        from cwstudio import sadmodel
+        c = self._gate(what="triggers")
+        require(c["triggers"]["sad"], "SAD trigger")
+        m = c["model"]
+        n_ref = sadmodel.reference_length(m, bool(emode))
+        ref = self._reference_trace(int(trace))[int(start):int(start) + n_ref]
+        if len(ref) < n_ref:
+            raise ValueError(f"the SAD reference needs {n_ref} samples from sample {start}; capture a longer trace or start earlier")
+        msk = sadmodel.parse_mask(mask, n_ref) if sadmodel.engine(m)["mask"] else None
+        total = len(self.s.store)
+        step = max(1, total // max(1, int(traces)))
+        with self.s.store._lock:
+            waves = [np.asarray(self.s.store.waves[i], np.float64) for i in range(0, total, step)]
+        out = sadmodel.preview(waves, np.asarray(ref, np.float64), m, int(threshold), int(interval), msk, expected=int(start))
+        out.update(engine=sadmodel.engine(m), start=int(start), trace=int(trace), sampled_every=step)
+        return out
+
+    # --- trigger and clock outputs (Pro AUX SMA, Husky MCX ports) ------------------------
+    _OUTPUT_PATHS = {"pro": {"aux": "trigger.aux_out"}, "husky": {"trig_mcx": "io.glitch_trig_mcx", "aux_mcx": "io.aux_io_mcx"}}
+    _OUTPUT_CHOICES = {"trigger.aux_out": [True, False], "io.glitch_trig_mcx": ["glitch", "trigger", "inverted glitch", "inverted trigger"], "io.aux_io_mcx": ["high_z", "userio_ck", "hs2"]}
+
+    def outputs_get(self) -> Dict[str, Any]:
+        """What the model's trigger and clock output ports carry; a soft {available: False} when no scope is connected or the model has no output ports, so a background poll never errors."""
+        from cwstudio.capabilities import cached_capabilities, model_of
+        if self.s.scope is None:
+            return {"available": False, "reason": "connect a scope first", "ports": {}}
+        c = cached_capabilities(self.s.scope) or self._gate(what="triggers")
+        if not c.get("model"):
+            return {"available": False, "reason": c.get("reason") or "this scope has no trigger or clock output ports", "ports": {}}
+        entry = c["triggers"].get("outputs") or {}
+        m = c["model"]
+        paths = self._OUTPUT_PATHS.get("husky" if m in ("husky", "huskyplus") else m, {})
+        if not entry.get("available"):
+            return {"available": False, "reason": entry.get("reason"), "ports": {}}
+        scope = self.s.scope
+
+        def _do():
+            out = {}
+            for port, path in paths.items():
+                obj, _, attr = path.partition(".")
+                try:
+                    v = getattr(getattr(scope, obj), attr)
+                except Exception:  # noqa: BLE001
+                    v = None
+                out[port] = {"path": path, "value": v if isinstance(v, (str, bool, int, float, type(None))) else str(v), "choices": self._OUTPUT_CHOICES[path]}
+            return out
+        return {"available": True, "reason": None, "ports": self._call(_do)}
+
+    def outputs_set(self, port: str, value: Any) -> Dict[str, Any]:
+        c = self._gate(what="triggers")
+        require(c["triggers"].get("outputs") or {}, "trigger outputs")
+        m = c["model"]
+        paths = self._OUTPUT_PATHS.get("husky" if m in ("husky", "huskyplus") else m, {})
+        if port not in paths:
+            raise Unsupported(f"this ChipWhisperer has no {port} output (it has {', '.join(paths) or 'none'})")
+        path = paths[port]
+        choices = self._OUTPUT_CHOICES[path]
+        if isinstance(value, str) and value.lower() in ("true", "false") and True in choices:
+            value = value.lower() == "true"
+        if value not in choices:
+            raise ValueError(f"{port} takes one of {choices}")
+        self.s.set_scope_setting(path, value)
+        return self.outputs_get()
 
     # --- bit-banger and 1-Wire -----------------------------------------------------------
     def _bb_pins(self, c, data_pin: str, clock_pin: str):
@@ -904,7 +1069,7 @@ def register_routes(app, session) -> None:
 
     @app.put("/api/interfaces/userio")
     async def userio_put(req: Request):
-        """Body: direction (bit mask, 1 = driven by the Husky), drive (bit mask), mode (normal, or fpga_debug)."""
+        """Body: direction (bit mask, 1 = driven by the Husky), drive (bit mask), mode (normal, fpga_debug, trace, target_debug_jtag, target_debug_swd)."""
         p = await body(req)
         return await run(ifc.userio_set, **pick(p, "direction", "drive", "mode"))
 
@@ -914,10 +1079,27 @@ def register_routes(app, session) -> None:
 
     @app.put("/api/interfaces/trigger")
     async def trigger_put(req: Request):
-        """Body: kind (basic, uart_decode, uart_pattern, edge_counter, adc_level, sequencer, sad) plus its parameters."""
+        """Body: kind (basic, uart_decode, uart_pattern, edge_counter, adc_level, sequencer, sad) plus its parameters. sad: trace (stored trace index, -1 newest), start, threshold, and on a Husky interval, emode and mask ("0-99,150-255")."""
         p = await body(req)
         kind = str(p.pop("kind", "basic"))
         return await run(ifc.trigger_configure, kind, **p)
+
+    @app.post("/api/interfaces/trigger/sad/preview")
+    async def trigger_sad_preview(req: Request):
+        """Score a SAD reference over the stored traces offline, as the model's engine would: where it fires, on how many traces, and a threshold suggestion. Body: trace, start, threshold, interval, emode, mask, traces (how many to sample)."""
+        p = await body(req)
+        return await run(lambda: ifc.sad_preview(**pick(p, "trace", "start", "threshold", "interval", "emode", "mask", "traces")))
+
+    @app.get("/api/interfaces/outputs")
+    async def outputs_get():
+        """The trigger and clock output ports (Pro AUX SMA, Husky TRIG/GLITCH and AUX MCX) and what they carry."""
+        return await run(ifc.outputs_get)
+
+    @app.put("/api/interfaces/outputs")
+    async def outputs_put(req: Request):
+        """Body: port (aux, trig_mcx, aux_mcx), value."""
+        p = await body(req)
+        return await run(ifc.outputs_set, str(p.get("port", "")), p.get("value"))
 
     @app.post("/api/interfaces/bitbang")
     async def bitbang(req: Request):

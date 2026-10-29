@@ -22,19 +22,67 @@ MODELS: Dict[str, Dict[str, Any]] = {
     "invsbox_hw": {"label": "HW of inverse SBox output (decryption, round 1)", "uses": "textin"},
     "lastround_hd": {"label": "HD of last round state (hardware AES, uses ciphertext)", "uses": "textout"},
     "lastround_hw": {"label": "HW of last round SBox input (uses ciphertext)", "uses": "textout"},
+    "sbox_lsb": {"label": "Bit 0 of SBox output (round 1, single-bit DPA style)", "uses": "textin"},
+    "sbox_msb": {"label": "Bit 7 of SBox output (round 1, single-bit DPA style)", "uses": "textin"},
+    "aes256_round2_hw": {"label": "AES-256: HW of round 2 SBox output (second key half; needs the first 16 key bytes known)", "uses": "textin", "needs_known_key": True},
+    "custom": {"label": "Custom numpy expression over tin, tout, b and g (see help)", "uses": "textin", "custom": True},
 }
+CUSTOM_HELP = "A numpy expression giving an (N, 256) hypothesis matrix: tin and tout are the (N, 16) uint8 plaintexts and ciphertexts, b the key byte index, g the (1, 256) row of guesses, and HW, SBOX, INV_SBOX, INV_SHIFT the AES tables. Example: HW[SBOX[tin[:, b][:, None] ^ g]]"
 
 GUESSES = np.arange(256, dtype=np.uint8)
+
+
+def _aes_round1_state(tin: np.ndarray, rk0: bytes) -> np.ndarray:
+    """The AES state after round 1 (SubBytes, ShiftRows, MixColumns) under round key 0, before AddRoundKey with round key 1: what AES-256's second key half is XORed into. Vectorised over the (N, 16) plaintexts."""
+    from cwstudio.aes import _MUL2, _MUL3, _SHIFT_ROWS
+    mul2, mul3 = np.asarray(_MUL2, np.uint8), np.asarray(_MUL3, np.uint8)
+    s = SBOX[tin ^ np.frombuffer(bytes(rk0[:16]), np.uint8)[None, :]]
+    s = s[:, _SHIFT_ROWS]
+    out = np.empty_like(s)
+    for c in range(0, 16, 4):
+        a0, a1, a2, a3 = s[:, c], s[:, c + 1], s[:, c + 2], s[:, c + 3]
+        out[:, c] = mul2[a0] ^ mul3[a1] ^ a2 ^ a3
+        out[:, c + 1] = a0 ^ mul2[a1] ^ mul3[a2] ^ a3
+        out[:, c + 2] = a0 ^ a1 ^ mul2[a2] ^ mul3[a3]
+        out[:, c + 3] = mul3[a0] ^ a1 ^ a2 ^ mul2[a3]
+    return out
 
 # Elements (float64) per block when turning the CPA sums into |corr|; 256 KiB-ish blocks stay in cache.
 _REPORT_BLOCK = 1 << 15
 
 
-def hypotheses(model: str, tin: np.ndarray, tout: np.ndarray, b: int, dtype=np.float32) -> np.ndarray:
-    """Return a (n_traces, 256) matrix of hypothetical leakage for byte b, in ``dtype`` (one conversion from the uint8 tables instead of two)."""
+def hypotheses(model: str, tin: np.ndarray, tout: np.ndarray, b: int, dtype=np.float32, params: Optional[Dict[str, Any]] = None) -> np.ndarray:
+    """Return a (n_traces, 256) matrix of hypothetical leakage for byte b, in ``dtype`` (one conversion from the uint8 tables instead of two). ``params`` carries the custom expression or the known first key half."""
+    params = params or {}
     if model == "sbox_hw":
         x = tin[:, b][:, None] ^ GUESSES[None, :]
         return HW[SBOX[x]].astype(dtype)
+    if model in ("sbox_lsb", "sbox_msb"):
+        x = SBOX[tin[:, b][:, None] ^ GUESSES[None, :]]
+        return ((x >> (0 if model == "sbox_lsb" else 7)) & 1).astype(dtype)
+    if model == "aes256_round2_hw":
+        rk0 = params.get("known_key")
+        if rk0 is None or len(rk0) < 16:
+            raise ValueError("the AES-256 round 2 model needs the first 16 key bytes as the known key (recover them with sbox_hw first)")
+        st = params.get("_round1_state")
+        if st is None or st.shape[0] != tin.shape[0]:
+            st = _aes_round1_state(tin, bytes(rk0))
+        return HW[SBOX[st[:, b][:, None] ^ GUESSES[None, :]]].astype(dtype)
+    if model == "custom":
+        expr = str(params.get("expr") or "").strip()
+        if not expr:
+            raise ValueError("the custom model needs an expression: " + CUSTOM_HELP)
+        from cwstudio.aes import INV_SHIFT as _INV_SHIFT
+        env = {"np": np, "HW": HW, "SBOX": SBOX, "INV_SBOX": INV_SBOX, "INV_SHIFT": _INV_SHIFT, "tin": tin, "tout": tout, "b": int(b), "g": GUESSES[None, :], "__builtins__": {"abs": abs, "min": min, "max": max, "int": int, "range": range}}
+        try:
+            out = np.asarray(eval(expr, env), dtype=np.float64)  # noqa: S307  the user's own machine and their own expression, like a notebook cell
+        except ValueError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"the custom expression failed ({type(e).__name__}: {e}). {CUSTOM_HELP}") from e
+        if out.shape != (tin.shape[0], 256):
+            raise ValueError(f"the expression gave shape {out.shape}, not (N, 256)")
+        return out.astype(dtype)
     if model == "ptkey_hw":
         x = tin[:, b][:, None] ^ GUESSES[None, :]
         return HW[x].astype(dtype)
@@ -141,11 +189,20 @@ class CPAAttack:
     def __init__(self, waves: np.ndarray, tin: np.ndarray, tout: np.ndarray, model: str = "sbox_hw",
                  point_range: Optional[tuple] = None, report_every: int = 50,
                  known_key: Optional[bytes] = None, callback: Optional[Callable[[CPAResult], None]] = None,
-                 bytes_to_attack: Optional[List[int]] = None):
+                 bytes_to_attack: Optional[List[int]] = None, params: Optional[Dict[str, Any]] = None):
         self.waves = waves
         self.tin = tin
         self.tout = tout
         self.model = model
+        self.params: Dict[str, Any] = dict(params or {})
+        if model == "aes256_round2_hw":
+            if known_key is None or len(known_key) < 16:
+                raise ValueError("the AES-256 round 2 model needs the first 16 key bytes as the known key (recover them with sbox_hw first)")
+            self.params["known_key"] = bytes(known_key[:16])
+            self.params["_round1_state"] = _aes_round1_state(tin, bytes(known_key[:16]))
+            known_key = bytes(known_key[16:32]) if len(known_key) >= 32 else None  # the PGE of the second half, when the whole key is known
+        if model == "custom":
+            hypotheses(model, tin[:2] if tin.shape[0] >= 2 else tin, tout[:2] if tout.shape[0] >= 2 else tout, 0, np.float32, self.params)  # fail now, with the message, not inside the thread
         if point_range:
             lo, hi = int(point_range[0]), int(point_range[1])
             self.lo, self.hi = max(0, lo), min(waves.shape[1], hi if hi > 0 else waves.shape[1])
@@ -224,8 +281,11 @@ class CPAAttack:
             sum_t += W.sum(axis=0, dtype=np.float64)
             sum_t2 += (W * W).sum(axis=0, dtype=np.float64)
             tin, tout = self.tin[start:end], self.tout[start:end]
+            if "_round1_state" in self.params:
+                self.params["_round1_state_chunk"] = self.params["_round1_state"][start:end]
+            prm = dict(self.params, _round1_state=self.params.get("_round1_state_chunk")) if "_round1_state" in self.params else self.params
             for i, b in enumerate(self.bytes_to_attack):
-                H = xp.asarray(hypotheses(self.model, tin, tout, b, fdt))
+                H = xp.asarray(hypotheses(self.model, tin, tout, b, fdt, prm))
                 sum_h[i] += H.sum(axis=0, dtype=np.float64)
                 sum_h2[i] += (H * H).sum(axis=0, dtype=np.float64)
                 xp.matmul(H.T, W, out=prod)

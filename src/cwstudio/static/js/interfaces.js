@@ -1,5 +1,5 @@
 // Interfaces tab: UART, SimpleSerial, SPI, GPIO and USERIO, triggers, bit-banger and 1-Wire, JTAG/SWD through OpenOCD, Arm trace. Every section and choice follows GET /api/capabilities: what the connected ChipWhisperer (or the simulator's model) cannot do stays visible but disabled, with the reason as a hint.
-import { h, get, post, put, toast, fmtClock } from './api.js';
+import { h, get, post, put, toast, fmtClock, fmtNum } from './api.js';
 
 const LS = (k, d) => { try { const v = localStorage.getItem('cw.iface.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
 const SAVE = (k, v) => { try { localStorage.setItem('cw.iface.' + k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } };
@@ -239,9 +239,12 @@ export function initInterfaces(ctx, el) {
   const uio = section('Husky USERIO', 'D0-D7 and CK');
   const uioGrid = h('div', { class: 'uio-grid' });
   const uioMode = h('span', { class: 'code' }, '-');
+  const uioModeSel = h('select', {});
+  uioModeSel.addEventListener('change', () => uioSet({ mode: uioModeSel.value }));
   let uioState = { direction: 0, drive: 0, status: 0, pins: [] };
   function renderUio(u) {
     uioState = u; uioMode.textContent = u.mode;
+    uioModeSel.innerHTML = ''; (u.modes || ['normal']).forEach((m) => uioModeSel.append(h('option', { value: m, selected: m === u.mode }, m)));
     uioGrid.innerHTML = '';
     u.pins.forEach((p, i) => {
       const bit = 1 << i, out = !!(u.direction & bit), drv = !!(u.drive & bit), lvl = (u.status >> i) & 1;
@@ -253,7 +256,7 @@ export function initInterfaces(ctx, el) {
   }
   async function uioSet(chg) { try { renderUio(await put('/api/interfaces/userio', Object.assign({ mode: 'normal' }, chg))); } catch (e) { toast(errMsg(e), 'err'); } }
   async function uioRead() { try { renderUio(await get('/api/interfaces/userio')); } catch (e) { /* section gated */ } }
-  uio.body.append(h('div', { class: 'row' }, h('label', {}, 'Mode'), uioMode, h('button', { class: 'btn sm', onclick: () => uioSet({}) }, 'Set normal'), h('button', { class: 'btn sm', onclick: uioRead }, 'Read')), uioGrid,
+  uio.body.append(h('div', { class: 'row' }, h('label', {}, 'Mode'), uioMode, uioModeSel, h('button', { class: 'btn sm', onclick: () => uioSet({ mode: 'normal' }) }, 'Set normal'), h('button', { class: 'btn sm', onclick: uioRead }, 'Read')), uioGrid,
     h('div', { class: 'help' }, 'Direction and drive apply in normal mode. The live switch of the GPIO section refreshes these levels too.'));
 
   // ---------- triggers ----------
@@ -278,8 +281,36 @@ export function initInterfaces(ctx, el) {
   const tWs = h('input', { type: 'number', value: 0, min: 0, max: 65535, style: 'width:90px' });
   const tWe = h('input', { type: 'number', value: 0, min: 0, max: 65535, style: 'width:90px' });
   const tSeqOn = h('input', { type: 'checkbox', checked: true });
+  const seqRows = h('div');
+  function seqParams() {
+    const rows = [...seqRows.querySelectorAll('.seq-step')];
+    const steps = rows.map((r) => {
+      const [kSel, pSel] = r.querySelectorAll('select'); const val = r.querySelector('input.mono');
+      const k = kSel.value;
+      if (k === 'basic') return { kind: k, pins: [pSel.value], edge: edgeSel.value };
+      if (k === 'uart_pattern') return { kind: k, pin: pSel.value, pattern: val.value || "'r'", baud: +tBaud.value };
+      if (k === 'edge_counter') return { kind: k, pin: pSel.value, edges: +val.value || 1, edge: edgeSel.value };
+      if (k === 'adc_level') return { kind: k, level: +val.value || 0.1 };
+      return { kind: k, threshold: +val.value || +tThr.value, trace: +tTrace.value, start: +tStart.value, interval: +tInterval.value, emode: tEmode.checked, mask: tMask.value || null };
+    });
+    const windows = rows.slice(0, -1).map((r) => { const [a, b] = r.querySelectorAll('.seq-win input'); return [+a.value || 0, +b.value || 0]; });
+    return { kind: 'sequencer', enabled: tSeqOn.checked, steps, windows, edge: edgeSel.value };
+  }
   const tThr = h('input', { type: 'number', value: 10, min: 0, class: 'flex' });
   const tStart = h('input', { type: 'number', value: 0, min: 0, class: 'flex' });
+  const tTrace = h('input', { type: 'number', value: -1, class: 'flex', title: 'stored trace the reference is cut from (-1 = newest)' });
+  const tInterval = h('input', { type: 'number', value: 10, min: 1, max: 255, class: 'flex', title: 'a sample counts as different when it differs by more than this (8-bit ADC units)' });
+  const tEmode = h('input', { type: 'checkbox', title: 'extended mode: 512 reference samples instead of 256' });
+  const tMask = h('input', { class: 'flex mono', placeholder: 'samples that count, e.g. 0-99,150-255 (blank = all)' });
+  const sadPreview = h('div', { class: 'help mono' });
+  async function sadPreviewRun() {
+    sadPreview.textContent = 'scoring...';
+    try {
+      const r = await post('/api/interfaces/trigger/sad/preview', { trace: +tTrace.value, start: +tStart.value, threshold: +tThr.value, interval: +tInterval.value, emode: tEmode.checked, mask: tMask.value || null });
+      const pct = r.traces ? Math.round(100 * r.fires / r.traces) : 0;
+      sadPreview.textContent = `${r.reference_samples} reference samples, ${r.mode === 'sum' ? 'sum of differences' : 'samples over the interval'}: fires on ${r.fires} of ${r.traces} traces (${pct} %)` + (r.on_time != null ? `, ${r.on_time} at the reference position` : '') + (r.score_min != null ? ` · best scores ${fmtNum(Math.round(r.score_min))} to ${fmtNum(Math.round(r.score_max))} (median ${fmtNum(Math.round(r.score_median))}); a threshold of ${fmtNum(r.suggested_threshold)} would catch every trace` : '');
+    } catch (e) { sadPreview.textContent = errMsg(e); }
+  }
   function trigFormFor(kind) {
     trigForm.innerHTML = '';
     const pins = ((caps.triggers || {}).basic || {}).pins || [];
@@ -312,10 +343,38 @@ export function initInterfaces(ctx, el) {
     } else if (kind === 'adc_level') {
       trigForm.append(h('div', { class: 'row' }, h('label', {}, 'Level'), tLevel), h('div', { class: 'help' }, 'Triggers when the measured signal crosses this level (-0.5 to 0.5, like trace values).'));
     } else if (kind === 'sequencer') {
-      fillPins(tPin, 'tio4'); fillPins(tPin2, 'tio3');
-      trigForm.append(h('div', { class: 'row' }, h('label', {}, tSeqOn, ' enabled')), h('div', { class: 'row' }, h('label', {}, 'First'), tPin, h('label', {}, 'then'), tPin2), h('div', { class: 'row' }, h('label', {}, 'Window'), tWs, h('span', { class: 'muted' }, 'to'), tWe, h('span', { class: 'muted' }, 'ADC cycles (0 = no limit)')));
+      const seq = (caps.triggers || {}).sequencer || {};
+      const slots = seq.slots || 2, kinds = seq.steps || ['basic'];
+      seqRows.innerHTML = '';
+      const addStep = (kind0, pin0) => {
+        if (seqRows.querySelectorAll('.seq-step').length >= slots) return;
+        const kSel = h('select', {}, ...kinds.map((k) => h('option', { value: k, selected: k === kind0 }, { basic: 'pin edge', uart_pattern: 'UART pattern', edge_counter: 'edge counter', adc_level: 'ADC level', sad: 'SAD match' }[k] || k)));
+        const pSel = h('select', {}); fillPins(pSel, pin0);
+        const val = h('input', { class: 'flex mono', style: 'width:120px' });
+        const hint = h('span', { class: 'muted' });
+        const win = h('div', { class: 'row seq-win' }, h('span', { class: 'muted' }, 'then within'), h('input', { type: 'number', value: 0, min: 0, max: 65535, style: 'width:80px', title: 'minimum ADC cycles after the previous step' }), h('span', { class: 'muted' }, 'to'), h('input', { type: 'number', value: 0, min: 0, max: 65535, style: 'width:80px', title: 'maximum ADC cycles (0 = no limit)' }), h('span', { class: 'muted' }, 'cycles'));
+      const row = h('div', { class: 'seq-step' }, h('div', { class: 'row' }, kSel, pSel, val, hint, h('button', { class: 'btn sm', title: 'Remove', onclick: () => { row.remove(); refreshSeq(); }, html: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>' })), win);
+        const refreshRow = () => {
+          const k = kSel.value;
+          pSel.style.display = k === 'adc_level' || k === 'sad' ? 'none' : '';
+          val.style.display = k === 'basic' ? 'none' : '';
+          val.placeholder = { uart_pattern: "pattern, e.g. 'r'", edge_counter: 'edges', adc_level: 'level -0.5..0.5', sad: 'threshold' }[k] || '';
+          hint.textContent = { basic: 'edge from Mode below', uart_pattern: 'at the UART baud below', edge_counter: 'edges on the pin', adc_level: 'first crossing', sad: 'reference from the SAD form (trace, start, interval)' }[k] || '';
+        };
+        kSel.addEventListener('change', refreshRow); refreshRow();
+        seqRows.append(row); refreshSeq();
+      };
+      const refreshSeq = () => { const rows = [...seqRows.querySelectorAll('.seq-step')]; rows.forEach((r, i) => { r.querySelector('.seq-win').style.display = i < rows.length - 1 ? '' : 'none'; }); seqAdd.disabled = rows.length >= slots; };
+      const seqAdd = h('button', { class: 'btn sm', onclick: () => addStep('basic', 'tio3') }, '+ step');
+      addStep('basic', 'tio4'); addStep('basic', 'tio3');
+      trigForm.append(h('div', { class: 'row' }, h('label', {}, tSeqOn, ' enabled'), h('span', { class: 'muted' }, `up to ${slots} steps in order`)), seqRows, h('div', { class: 'row' }, seqAdd, h('label', {}, 'Mode'), edgeSel, h('label', {}, 'Baud'), tBaud),
+        h('div', { class: 'help' }, 'Each step is a trigger of its own; the capture starts when the last one fires inside its window after the previous one. A SAD step uses the reference settings of the SAD form (trace, start, interval, mask).'));
     } else if (kind === 'sad') {
-      trigForm.append(h('div', { class: 'row' }, h('label', {}, 'From sample'), tStart, h('label', {}, 'Threshold'), tThr), h('div', { class: 'help' }, 'The reference is cut from the newest trace, starting at this sample (128 samples on the Pro).'));
+      const husky = caps.model === 'husky' || caps.model === 'huskyplus';
+      trigForm.append(h('div', { class: 'row' }, h('label', {}, 'Trace'), tTrace, h('label', {}, 'From sample'), tStart), h('div', { class: 'row' }, h('label', {}, 'Threshold'), tThr, ...(husky ? [h('label', {}, 'Interval'), tInterval, h('label', {}, tEmode, ' extended')] : [])));
+      if (husky) trigForm.append(h('div', { class: 'row' }, h('label', {}, 'Mask'), tMask));
+      trigForm.append(h('div', { class: 'help' }, husky ? 'The Husky compares 256 samples (512 extended) of the reference at 8 bits and fires when at most Threshold samples differ by more than Interval; the mask leaves samples out of the count.' : 'The Pro sums the absolute differences over 128 samples at 10 bits and fires when the sum is under Threshold.'),
+        h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: sadPreviewRun, title: 'score the reference over the stored traces offline, as the hardware would' }, 'Preview on stored traces')), sadPreview);
     }
     const entry = (caps.triggers || {})[kind] || NO_SCOPE;
     trigForm.querySelectorAll('input,select').forEach((e) => { if (!entry.available) e.disabled = true; else if (!e.dataset.pin && !e.classList.contains('gated')) e.disabled = false; });
@@ -327,12 +386,14 @@ export function initInterfaces(ctx, el) {
     if (k === 'uart_pattern') return { kind: k, pin: tPin.value, baud: +tBaud.value, pattern: tPattern.value, rule: +tRule.value, data_bits: +tData.value, stop_bits: +tStop.value, parity: tParity.value };
     if (k === 'edge_counter') return { kind: k, pin: tPin.value, edges: +tEdges.value, edge: edgeSel.value };
     if (k === 'adc_level') return { kind: k, level: +tLevel.value };
-    if (k === 'sequencer') return { kind: k, enabled: tSeqOn.checked, pins: [tPin.value, tPin2.value], window_start: +tWs.value, window_end: +tWe.value };
-    return { kind: k, threshold: +tThr.value, start: +tStart.value };
+    if (k === 'sequencer') return seqParams();
+    return { kind: k, threshold: +tThr.value, start: +tStart.value, trace: +tTrace.value, interval: +tInterval.value, emode: tEmode.checked, mask: tMask.value || null };
   }
   function trigSummary(t) {
     const c = (t && t.current) || {};
-    const s = c['trigger.module'] ? `module ${c['trigger.module']}, ${c['trigger.triggers'] || '-'}, ${c['adc.basic_mode'] || '-'}` : '';
+    let s = c['trigger.module'] ? `module ${c['trigger.module']}, ${c['trigger.triggers'] || '-'}, ${c['adc.basic_mode'] || '-'}` : '';
+    if (s && c.uart_matches) s += ` · rule matches ${c.uart_matches.join('/')}`;
+    if (s && c.edges_seen != null) s += ` · ${c.edges_seen} edges seen`;
     trigNow.textContent = s ? 'Active: ' + s : '';
     ctx.emit('trigger-summary', s ? `Trigger: ${s}` : '');
   }
@@ -350,6 +411,24 @@ export function initInterfaces(ctx, el) {
   kindSel.addEventListener('change', () => { trigFormFor(kindSel.value); gateTrigApply(); });
   trig.body.append(h('div', { class: 'row' }, h('label', {}, 'Type'), kindSel), trigForm,
     h('div', { class: 'row' }, trigApplyBtn, h('button', { class: 'link', onclick: () => ctx.showTab('scope') }, 'all trigger settings in the Scope tab')), trigNow);
+
+  // ---------- trigger and clock outputs ----------
+  const outs = section('Trigger and clock outputs', 'what the AUX and TRIG ports carry');
+  const outsBody = h('div');
+  async function outsLoad() {
+    outsBody.innerHTML = '';
+    try {
+      const r = await get('/api/interfaces/outputs');
+      if (!r.available) { outsBody.append(h('div', { class: 'help' }, r.reason || '')); return; }
+      Object.entries(r.ports).forEach(([port, p]) => {
+        const sel = h('select', {}, ...p.choices.map((c) => h('option', { value: String(c), selected: String(c) === String(p.value) }, String(c))));
+        sel.addEventListener('change', async () => { try { await put('/api/interfaces/outputs', { port, value: sel.value }); toast(`${port} set`, 'ok'); } catch (e) { toast(errMsg(e), 'err', 6000); } });
+        outsBody.append(h('div', { class: 'row' }, h('label', { title: p.path }, { aux: 'AUX SMA trigger out', trig_mcx: 'TRIG / GLITCH OUT MCX', aux_mcx: 'AUX MCX' }[port] || port), sel));
+      });
+    } catch (e) { outsBody.append(h('div', { class: 'help' }, errMsg(e))); }
+  }
+  outs.body.append(outsBody, h('div', { class: 'help' }, 'The Pro exports its trigger on the AUX SMA; the Husky routes the trigger or the glitch to the TRIG/GLITCH OUT port and a clock to AUX.'));
+  ctx.on('caps', outsLoad);
 
   // ---------- bit-banger and 1-Wire ----------
   const bb = section('Bit-banger and 1-Wire', 'Husky synchronous bit patterns');

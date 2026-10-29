@@ -360,3 +360,148 @@ def test_health_per_model(client):
     h = client.get("/api/scope/health?refresh=true").json()
     assert h["problems"] and "overflow" in h["problems"][0]
     assert client.post("/api/scope/health/clear").json()["health"]["problems"] == []
+
+
+def test_sad_engines_per_model(client):
+    """The SAD trigger scores as each engine does: the Pro sums differences over 128 samples, the Husky counts samples over an interval across 256 (512 extended) with a mask; the preview says where it fires before arming."""
+    from cwstudio import sadmodel
+    assert sadmodel.reference_length("pro") == 128 and sadmodel.reference_length("husky") == 256 and sadmodel.reference_length("husky", True) == 512
+    assert sadmodel.parse_mask("0-9,20", 32) == [True] * 10 + [False] * 10 + [True] + [False] * 11
+    with pytest.raises(ValueError):
+        sadmodel.parse_mask("0-40", 32)
+    for model in ("husky", "pro"):
+        use(client, model)
+        client.post("/api/capture/start", json={"count": 20, "clear": True, "key": "2b7e151628aed2a6abf7158809cf4f3c"})
+        wait_job(client)
+        body = {"trace": 0, "start": 100, "threshold": 20 if model == "husky" else 3000, "interval": 12}
+        pv = client.post("/api/interfaces/trigger/sad/preview", json=body).json()
+        assert pv["reference_samples"] == (256 if model == "husky" else 128) and pv["mode"] == ("interval" if model == "husky" else "sum")
+        assert pv["rows"][0]["fires"] and pv["rows"][0]["at"] == 100 + pv["reference_samples"]  # the reference matches itself exactly
+        assert pv["fires"] >= 1 and pv["suggested_threshold"] >= 0
+        r = client.put("/api/interfaces/trigger", json={"kind": "sad", **body, "mask": "0-199" if model == "husky" else None, "emode": False})
+        assert r.status_code == 200, r.text
+        assert r.json()["applied"]["samples"] == pv["reference_samples"]
+        bad = client.put("/api/interfaces/trigger", json={"kind": "sad", "threshold": 100000 if model == "husky" else 10 ** 7, "start": 0})
+        assert bad.status_code == 400
+        client.post("/api/capture/start", json={"count": 3, "clear": False, "max_timeouts": 3})
+        st = wait_job(client)
+        assert st["job"]["done"] + st["job"]["timeouts"] == 3  # the simulated engine scored the capture (it fires on the reference's own trace shape or times out, never crashes)
+        client.put("/api/interfaces/trigger", json={"kind": "basic", "pins": ["tio4"]})
+
+
+def test_trigger_outputs_per_model(client):
+    use(client, "husky")
+    r = client.get("/api/interfaces/outputs").json()
+    assert r["available"] and set(r["ports"]) == {"trig_mcx", "aux_mcx"} and r["ports"]["trig_mcx"]["value"] == "trigger"
+    assert client.put("/api/interfaces/outputs", json={"port": "trig_mcx", "value": "glitch"}).json()["ports"]["trig_mcx"]["value"] == "glitch"
+    assert client.put("/api/interfaces/outputs", json={"port": "aux_mcx", "value": "hs2"}).status_code == 200
+    assert client.put("/api/interfaces/outputs", json={"port": "aux", "value": "true"}).status_code == 400
+    use(client, "pro")
+    r = client.get("/api/interfaces/outputs").json()
+    assert set(r["ports"]) == {"aux"} and r["ports"]["aux"]["value"] is False
+    assert client.put("/api/interfaces/outputs", json={"port": "aux", "value": "true"}).json()["ports"]["aux"]["value"] is True
+    for model in ("lite", "nano"):
+        use(client, model)
+        r = client.get("/api/interfaces/outputs").json()
+        assert not r["available"] and r["reason"]
+
+
+def test_userio_modes(client):
+    use(client, "husky")
+    for mode in ("trace", "target_debug_swd", "fpga_debug", "normal"):
+        r = client.put("/api/interfaces/userio", json={"mode": mode})
+        assert r.status_code == 200 and r.json()["mode"] == mode, r.text
+    assert client.put("/api/interfaces/userio", json={"mode": "bogus"}).status_code == 400
+    use(client, "lite")
+    assert client.put("/api/interfaces/userio", json={"mode": "trace"}).status_code == 400
+
+
+def test_sequencer_steps_per_model(client):
+    """The sequencer takes N steps of any trigger kind (2 slots on a Husky, 4 on a Plus) with a window between consecutive steps, and the simulator chains them on what the target does."""
+    use(client, "huskyplus")
+    client.post("/api/capture/start", json={"count": 2, "clear": True})
+    wait_job(client)
+    body = {"kind": "sequencer", "steps": [{"kind": "basic", "pins": ["tio4"]}, {"kind": "uart_pattern", "pin": "tio1", "pattern": "'r'", "baud": 38400}, {"kind": "basic", "pins": ["tio1"]}], "windows": [[0, 0], [0, 0]], "edge": "falling_edge"}
+    r = client.put("/api/interfaces/trigger", json=body)
+    assert r.status_code == 200, r.text
+    ap = r.json()["applied"]
+    assert ap["enabled"] and [s["kind"] for s in ap["steps"]] == ["basic", "uart_pattern", "basic"] and ap["windows"] == [[0, 0], [0, 0]]
+    client.post("/api/capture/start", json={"count": 2, "clear": True, "max_timeouts": 2})
+    st = wait_job(client)
+    assert st["job"]["done"] == 2 and not st["job"]["error"]  # TIO4 falls, the 'r' reply is seen, then a falling edge on TIO1 after it
+    tight = dict(body, windows=[[0, 1], [0, 0]])
+    assert client.put("/api/interfaces/trigger", json=tight).status_code == 200
+    client.post("/api/capture/start", json={"count": 1, "clear": True, "max_timeouts": 1})
+    st = wait_job(client)
+    assert st["job"]["timeouts"] == 1  # the reply cannot come within one cycle of the trigger fall
+    five = dict(body, steps=body["steps"] + [{"kind": "basic", "pins": ["tio3"]}, {"kind": "basic", "pins": ["tio2"]}])
+    r = client.put("/api/interfaces/trigger", json=five)
+    assert r.status_code == 400 and "2 to 4" in r.json()["detail"]
+    use(client, "husky")
+    r = client.put("/api/interfaces/trigger", json=body)
+    assert r.status_code == 400 and "2 to 2" in r.json()["detail"]
+    r = client.put("/api/interfaces/trigger", json={"kind": "sequencer", "pins": ["tio4", "tio1"], "window_end": 0})  # legacy two-pin form
+    assert r.status_code == 200 and len(r.json()["applied"]["steps"]) == 2
+    client.post("/api/capture/start", json={"count": 1, "clear": True, "max_timeouts": 2})
+    assert wait_job(client)["job"]["done"] == 1
+    r = client.put("/api/interfaces/trigger", json={"kind": "sequencer", "steps": [{"kind": "sad", "threshold": 20}, {"kind": "sad", "threshold": 20}]})
+    assert r.status_code == 400 and "once" in r.json()["detail"]
+    client.put("/api/interfaces/trigger", json={"kind": "basic", "pins": ["tio4"]})
+    use(client, "lite")
+    assert client.put("/api/interfaces/trigger", json=body).status_code == 400
+
+
+def test_firmware_status_and_upgrade(client):
+    """Status shows the scope's SAM firmware against the library's bundled one and NewAE's upstream; an outdated scope offers the upgrade, which the simulator performs in place."""
+    use(client, "husky")
+    fw = client.get("/api/status").json()["scope"]["firmware"]
+    assert fw["version"] == "1.7.0" and fw["library"] == "1.7.0" and fw["upstream"] == "1.8.0" and not fw["upgrade_available"]
+    client.session.scope.fw_version = {"major": 1, "minor": 5, "debug": 0}
+    client.session.worker.call(client.session._refresh_scope_info)
+    fw = client.get("/api/status").json()["scope"]["firmware"]
+    assert fw["version"] == "1.5.0" and fw["upgrade_available"]
+    r = client.post("/api/scope/firmware/upgrade").json()
+    assert r == {"upgraded": True, "before": "1.5.0", "after": "1.7.0", "replug": False}
+    assert not client.get("/api/status").json()["scope"]["firmware"]["upgrade_available"]
+    use(client, "nano")
+    fw = client.get("/api/status").json()["scope"]["firmware"]
+    assert fw["version"] == "0.65.0" and fw["upstream"] == "0.66.0"
+
+
+def test_recipes_per_model(client):
+    from cwstudio.recipes import GOALS
+    for model in MODELS:
+        use(client, model)
+        rs = client.get("/api/recipes").json()
+        assert [r["id"] for r in rs] == GOALS
+        byid = {r["id"]: r for r in rs}
+        assert byid["trigger_without_gpio"]["available"] == (model in ("pro", "husky", "huskyplus"))
+        assert byid["clock_glitch"]["available"] == (model != "nano")
+        a = client.post("/api/recipes/fast_capture/apply")
+        assert a.status_code == 200, a.text
+        if model in ("husky", "huskyplus"):
+            assert "adc.segments = 20" in a.json()["applied"] and flat_settings(client)["adc.segments"] == 20
+            client.put("/api/scope/settings", json={"path": "adc.segments", "value": 1})
+        a = client.post("/api/recipes/voltage_glitch/apply")
+        assert a.status_code == 200 and "action vglitch_lp" in a.json()["applied"]
+        assert client.post("/api/scope/action/glitch_disable").status_code == 200
+        if model == "nano":
+            r = client.post("/api/recipes/clock_glitch/apply")
+            assert r.status_code == 400 and "crowbar" in r.json()["detail"]
+    po = client.get("/api/pinout").json()
+    assert po["best_for"] and po["avoid"] and po["brain"]
+
+
+def test_usb_pipe_hint():
+    from cwstudio.hardware import usb_pipe_hint
+
+    class USBErrorPipe(Exception):
+        pass
+    try:
+        try:
+            raise USBErrorPipe("LIBUSB_ERROR_PIPE [-9]")
+        except USBErrorPipe as inner:
+            raise RuntimeError("request failed") from inner
+    except RuntimeError as e:
+        assert "firmware" in usb_pipe_hint(e)
+    assert usb_pipe_hint(ValueError("x")) is None

@@ -76,7 +76,9 @@ def create_app(session: Session) -> App:
         elif isinstance(e, HardwareTimeout):
             code = 504
         log.debug("API error", exc_info=True)
-        raise HTTPException(status_code=code, detail=f"{type(e).__name__}: {e}")
+        from cwstudio.hardware import usb_pipe_hint
+        hint = usb_pipe_hint(e)
+        raise HTTPException(status_code=code, detail=f"{type(e).__name__}: {e}" + (f" ({hint})" if hint else ""))
 
     async def body(req: Request) -> Dict[str, Any]:
         try:
@@ -98,6 +100,7 @@ def create_app(session: Session) -> App:
             "target_kinds": hardware.TARGET_KINDS,
             "programmers": hardware.PROGRAMMERS,
             "cpa_models": MODELS,
+            "cpa_custom_help": __import__("cwstudio.analysis", fromlist=["CUSTOM_HELP"]).CUSTOM_HELP,
             "platform": hardware.platform_help(),
             "simulate_default": session.simulate_default,
             "data_dir": session.data_dir,
@@ -179,6 +182,29 @@ def create_app(session: Session) -> App:
         try:
             v = await run(session.set_scope_setting, p["path"], p.get("value"))
             return {"path": p["path"], "value": v}
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/scope/firmware/upgrade")
+    async def scope_firmware_upgrade():
+        """Flash the SAM firmware bundled with this chipwhisperer library onto the scope; the scope re-enumerates, so replug and connect again afterwards."""
+        try:
+            return await run(session.upgrade_firmware)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.get("/api/recipes")
+    async def recipes_list():
+        """The best way to reach each goal on the connected model (fast capture, long capture, trigger without a GPIO, voltage or clock glitch, cleanest traces): settings, actions and notes."""
+        from cwstudio.capabilities import model_of
+        from cwstudio.recipes import recipes_for
+        return recipes_for(model_of(session.scope))
+
+    @app.post("/api/recipes/{goal}/apply")
+    async def recipes_apply(goal: str):
+        from cwstudio.recipes import apply
+        try:
+            return await run(apply, session, goal)
         except Exception as e:  # noqa: BLE001
             err(e)
 
@@ -420,6 +446,60 @@ def create_app(session: Session) -> App:
     @app.get("/api/analysis/cpa")
     async def cpa_result():
         return session.cpa_result() or {}
+
+    @app.post("/api/analysis/cpa/export")
+    async def cpa_export(req: Request):
+        """Body: path (relative to the data folder or absolute). Saves corr_max, corr_argmax and the best correlation traces as .npz and the summary as .json."""
+        p = await body(req)
+        try:
+            return await run(session.cpa_export, str(p.get("path") or "cpa_result"))
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/analysis/ttest")
+    async def analysis_ttest(req: Request):
+        """TVLA fixed-vs-random Welch t-test per sample. Body: fixed_text (hex, default the capture's tvla text), trace_start, trace_end, max_points."""
+        p = await body(req)
+        try:
+            return await run(session.ttest, p)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/analysis/snr")
+    async def analysis_snr(req: Request):
+        """Signal-to-noise ratio per sample. Body: byte, classes (sbox_hw with the known key, or byte), known_key, trace_start, trace_end, max_points."""
+        p = await body(req)
+        try:
+            return await run(session.snr, p)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/analysis/align")
+    async def analysis_align(req: Request):
+        """Static alignment to a reference trace's window by cross-correlation. Body: reference (index, -1 newest), start, end, max_shift, apply (false = preview the shifts only)."""
+        p = await body(req)
+        try:
+            return await run(session.align_traces, p)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/analysis/filter")
+    async def analysis_filter(req: Request):
+        """Filter every stored trace in place. Body: kind (lowpass, highpass, bandpass, moving_average), cutoff (fraction of the sample rate, or Hz with sample_rate; moving_average: samples), cutoff2 (bandpass upper), taps."""
+        p = await body(req)
+        try:
+            return await run(session.filter_traces, p)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/analysis/spectrum")
+    async def analysis_spectrum(req: Request):
+        """Magnitude spectrum of a stored trace (trace index) or the mean trace, dB below the peak. Body: trace, sample_rate, max_points."""
+        p = await body(req)
+        try:
+            return await run(session.spectrum, p)
+        except Exception as e:  # noqa: BLE001
+            err(e)
 
     @app.get("/api/analysis/cpa/corr/{b}")
     async def cpa_corr(b: int):

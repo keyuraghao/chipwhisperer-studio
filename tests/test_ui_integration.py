@@ -240,10 +240,11 @@ def test_scope_switched_to_another_model_is_announced(studio, browser):
         page.wait_for_function("() => document.querySelector('#chip-scope .txt').textContent.includes('Husky')")
         _api(studio, "POST", "/api/scope/connect", {"kind": "sim", "sim_model": "nano"})  # replaces the connected scope: the connected flag never drops
         page.wait_for_function("() => document.querySelector('#chip-scope .txt').textContent.includes('Nano')", timeout=10000)
-        # the Scope tab reloaded its tree for the new model: the CW-Nano triggers on TIO4 only
-        sel = page.locator("#panel-scope .leaf:has(.name[title^='trigger.triggers']) select")
-        page.wait_for_function("() => { const s = document.querySelector(\"#panel-scope .leaf:has(.name[title^='trigger.triggers']) select\"); return s && s.querySelector('option[value=tio1]') && s.querySelector('option[value=tio1]').disabled; }", timeout=10000)
-        assert sel.locator("option[value=tio4]").is_enabled()
+        # the Scope tab reloaded its tree for the new model: the CW-Nano has its own clocks (adc.clk_freq, io.clkout) and, unlike the Husky, no trigger group or CLKGEN (it triggers on TIO4 rising edge, full stop)
+        page.wait_for_function("() => !!document.querySelector(\"#panel-scope .leaf .name[title^='adc.clk_freq']\")", timeout=10000)
+        assert page.locator("#panel-scope .leaf .name[title^='io.clkout']").count() == 1
+        assert page.locator("#panel-scope .leaf .name[title^='trigger.triggers']").count() == 0
+        assert page.locator("#panel-scope .leaf .name[title^='clock.clkgen_freq']").count() == 0
         assert "Nano" in chip.text_content()
     finally:
         _api(studio, "POST", "/api/scope/connect", {"kind": "sim"})

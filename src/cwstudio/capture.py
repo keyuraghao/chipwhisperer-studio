@@ -25,6 +25,8 @@ class KeyTextGen:
         self.key = key if key else bytes.fromhex("2b7e151628aed2a6abf7158809cf4f3c")[:length]
         self.text = text if text else bytes.fromhex("00112233445566778899aabbccddeeff")[:length]
         self.rng = np.random.default_rng(seed)
+        self.fixed_text = self.text  # what the tvla mode alternates with random texts
+        self._tvla_toggle = False
 
     def _rand(self) -> bytes:
         return self.rng.integers(0, 256, self.length, dtype=np.uint8).tobytes()
@@ -37,6 +39,9 @@ class KeyTextGen:
         elif self.text_mode == "counter":
             v = int.from_bytes(self.text, "big") + 1
             self.text = (v % (1 << (8 * self.length))).to_bytes(self.length, "big")
+        elif self.text_mode == "tvla":  # fixed versus random, interleaved, for the t-test
+            self._tvla_toggle = not self._tvla_toggle
+            self.text = self.fixed_text if self._tvla_toggle else self._rand()
         return self.key, self.text
 
 
@@ -93,6 +98,8 @@ class CaptureJob(LongJob):
     def start(self):
         if self.mode == "simpleserial" and self.target is None:
             raise RuntimeError("no target connected (use trigger-only mode to capture without a target)")
+        if self.gen.text_mode == "tvla" and self.store_traces:
+            self.store.meta["tvla_fixed_text"] = self.gen.fixed_text.hex()  # the t-test groups the traces by this plaintext
         self.bus.publish("capture", {"state": "running", **self.progress()})
         if self.mode == "simpleserial" and hasattr(self.target, "flush"):
             try:

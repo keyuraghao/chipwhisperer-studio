@@ -258,6 +258,21 @@ def build_server(client: StudioClient, url_note: str = ""):
         """How the scope is doing: FPGA temperature and rails with alarms (Husky), PLL or DCM lock, external clock drift, sticky capture errors (clip, FIFO, trigger too soon), USB controller serial overflows, glitches fired and the last trigger length, plus 'problems': plain sentences about anything wrong and what to do. Read fresh from the hardware by default."""
         return client.get("/api/scope/health", params={"refresh": "true" if refresh else "false"})
 
+    @mcp.tool(annotations=DESTRUCTIVE)
+    def scope_upgrade_firmware() -> Dict[str, Any]:
+        """Flash the SAM firmware bundled with this chipwhisperer library onto the connected scope (studio_status shows scope.firmware with the current, library and upstream versions and upgrade_available). The scope re-enumerates afterwards: unplug and replug it, then scope_connect again."""
+        return client.post("/api/scope/firmware/upgrade")
+
+    @mcp.tool(annotations=RO)
+    def recipes() -> List[Dict[str, Any]]:
+        """The best way to reach each goal on the connected ChipWhisperer model: fast capture, long capture, a trigger without a GPIO, a first voltage or clock glitch, cleanest traces. Each recipe lists the settings and actions it applies and the notes that matter on this model; unavailable goals say why."""
+        return client.get("/api/recipes")
+
+    @mcp.tool(annotations=HW)
+    def recipe_apply(goal: Literal["fast_capture", "long_capture", "trigger_without_gpio", "voltage_glitch", "clock_glitch", "clean_traces"]) -> Dict[str, Any]:
+        """Apply a recipe's actions and settings on the connected scope and return what was done plus the capture parameters and notes to follow."""
+        return client.post(f"/api/recipes/{goal}/apply")
+
     @mcp.tool(annotations=HW)
     def scope_clear_errors() -> Dict[str, Any]:
         """Clear the scope's sticky errors and alarms (a Husky powers its glitch, logic analyser and SAD blocks down after an XADC alarm until this is done) and return the health read afterwards."""
@@ -311,8 +326,8 @@ def build_server(client: StudioClient, url_note: str = ""):
 
     # ----- capture -----------------------------------------------------------------
     @mcp.tool(annotations=HW)
-    def capture_start(count: int = 100, mode: Literal["simpleserial", "trigger_only"] = "simpleserial", key_mode: Literal["fixed", "random"] = "fixed", text_mode: Literal["random", "fixed", "counter"] = "random", key: Optional[str] = None, text: Optional[str] = None, length: int = 16, seed: Optional[int] = None, store: bool = True, clear: bool = False, ack: bool = True, max_timeouts: int = 10, max_rate: float = 0, wait: bool = True, timeout_s: float = 600) -> Dict[str, Any]:
-        """Capture power traces. count=0 runs until capture_stop. mode='simpleserial' sends key/plaintext to the target each trace, 'trigger_only' just arms and waits for the target's own trigger. key_mode/text_mode choose fixed, random or counter data (key/text give fixed values in hex, length is the block size, seed makes random data repeatable). store=false only displays; clear empties the trace store first; ack waits for the SimpleSerial ack; max_timeouts aborts after that many consecutive timeouts; max_rate limits traces/s (0 = unlimited). wait=true returns when the capture ends."""
+    def capture_start(count: int = 100, mode: Literal["simpleserial", "trigger_only"] = "simpleserial", key_mode: Literal["fixed", "random"] = "fixed", text_mode: Literal["random", "fixed", "counter", "tvla"] = "random", key: Optional[str] = None, text: Optional[str] = None, length: int = 16, seed: Optional[int] = None, store: bool = True, clear: bool = False, ack: bool = True, max_timeouts: int = 10, max_rate: float = 0, wait: bool = True, timeout_s: float = 600) -> Dict[str, Any]:
+        """Capture power traces. count=0 runs until capture_stop. mode='simpleserial' sends key/plaintext to the target each trace, 'trigger_only' just arms and waits for the target's own trigger. key_mode/text_mode choose fixed, random, counter or tvla data (tvla interleaves the fixed text with random ones for leakage_ttest; key/text give fixed values in hex, length is the block size, seed makes random data repeatable). store=false only displays; clear empties the trace store first; ack waits for the SimpleSerial ack; max_timeouts aborts after that many consecutive timeouts; max_rate limits traces/s (0 = unlimited). wait=true returns when the capture ends."""
         params = {"count": count, "mode": mode, "key_mode": key_mode, "text_mode": text_mode, "key": key, "text": text, "length": length, "seed": seed, "store": store, "clear": clear, "ack": ack, "max_timeouts": max_timeouts, "max_rate": max_rate}
         res = client.post("/api/capture/start", {k: v for k, v in params.items() if v is not None})
         if wait and count > 0:
@@ -386,9 +401,9 @@ def build_server(client: StudioClient, url_note: str = ""):
 
     # ----- analysis ----------------------------------------------------------------------
     @mcp.tool(annotations=HW)
-    def cpa_start(model: Literal["sbox_hw", "ptkey_hw", "invsbox_hw", "lastround_hd", "lastround_hw"] = "sbox_hw", trace_start: int = 0, trace_end: Optional[int] = None, point_start: Optional[int] = None, point_end: Optional[int] = None, bytes: Optional[List[int]] = None, known_key: Optional[str] = None, use_stored_key: bool = True, report_every: int = 50, wait: bool = True, timeout_s: float = 600) -> Dict[str, Any]:
-        """Run a correlation power analysis attack on the stored traces. model is the leakage model (sbox_hw for software AES such as TINYAES128C, lastround_hd for hardware AES). trace_start/trace_end and point_start/point_end limit traces and sample window; bytes limits key bytes (0-15); known_key (hex) or the stored key enables partial guessing entropy; report_every sets progress granularity. wait=true returns the final result."""
-        params: Dict[str, Any] = {"model": model, "trace_start": trace_start, "trace_end": trace_end, "known_key": known_key, "use_stored_key": use_stored_key, "report_every": report_every, "bytes": bytes}
+    def cpa_start(model: Literal["sbox_hw", "ptkey_hw", "invsbox_hw", "lastround_hd", "lastround_hw", "sbox_lsb", "sbox_msb", "aes256_round2_hw", "custom"] = "sbox_hw", trace_start: int = 0, trace_end: Optional[int] = None, point_start: Optional[int] = None, point_end: Optional[int] = None, bytes: Optional[List[int]] = None, known_key: Optional[str] = None, use_stored_key: bool = True, report_every: int = 50, wait: bool = True, timeout_s: float = 600, expr: Optional[str] = None) -> Dict[str, Any]:
+        """Run a correlation power analysis attack on the stored traces. model is the leakage model: sbox_hw for software AES such as TINYAES128C, lastround_hd for hardware AES, sbox_lsb/sbox_msb single-bit models, aes256_round2_hw for the second half of an AES-256 key (known_key = the first 16 bytes recovered with sbox_hw), custom with expr (a numpy expression over tin, tout, b, g, HW, SBOX, INV_SBOX giving an (N, 256) matrix). trace_start/trace_end and point_start/point_end limit traces and sample window; bytes limits key bytes (0-15); known_key (hex) or the stored key enables partial guessing entropy; report_every sets progress granularity. wait=true returns the final result."""
+        params: Dict[str, Any] = {"model": model, "trace_start": trace_start, "trace_end": trace_end, "known_key": known_key, "use_stored_key": use_stored_key, "report_every": report_every, "bytes": bytes, "expr": expr}
         if point_start is not None or point_end is not None:
             params["point_range"] = [point_start or 0, point_end]
         client.post("/api/analysis/cpa/start", {k: v for k, v in params.items() if v is not None})
@@ -403,6 +418,36 @@ def build_server(client: StudioClient, url_note: str = ""):
                 break
             delay = _poll(end, delay)
         return res
+
+    @mcp.tool(annotations=HW)
+    def cpa_export(path: str = "cpa_result") -> Dict[str, Any]:
+        """Save the CPA result (per-guess maxima and samples, best correlation trace per byte as .npz; the summary with history as .json) under the data folder or an absolute path."""
+        return client.post("/api/analysis/cpa/export", {"path": path})
+
+    @mcp.tool(annotations=RO)
+    def leakage_ttest(fixed_text: Optional[str] = None, trace_start: int = 0, trace_end: Optional[int] = None, max_points: int = 2000) -> Dict[str, Any]:
+        """TVLA: Welch's t-test per sample between the traces with the fixed plaintext (capture with text_mode tvla, or give fixed_text in hex) and the random ones. |t| above 4.5 at any sample means the implementation leaks; returns max |t|, where, how many samples are over, and the t series (decimated to max_points, peaks kept)."""
+        return client.post("/api/analysis/ttest", {k: v for k, v in {"fixed_text": fixed_text, "trace_start": trace_start, "trace_end": trace_end, "max_points": max_points}.items() if v is not None})
+
+    @mcp.tool(annotations=RO)
+    def leakage_snr(byte: int = 0, classes: Literal["sbox_hw", "byte"] = "sbox_hw", known_key: Optional[str] = None, trace_start: int = 0, trace_end: Optional[int] = None, max_points: int = 2000) -> Dict[str, Any]:
+        """Signal-to-noise ratio per sample for one key byte: classes by the S-box output Hamming weight under the known (or stored fixed) key, or by the plaintext byte value. Returns the peak SNR and where, and the series."""
+        return client.post("/api/analysis/snr", {k: v for k, v in {"byte": byte, "classes": classes, "known_key": known_key, "trace_start": trace_start, "trace_end": trace_end, "max_points": max_points}.items() if v is not None})
+
+    @mcp.tool(annotations=HW)
+    def traces_align(reference: int = 0, start: int = 0, end: int = 0, max_shift: int = 50, apply: bool = False) -> Dict[str, Any]:
+        """Static alignment: find the shift of every stored trace that best matches the reference trace over the window start..end (0 = whole trace) within +-max_shift samples by cross-correlation; apply=true shifts the traces in place. Returns the shift statistics and histogram."""
+        return client.post("/api/analysis/align", {"reference": reference, "start": start, "end": end, "max_shift": max_shift, "apply": apply})
+
+    @mcp.tool(annotations=HW)
+    def traces_filter(kind: Literal["lowpass", "highpass", "bandpass", "moving_average"] = "lowpass", cutoff: float = 0.1, cutoff2: Optional[float] = None, taps: int = 63, sample_rate: Optional[float] = None) -> Dict[str, Any]:
+        """Filter every stored trace in place: windowed-sinc FIR lowpass, highpass or bandpass with cutoffs as a fraction of the sample rate (or in Hz when sample_rate is given), or a moving average of cutoff samples."""
+        return client.post("/api/analysis/filter", {k: v for k, v in {"kind": kind, "cutoff": cutoff, "cutoff2": cutoff2, "taps": taps, "sample_rate": sample_rate}.items() if v is not None})
+
+    @mcp.tool(annotations=RO)
+    def trace_spectrum(trace: Optional[int] = None, max_points: int = 2000) -> Dict[str, Any]:
+        """Magnitude spectrum (dB below the peak) of one stored trace or, without an index, of the mean trace; frequencies in Hz from the scope's ADC rate when connected. Shows the clock harmonics and where a filter cutoff should go."""
+        return client.post("/api/analysis/spectrum", {k: v for k, v in {"trace": trace, "max_points": max_points}.items() if v is not None})
 
     @mcp.tool(annotations=HW)
     def cpa_stop() -> Dict[str, Any]:

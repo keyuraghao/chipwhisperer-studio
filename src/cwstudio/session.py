@@ -214,9 +214,38 @@ class Session:
         """Re-read the scope's info into the cache. Hardware thread only."""
         self._scope_info_pending = False
         sc = self.scope
-        self._scope_info, self._scope_info_for = hardware.scope_info(sc), sc
+        info = hardware.scope_info(sc)
+        if sc is not None:
+            from cwstudio.capabilities import model_of
+            info["firmware"] = hardware.firmware_status(sc, model_of(sc))
+        self._scope_info, self._scope_info_for = info, sc
         if push:
             self._push_status()
+
+    def upgrade_firmware(self) -> Dict[str, Any]:
+        """Flash the SAM firmware this chipwhisperer library bundles (scope.upgrade_firmware). The real scope re-enumerates afterwards, so Studio releases it and asks for a replug and a new connect."""
+        sc = self.scope
+        if sc is None:
+            raise RuntimeError("scope not connected")
+        if not hasattr(sc, "upgrade_firmware"):
+            raise RuntimeError("this scope object cannot upgrade its firmware")
+        before = dict(self._scope_info.get("firmware") or {})
+
+        def _do():
+            sc.upgrade_firmware()
+            if getattr(sc, "sim_model", None):
+                self._refresh_scope_info()
+                return {"upgraded": True, "before": before.get("version"), "after": (self._scope_info.get("firmware") or {}).get("version"), "replug": False}
+            self._disconnect_all()
+            self.scope_kind = None
+            self.target_kind = None
+            self.scope_lost = "the firmware was upgraded: unplug the ChipWhisperer, plug it back in and connect again"
+            return {"upgraded": True, "before": before.get("version"), "after": before.get("library"), "replug": True}
+        res = self.worker.call(_do, timeout=600)
+        from cwstudio.capabilities import invalidate_gates
+        invalidate_gates()
+        self._push_status()
+        return res
 
     def _on_hardware_error(self, e: BaseException):
         """Every exception a hardware job raised (on the hardware thread): a USB device that went away marks the scope lost."""
@@ -300,6 +329,11 @@ class Session:
                     self._push_status()
                     return None
                 self.scope, self.scope_kind = sc, kind
+                try:
+                    from cwstudio.capabilities import model_of
+                    info["firmware"] = hardware.firmware_status(sc, model_of(sc))  # current, library and upstream SAM firmware for the Connect card
+                except Exception:  # noqa: BLE001
+                    pass
                 self._scope_info, self._scope_info_for = info, sc
                 self._connect_done = gen
             log.info("Connected to %s", info.get("name"))
@@ -694,9 +728,147 @@ class Session:
             self.bus.publish("cpa", res.to_json(), droppable=not res.done)
         self.cpa = CPAAttack(W, tin, tout, model=model, point_range=pr,
                              report_every=int(params.get("report_every", 50)), known_key=known_b, callback=cb,
-                             bytes_to_attack=params.get("bytes"))
+                             bytes_to_attack=params.get("bytes"), params={"expr": params.get("expr")})
         self.cpa.start()
         return {"started": True, "traces": int(W.shape[0]), "samples": int(W.shape[1]), "model": model}
+
+    def cpa_export(self, path: str) -> Dict[str, Any]:
+        """Save the CPA result: the per-guess maxima and their samples, the best correlation trace per byte, the history and the summary, as .npz next to a .json."""
+        if not self.cpa:
+            raise RuntimeError("no CPA result")
+        import json as _json
+        r = self.cpa.result
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.join(self.data_dir, path)
+        base = path[:-4] if path.endswith(".npz") else path
+        os.makedirs(os.path.dirname(base) or ".", exist_ok=True)
+        best = np.zeros((r.n_bytes, max((t.shape[0] for t in r.best_corr_trace), default=0)), np.float32)
+        for b, t in enumerate(r.best_corr_trace):
+            best[b, :t.shape[0]] = t
+        np.savez(base + ".npz", corr_max=r.corr_max, corr_argmax=r.corr_argmax, best_corr_trace=best, point_offset=np.int64(self.cpa.lo))
+        with open(base + ".json", "w", encoding="utf-8") as f:
+            _json.dump(r.to_json(), f, indent=1)
+        return {"path": base + ".npz", "summary": base + ".json", "bytes": r.n_bytes, "samples": int(best.shape[1])}
+
+    # --- leakage assessment and trace conditioning (leakage.py) ---------------------
+    def _trace_matrix(self, start: int = 0, end: Optional[int] = None):
+        W, tin, tout, key = self.store.as_arrays(start, end)
+        if W.shape[0] < 2:
+            raise RuntimeError("need at least 2 traces")
+        return W, tin, tout, key
+
+    def ttest(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """TVLA: fixed plaintext traces against random ones (the fixed text from the capture's tvla mode unless given)."""
+        from cwstudio import leakage
+        W, tin, _tout, _key = self._trace_matrix(int(params.get("trace_start", 0) or 0), params.get("trace_end"))
+        fixed = params.get("fixed_text") or self.store.meta.get("tvla_fixed_text")
+        if not fixed:
+            raise ValueError("no fixed plaintext: capture with text mode tvla, or give fixed_text (hex)")
+        res = leakage.ttest(W, tin, bytes.fromhex(str(fixed).replace(" ", "")))
+        if res["fixed"] < 2 or res["random"] < 2:
+            raise ValueError(f"the t-test needs at least 2 traces in each group (fixed {res['fixed']}, random {res['random']}): capture with text mode tvla")
+        series, step = leakage.decimate_series(res.pop("t"), int(params.get("max_points", 4000)))
+        return {**res, "traces": int(W.shape[0]), "series": [float(x) for x in series], "step": step, "fixed_text": str(fixed)}
+
+    def snr(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Signal-to-noise ratio per sample, classes by a plaintext byte or by the S-box Hamming weight under the known (or stored) key."""
+        from cwstudio import leakage
+        W, tin, _tout, key = self._trace_matrix(int(params.get("trace_start", 0) or 0), params.get("trace_end"))
+        byte = int(params.get("byte", 0))
+        kind = str(params.get("classes", "sbox_hw"))
+        known = params.get("known_key")
+        kb = bytes.fromhex(known.replace(" ", "")) if known else (key[0].tobytes() if key.shape[0] and key.shape[1] >= 16 and np.all(key == key[0]) and np.any(key[0]) else None)
+        cls = leakage.classes_for(kind, tin, byte, kb)
+        out = leakage.snr(W, cls)
+        series, step = leakage.decimate_series(out, int(params.get("max_points", 4000)))
+        return {"byte": byte, "classes": kind, "traces": int(W.shape[0]), "max_snr": float(out.max()) if out.size else 0.0, "argmax": int(out.argmax()) if out.size else 0, "series": [float(x) for x in series], "step": step, "known_key": kb.hex() if kb else None}
+
+    def align_traces(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Static alignment: shift every trace so its window matches the reference trace's; preview returns the shifts, apply writes the shifted traces back."""
+        from cwstudio import leakage
+        with self.store._lock:
+            n = len(self.store)
+            if n < 2:
+                raise RuntimeError("need at least 2 traces")
+            ref_i = int(params.get("reference", 0))
+            ref_i = ref_i if ref_i >= 0 else n + ref_i
+            if not 0 <= ref_i < n:
+                raise ValueError(f"reference trace {ref_i} does not exist")
+            W = self.store.as_arrays()[0]
+        S = W.shape[1]
+        start, end = int(params.get("start", 0) or 0), int(params.get("end", 0) or S)
+        if end <= 0 or end > S:
+            end = S
+        if not 0 <= start < end:
+            raise ValueError("the window must lie inside the trace")
+        max_shift = int(params.get("max_shift", 50))
+        shifts = leakage.align(W, W[ref_i], start, end, max_shift)
+        hist = np.bincount(shifts - shifts.min()) if shifts.size else np.zeros(0)
+        out = {"traces": int(W.shape[0]), "reference": ref_i, "start": start, "end": end, "max_shift": max_shift, "shift_min": int(shifts.min()), "shift_max": int(shifts.max()), "shift_mean": float(shifts.mean()), "moved": int((shifts != 0).sum()), "histogram": {"from": int(shifts.min()), "counts": [int(x) for x in hist]}, "applied": False}
+        if params.get("apply"):
+            with self.store._lock:
+                if len(self.store) != W.shape[0]:
+                    raise RuntimeError("the trace set changed while aligning; run it again")
+                for i, sh in enumerate(shifts):
+                    if sh:
+                        self.store.waves[i] = leakage.shift_trace(self.store.waves[i], int(sh))
+                self.store._acc = None
+                self.store.generation += 1
+                self.store.meta.setdefault("conditioning", []).append({"align": {"reference": ref_i, "start": start, "end": end, "max_shift": max_shift, "moved": out["moved"]}})
+            self.bus.publish("traces", self.store.summary())
+            out["applied"] = True
+        return out
+
+    def filter_traces(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter every stored trace in place: lowpass, highpass or bandpass (windowed-sinc FIR, cutoffs as a fraction of the sample rate or in Hz with sample_rate) or a moving average of N samples."""
+        from cwstudio import leakage
+        kind = str(params.get("kind", "lowpass"))
+        cutoff = float(params.get("cutoff", 0.1))
+        cutoff2 = params.get("cutoff2")
+        sr = params.get("sample_rate")
+        if sr:
+            cutoff = cutoff / float(sr)
+            cutoff2 = float(cutoff2) / float(sr) if cutoff2 is not None else None
+        kernel = leakage.fir_kernel(kind, cutoff, int(params.get("taps", 63)), None if cutoff2 is None else float(cutoff2))
+        with self.store._lock:
+            if len(self.store) < 1:
+                raise RuntimeError("no traces")
+            W = self.store.as_arrays()[0]
+            out = leakage.apply_filter(W, kernel)
+            for i in range(out.shape[0]):
+                self.store.waves[i] = out[i]
+            self.store._acc = None
+            self.store.generation += 1
+            self.store.meta.setdefault("conditioning", []).append({"filter": {"kind": kind, "cutoff": cutoff, "cutoff2": cutoff2, "taps": int(kernel.size)}})
+        self.bus.publish("traces", self.store.summary())
+        return {"traces": int(out.shape[0]), "kind": kind, "cutoff": cutoff, "cutoff2": cutoff2, "taps": int(kernel.size)}
+
+    def spectrum(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Magnitude spectrum of one stored trace (index, -1 newest) or of the mean trace, in dB below the peak; frequencies in Hz when the ADC rate is known."""
+        from cwstudio import leakage
+        with self.store._lock:
+            n = len(self.store)
+            if n < 1:
+                raise RuntimeError("no traces")
+            i = params.get("trace")
+            if i is None:
+                w = self.store.stats()["mean"]
+            else:
+                i = int(i)
+                i = i if i >= 0 else n + i
+                w = self.store.waves[i]
+        sr = params.get("sample_rate")
+        if sr is None and self.scope is not None:
+            try:
+                sr = float(self.worker.call(lambda: self.scope.clock.adc_freq, timeout=10))
+            except Exception:  # noqa: BLE001
+                sr = None
+        f, db = leakage.spectrum(np.asarray(w), float(sr) if sr else None)
+        mp = int(params.get("max_points", 4000))
+        series, step = leakage.decimate_series(db, mp)
+        freqs = f[::step][:series.size]
+        return {"samples": int(np.asarray(w).size), "sample_rate": sr, "step": step, "freq": [float(x) for x in freqs], "db": [float(x) for x in series], "peak_hz": float(f[int(db.argmax())]) if f.size else None}
 
     def stop_cpa(self):
         if self.cpa:

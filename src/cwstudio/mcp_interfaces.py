@@ -82,18 +82,34 @@ def register_interface_tools(mcp, client, RO: Dict[str, Any], HW: Dict[str, Any]
         return call("POST", "/api/interfaces/gpio/pulse", {"pin": pin, "ms": ms})
 
     @mcp.tool(annotations=HW)
-    def userio_set(direction: Optional[int] = None, drive: Optional[int] = None) -> Dict[str, Any]:
-        """Husky USERIO header: direction is a bit mask (bit n = 1 drives Dn, bit 8 is CK where the library supports it) and drive the levels to drive. Returns the pins read back. Husky only."""
-        return call("PUT", "/api/interfaces/userio", clean(direction=direction, drive=drive, mode="normal" if direction is not None or drive is not None else None))
+    def userio_set(direction: Optional[int] = None, drive: Optional[int] = None, mode: Optional[Literal["normal", "fpga_debug", "trace", "target_debug_jtag", "target_debug_swd"]] = None) -> Dict[str, Any]:
+        """Husky USERIO header: mode routes the header (normal GPIO, fpga_debug internal signals, trace for Arm trace, target_debug_jtag or target_debug_swd for OpenOCD); in normal mode direction is a bit mask (bit n = 1 drives Dn, bit 8 is CK where the library supports it) and drive the levels to drive. Returns the pins read back. Husky only."""
+        return call("PUT", "/api/interfaces/userio", clean(direction=direction, drive=drive, mode=mode or ("normal" if direction is not None or drive is not None else None)))
 
     @mcp.tool(annotations=HW)
     def trigger_configure(kind: Literal["basic", "uart_decode", "uart_pattern", "edge_counter", "adc_level", "sequencer", "sad"] = "basic", pins: Optional[List[TriggerPin]] = None, op: Literal["OR", "AND", "NAND"] = "OR", edge: Literal["rising_edge", "falling_edge", "high", "low"] = "rising_edge",
                           pin: Optional[TriggerPin] = None, baud: Optional[float] = None, pattern: Optional[str] = None, rule: int = 0, data_bits: int = 8, stop_bits: int = 1, parity: Literal["none", "odd", "even"] = "none",
-                          edges: int = 1, level: float = 0.1, window_start: int = 0, window_end: int = 0, threshold: int = 10, start: int = 0, enabled: bool = True) -> Dict[str, Any]:
-        """Configure the capture trigger; captures use it right away. basic: pins combined with op, edge or level mode (CW-Nano: TIO4 rising edge only). uart_decode (Pro): UART byte pattern on pin at baud, pattern as quoted text "'r'" or hex '72 XX' (XX = any byte, up to 8). uart_pattern (Husky): pattern match rule (2 rules on Husky, 8 on Husky Plus) with data_bits/stop_bits/parity. edge_counter (Husky): trigger after edges edges on pin. adc_level (Husky): trigger when the signal crosses level (-0.5..0.5). sequencer (Husky): two pins in order within window_start..window_end ADC cycles, enabled=false turns it off. sad (Pro, Husky): sum of absolute differences against the newest trace from sample start, threshold."""
-        body = {"kind": kind, "op": op, "edge": edge, "rule": rule, "data_bits": data_bits, "stop_bits": stop_bits, "parity": parity, "edges": edges, "level": level, "window_start": window_start, "window_end": window_end, "threshold": threshold, "start": start, "enabled": enabled}
-        body.update(clean(pins=pins, pin=pin, baud=baud, pattern=pattern))
+                          edges: int = 1, level: float = 0.1, window_start: int = 0, window_end: int = 0, threshold: int = 10, start: int = 0, enabled: bool = True,
+                          trace: int = -1, interval: int = 10, emode: bool = False, mask: Optional[str] = None, steps: Optional[List[Dict[str, Any]]] = None, windows: Optional[List[List[int]]] = None) -> Dict[str, Any]:
+        """Configure the capture trigger; captures use it right away. basic: pins combined with op, edge or level mode (CW-Nano: TIO4 rising edge only). uart_decode (Pro): UART byte pattern on pin at baud, pattern as quoted text "'r'" or hex '72 XX' (XX = any byte, up to 8). uart_pattern (Husky): pattern match rule (2 rules on Husky, 8 on Husky Plus) with data_bits/stop_bits/parity. edge_counter (Husky): trigger after edges edges on pin. adc_level (Husky): trigger when the signal crosses level (-0.5..0.5). sequencer (Husky): steps fired in order, each a dict with its own kind and parameters (basic with pins, uart_pattern, edge_counter, adc_level, sad; 2 slots on a Husky, 4 on a Plus), windows a list of [min, max] ADC cycles between consecutive steps (0 = no limit); the old form pins=[first, second] with window_start/window_end still works; enabled=false turns it off. sad: the reference is cut from stored trace 'trace' (-1 = newest) at sample start; the Pro sums absolute differences over 128 samples (threshold up to 100000); the Husky compares 256 samples (512 with emode) and fires when at most 'threshold' (1..127) samples differ by more than 'interval' (1..255, 8-bit units), optionally only the samples in mask ("0-99,150-255"). Run trigger_sad_preview first to pick the threshold."""
+        body = {"kind": kind, "op": op, "edge": edge, "rule": rule, "data_bits": data_bits, "stop_bits": stop_bits, "parity": parity, "edges": edges, "level": level, "window_start": window_start, "window_end": window_end, "threshold": threshold, "start": start, "enabled": enabled, "trace": trace, "interval": interval, "emode": emode}
+        body.update(clean(pins=pins, pin=pin, baud=baud, pattern=pattern, mask=mask, steps=steps, windows=windows))
         return call("PUT", "/api/interfaces/trigger", body)
+
+    @mcp.tool(annotations=RO)
+    def trigger_sad_preview(trace: int = -1, start: int = 0, threshold: int = 10, interval: int = 10, emode: bool = False, mask: Optional[str] = None, traces: int = 200) -> Dict[str, Any]:
+        """Score a SAD reference (stored trace 'trace' from sample start) over the stored traces offline, exactly as the connected model's SAD engine would: per trace where it fires and its best score, how many traces fire and how many at the expected position, and a suggested threshold. No hardware access."""
+        return call("POST", "/api/interfaces/trigger/sad/preview", clean(trace=trace, start=start, threshold=threshold, interval=interval, emode=emode, mask=mask, traces=traces))
+
+    @mcp.tool(annotations=RO)
+    def trigger_outputs() -> Dict[str, Any]:
+        """The trigger and clock output ports of the scope (Pro: AUX SMA on or off; Husky: TRIG/GLITCH MCX carrying the trigger or the glitch, AUX MCX high-Z, USERIO clock or HS2) and what each carries now."""
+        return call("GET", "/api/interfaces/outputs")
+
+    @mcp.tool(annotations=HW)
+    def trigger_output_set(port: Literal["aux", "trig_mcx", "aux_mcx"], value: str) -> Dict[str, Any]:
+        """Route a trigger or clock output port: aux (Pro) 'true' or 'false'; trig_mcx (Husky) glitch, trigger, 'inverted glitch' or 'inverted trigger'; aux_mcx (Husky) high_z, userio_ck or hs2."""
+        return call("PUT", "/api/interfaces/outputs", {"port": port, "value": value})
 
     @mcp.tool(annotations=HW)
     def bitbang(bits: str, record: Optional[str] = None, data_pin: BBPin = "USERIO_D0", clock_pin: BBPin = "USERIO_CK", clk_div: Optional[int] = None) -> Dict[str, Any]:

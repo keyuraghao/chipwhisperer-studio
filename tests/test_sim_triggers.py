@@ -128,13 +128,13 @@ def test_sad_matches_the_reference():
     scope, target = rig()
     assert not capture(scope, target)
     start = scope.leak_start - 16
-    ref = scope.get_last_trace()[start:start + 32].astype(float)
+    ref = scope.get_last_trace()[start:start + 256].astype(float)  # the Husky compares 256 samples at 8 bits, counting those over the interval
     scope._sim_sad_ref = ref
-    setup_trigger(scope, kind="sad", threshold=400, start=start)
+    setup_trigger(scope, kind="sad", threshold=60, interval=12, start=start)
     assert not capture(scope, target)
-    assert scope._trig_fired == pytest.approx(start + 32, abs=3)  # fires when the last reference sample is in
-    setup_trigger(scope, kind="sad", threshold=1, start=start)
-    assert capture(scope, target)  # noise alone keeps the score above a threshold of 1
+    assert scope._trig_fired == pytest.approx(start + 256, abs=3)  # fires when the last reference sample is in
+    setup_trigger(scope, kind="sad", threshold=1, interval=1, start=start)
+    assert capture(scope, target)  # noise alone puts far more than one sample over a one-LSB interval
 
 
 def test_sad_without_reference_falls_back(caplog):
@@ -230,7 +230,7 @@ def test_api_uart_trigger_captures(client):
         time.sleep(0.05)
     assert client.get("/api/status").json()["traces"]["count"] == 2
     # SAD in the simulator takes its reference from the newest trace
-    r = client.put("/api/interfaces/trigger", json={"kind": "sad", "threshold": 2000, "start": 40})
+    r = client.put("/api/interfaces/trigger", json={"kind": "sad", "threshold": 20, "start": 40})
     assert r.status_code == 200, r.text
-    assert len(client.session.scope._sim_sad_ref) == 32
+    assert len(client.session.scope._sim_sad_ref) == 256  # the Husky engine compares 256 samples (512 in extended mode)
     client.put("/api/interfaces/trigger", json={"kind": "basic", "pins": ["tio4"]})
