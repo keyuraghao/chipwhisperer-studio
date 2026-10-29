@@ -336,6 +336,16 @@ Pinned toolchain versions and checksums live in `src/cwstudio/resources/toolchai
 
 Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). To cut a release, move the Unreleased notes under a new version heading, bump `__version__` in `src/cwstudio/__init__.py` and push a tag such as `v0.5.0`. CI then runs the tests and firmware builds on all three operating systems, builds the standalone bundles (window and Web builds for each OS) and the Python packages, publishes a GitHub release using the matching CHANGELOG section as its description, and uploads the Python packages to [PyPI](https://pypi.org/project/chipwhisperer-studio/).
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=keyuraghao%2Fchipwhisperer-studio&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=keyuraghao/chipwhisperer-studio&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=keyuraghao/chipwhisperer-studio&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=keyuraghao/chipwhisperer-studio&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## License
 
 Apache License 2.0, the same as ChipWhisperer. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Compilers downloaded by Studio are covered by their own licences.
