@@ -189,7 +189,7 @@ def test_sim_glitch_outcomes():
     t.con(s)
     s.glitch.trigger_src = "ext_single"
     s.glitch.repeat = 5
-    s.glitch.width = 20
+    s.glitch.width = 918  # 20 percent of a period in the simulated Husky's phase steps
     s.glitch.ext_offset = 40
     succ = 0
     for _ in range(40):

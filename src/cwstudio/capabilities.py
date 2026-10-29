@@ -199,6 +199,8 @@ def _compute_capabilities(scope, target=None) -> Dict[str, Any]:
 
     out["logic_analyzer"] = logic_sources(scope, m, la_present)
     out["clock"] = {"adc_mul": cap(husky, ADC_MUL_REASON)}
+    from cwstudio.profiles import profile_for
+    out["profile"] = profile_for(scope, m)  # what this model is made of, its limits and what it is good at (profiles.py)
     return out
 
 
@@ -289,6 +291,12 @@ def _compute_gates(c: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     adc_mul = (c.get("clock") or {}).get("adc_mul") or {}
     if not adc_mul.get("available"):
         gates["clock.adc_mul"] = {"unavailable": adc_mul.get("reason") or ADC_MUL_REASON}
+    from cwstudio.profiles import MISSING_PATHS
+    for path, why in MISSING_PATHS.get(m, {}).items():  # settings this model does not have: dropped from the tree, refused on write
+        gates.setdefault(path, {"unavailable": why})
+    if m not in HUSKY:
+        srcs = ["system", "extclk", "extclk_aux_io"]
+        gates["clock.clkgen_src"] = {"choices": srcs, "disabled": {"extclk_aux_io": "the AUX MCX clock input is on the Husky only"}}
     return gates
 
 
@@ -325,18 +333,8 @@ def gate_settings(nodes, scope) -> list:
 
 def adc_sample_limit(scope) -> Optional[int]:
     """The most ADC samples one non-streaming capture can hold on this scope, or None when unknown or when streaming is on. Hardware thread only (the Husky reports it per bits_per_sample)."""
-    m = model_of(scope)
-    adc = getattr(scope, "adc", None)
-    if adc is None:
-        return None
-    try:
-        if getattr(adc, "stream", False):
-            return None
-        if m in ("husky", "huskyplus") and hasattr(adc, "max_samples"):
-            return int(adc.max_samples) or None
-    except Exception:  # noqa: BLE001
-        return None
-    return {"lite": 24400, "pro": 96000}.get(m)
+    from cwstudio.profiles import sample_limit
+    return sample_limit(scope, model_of(scope))
 
 
 def check_setting(scope, path: str, value) -> None:
@@ -351,7 +349,9 @@ def check_setting(scope, path: str, value) -> None:
         if limit and v is not None and v > limit:
             m = model_of(scope)
             more = " at 12 bits per sample (adc.bits_per_sample = 8 allows more)" if m in ("husky", "huskyplus") and getattr(getattr(scope, "adc", None), "bits_per_sample", 12) == 12 else ""
-            raise Unsupported(f"adc.samples = {v}: the {LABELS.get(m, m)} holds at most {limit} samples per capture{more}; turn on adc.stream for longer captures")
+            from cwstudio.profiles import MODEL_PROFILES
+            streams = bool((MODEL_PROFILES.get(m) or {}).get("adc", {}).get("stream"))
+            raise Unsupported(f"adc.samples = {v}: the {LABELS.get(m, m)} holds at most {limit} samples per capture{more}" + ("; turn on adc.stream for longer captures" if streams else ""))
     gates = setting_gates(scope)
     g = gates.get(path)
     if not g:

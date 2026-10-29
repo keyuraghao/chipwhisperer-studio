@@ -1,6 +1,6 @@
 """Glitch parameter sweep implemented as an interleaved long job.
 
-The sweep iterates over a cartesian product of numeric parameter ranges, each bound to a scope settings path (e.g. ``glitch.width``).  For every point it optionally resets the target, arms the scope, sends a SimpleSerial command and classifies the response as ``normal``, ``success`` (valid but unexpected), or ``reset`` (no/invalid response).
+The sweep iterates over a cartesian product of numeric parameter ranges, each bound to a scope settings path (e.g. ``glitch.width``).  For every point it optionally resets the target, arms the scope, sends a SimpleSerial command and classifies the response as ``normal``, ``success`` (valid but unexpected), ``garbled`` (a reply that is not a valid frame), ``reset`` (no reply) or, on a Husky, ``not_fired`` (the glitch counter did not move, so the point measured nothing).
 """
 from __future__ import annotations
 
@@ -66,8 +66,12 @@ class GlitchJob(LongJob):
         self.i = 0
         self.rep = 0
         self.results: List[Dict[str, Any]] = []
-        self.counts = {"normal": 0, "success": 0, "reset": 0}
+        self.counts = {"normal": 0, "success": 0, "reset": 0, "garbled": 0, "not_fired": 0}
         self._last_progress = 0.0
+        from cwstudio.capabilities import model_of
+        from cwstudio.profiles import MODEL_PROFILES
+        readback = ((MODEL_PROFILES.get(model_of(scope) or "") or {}).get("glitch") or {}).get("readback")
+        self._counter = readback == "counter" and hasattr(getattr(scope, "glitch", None), "actual_num_glitches")  # the Husky counts the glitches it emitted
 
     # --- lifecycle ---------------------------------------------------------
     def start(self):
@@ -101,9 +105,11 @@ class GlitchJob(LongJob):
         if self.rep == 0:
             for prm, val in zip(self.params, point):
                 cwsettings.set_value(self.scope, prm["path"], val)
-        outcome, resp = self._one_shot()
+        outcome, resp, fired = self._one_shot()
         rec = {"i": self.i, "rep": self.rep, "result": outcome, "response": resp,
                "values": list(point), "t": round(time.time() - (self.started_at or 0), 3)}
+        if fired is not None:
+            rec["fired"] = fired
         self.results.append(rec)
         self.counts[outcome] = self.counts.get(outcome, 0) + 1
         self.bus.publish("glitch_result", rec, droppable=False)
@@ -144,10 +150,19 @@ class GlitchJob(LongJob):
         except Exception:  # noqa: BLE001
             pass
 
+    def _glitches_fired(self) -> Optional[int]:
+        if not self._counter:
+            return None
+        try:
+            return int(self.scope.glitch.actual_num_glitches)
+        except Exception:  # noqa: BLE001
+            return None
+
     def _one_shot(self):
         if self.reset_on == "always":
             self._reset_target()
         timed_out = False
+        fired0 = self._glitches_fired()
         if self.arm_scope:
             self.scope.arm()
         self.target.simpleserial_write(self.cmd, bytearray(self.data))
@@ -170,8 +185,14 @@ class GlitchJob(LongJob):
             else:
                 outcome = "normal"
         else:
-            outcome = "reset"
             resp_hex = (val or {}).get("full_response") if isinstance(val, dict) else None
+            outcome = "garbled" if resp_hex else "reset"  # something came back but not a valid frame, or nothing at all
+        fired = None
+        if fired0 is not None:
+            now = self._glitches_fired()
+            fired = (now - fired0) if now is not None and now >= fired0 else None
+            if fired == 0 and outcome == "normal":
+                outcome = "not_fired"  # the target answered normally because no glitch was emitted (trigger source, arm timing or enable), not because it survived one
         if self.display:
             try:
                 wave = self.scope.get_last_trace()
@@ -179,9 +200,9 @@ class GlitchJob(LongJob):
                     self.bus.publish_event(trace_event("trace", wave, {"source": "glitch", "result": outcome}, droppable=True))
             except Exception:  # noqa: BLE001  -- a display hiccup must never stop the sweep
                 pass
-        if outcome == "reset" and self.reset_on in ("reset", "always"):
+        if outcome in ("reset", "garbled") and self.reset_on in ("reset", "always"):
             self._reset_target()
-        return outcome, resp_hex
+        return outcome, resp_hex, fired
 
     def export_csv(self, path: str) -> str:
         path = os.path.expanduser(path)
@@ -189,7 +210,7 @@ class GlitchJob(LongJob):
             path += ".csv"
         with open(path, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["i", "rep"] + [p["path"] for p in self.params] + ["result", "response", "t"])
+            w.writerow(["i", "rep"] + [p["path"] for p in self.params] + ["result", "response", "fired", "t"])
             for r in self.results:
-                w.writerow([r["i"], r["rep"]] + r["values"] + [r["result"], r["response"], r["t"]])
+                w.writerow([r["i"], r["rep"]] + r["values"] + [r["result"], r["response"], r.get("fired", ""), r["t"]])
         return path

@@ -98,6 +98,8 @@ class Session:
         self.worker.add_periodic("serial-poll", self._poll_serial, 0.1, only_idle=True)
         self.worker.add_periodic("status", self._push_status, 2.0, only_idle=False)
         self.worker.add_periodic("scope-alive", self._check_scope_alive, 3.0, only_idle=True)
+        self._health: Dict[str, Any] = {"problems": []}
+        self.worker.add_periodic("health", self._read_health, 3.0, only_idle=True)  # temperature, locks and sticky errors while nothing else talks to the scope
 
     # --- lifecycle --------------------------------------------------------
     def close(self):
@@ -149,8 +151,41 @@ class Session:
             "data_dir": self.data_dir,
             "clients": self.bus.subscriber_count,
             "hardware_stuck": self.worker.stuck(),
+            "health": self._health,
         }
         return st
+
+    def _read_health(self):
+        """Hardware thread: the model's monitors (health.py); a change in the problem list pushes the status so the header chip follows."""
+        from cwstudio.capabilities import model_of
+        from cwstudio.health import read_health
+        sc = self.scope
+        if sc is None:
+            if self._health.get("problems"):
+                self._health = {"problems": []}
+                self._push_status()
+            return
+        h = read_health(sc, model_of(sc))
+        changed = h.get("problems") != self._health.get("problems")
+        self._health = h
+        if changed:
+            self._push_status()
+
+    def health(self, refresh: bool = False) -> Dict[str, Any]:
+        """The last health reading (or a fresh one with refresh, read on the hardware thread)."""
+        if refresh and self.scope is not None:
+            self.worker.call(self._read_health, timeout=30)
+        return dict(self._health)
+
+    def clear_errors(self) -> Dict[str, Any]:
+        """Clear the scope's sticky errors and alarms, then read the health again."""
+        if self.scope is None:
+            raise RuntimeError("scope not connected")
+        from cwstudio.health import clear_errors
+        res = self.worker.call(clear_errors, self.scope, timeout=30)
+        self.worker.call(self._read_health, timeout=30)
+        self._push_status()
+        return {**res, "health": dict(self._health)}
 
     def _cpa_summary(self) -> Optional[Dict[str, Any]]:
         """The five fields status() shows about the CPA, read from the result directly (its full to_json() sorts every byte's guesses and copies the whole history, and status runs every 2 s)."""
@@ -201,6 +236,7 @@ class Session:
         name = self._scope_info.get("name") or "scope"
         log.warning("The %s was unplugged or stopped responding (%s); Studio disconnected it. Plug it back in and connect again.", name, reason)
         self._disconnect_all()
+        self._health = {"problems": []}
         from cwstudio.capabilities import invalidate_gates
         invalidate_gates()
         self.scope_kind = None
@@ -352,11 +388,15 @@ class Session:
                 self.scope.reset_fpga()
             elif action == "glitch_disable" and hasattr(self.scope, "glitch_disable"):
                 self.scope.glitch_disable()
+            elif action == "cglitch_setup" and hasattr(self.scope, "cglitch_setup"):
+                self.scope.cglitch_setup(default_setup=False)  # the library's clock glitch preset, without resetting the capture settings
+            elif action in ("vglitch_lp", "vglitch_hp", "vglitch_both") and hasattr(self.scope, "vglitch_setup"):
+                self.scope.vglitch_setup(action.split("_", 1)[1], default_setup=False)
             elif action == "arm_capture":
                 self.scope.arm()
                 to = self.scope.capture()
                 return {"timeout": bool(to)}
-            elif action in ("reset_fpga", "glitch_disable"):
+            elif action in ("reset_fpga", "glitch_disable", "cglitch_setup", "vglitch_lp", "vglitch_hp", "vglitch_both"):
                 raise ValueError(f"this scope does not support {action}")
             else:
                 raise ValueError(f"unknown action {action}")
@@ -643,7 +683,12 @@ class Session:
                     from cwstudio.aes import last_round_key
                     known_b = last_round_key(known_b)
         pr = params.get("point_range")
-        pr = (int(pr[0]), int(pr[1])) if pr else None
+        if pr:  # an open end (None or 0, as the UI and the MCP tool send it) means up to the last sample
+            lo = int(pr[0] or 0)
+            hi = int(pr[1]) if len(pr) > 1 and pr[1] else int(W.shape[1])
+            pr = (lo, hi)
+        else:
+            pr = None
 
         def cb(res):
             self.bus.publish("cpa", res.to_json(), droppable=not res.done)
@@ -671,6 +716,12 @@ class Session:
     def start_glitch(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if self.scope is None:
             raise RuntimeError("scope not connected")
+        from cwstudio.capabilities import check_setting
+        for prm in params.get("parameters") or []:  # a path this model does not have (glitch.width on a Nano) is refused here with the reason, not on the first point of the sweep
+            path = prm.get("path") if isinstance(prm, dict) else None
+            if path:
+                vals = prm.get("values") or [prm.get("start", 0)]
+                self.worker.call(check_setting, self.scope, path, vals[0])
         job = GlitchJob(self.scope, self.target, self.bus, params)
         if not self.worker.start_long_job(job):
             raise RuntimeError("another job is running")

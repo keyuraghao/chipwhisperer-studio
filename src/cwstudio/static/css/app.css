@@ -194,7 +194,8 @@ table.tbl th { color: var(--muted); font-weight: 600; font-size: 11px; text-tran
 .badge.normal, .badge.info { background: var(--info-soft); color: var(--info); }
 .badge.success, .badge.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.reset, .badge.err { background: var(--err-soft); color: var(--err); }
-.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.warn, .badge.garbled { background: var(--warn-soft); color: var(--warn); }
+.badge.not_fired { background: var(--surface-3); color: var(--muted); }
 .badge.accent { background: var(--accent-soft); color: var(--accent); }
 details summary { cursor: pointer; color: var(--fg-2); font-size: 12.5px; margin: 4px 0; user-select: none; }
 details[open] summary { margin-bottom: 10px; }

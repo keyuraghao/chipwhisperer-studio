@@ -253,9 +253,19 @@ def build_server(client: StudioClient, url_note: str = ""):
             out.append(client.put("/api/scope/settings", {"path": k, "value": v}))
         return out
 
+    @mcp.tool(annotations=RO)
+    def scope_health(refresh: bool = True) -> Dict[str, Any]:
+        """How the scope is doing: FPGA temperature and rails with alarms (Husky), PLL or DCM lock, external clock drift, sticky capture errors (clip, FIFO, trigger too soon), USB controller serial overflows, glitches fired and the last trigger length, plus 'problems': plain sentences about anything wrong and what to do. Read fresh from the hardware by default."""
+        return client.get("/api/scope/health", params={"refresh": "true" if refresh else "false"})
+
     @mcp.tool(annotations=HW)
-    def scope_action(action: Literal["default_setup", "arm_capture", "reset_fpga", "glitch_disable"]) -> Any:
-        """Run a scope action: default_setup (recommended defaults), arm_capture (arm and wait for one trigger without talking to the target, to test triggering), reset_fpga or glitch_disable (stop glitching and restore the clock and power outputs)."""
+    def scope_clear_errors() -> Dict[str, Any]:
+        """Clear the scope's sticky errors and alarms (a Husky powers its glitch, logic analyser and SAD blocks down after an XADC alarm until this is done) and return the health read afterwards."""
+        return client.post("/api/scope/health/clear")
+
+    @mcp.tool(annotations=HW)
+    def scope_action(action: Literal["default_setup", "arm_capture", "reset_fpga", "glitch_disable", "cglitch_setup", "vglitch_lp", "vglitch_hp", "vglitch_both"]) -> Any:
+        """Run a scope action: default_setup (recommended defaults), arm_capture (arm and wait for one trigger without talking to the target, to test triggering), reset_fpga, glitch_disable (stop glitching and restore the clock and power outputs), cglitch_setup (clock glitch preset: glitch clock on HS2, crowbar off) or vglitch_lp / vglitch_hp / vglitch_both (voltage glitch preset with that crowbar MOSFET). The presets keep the capture settings; the Nano has no clock glitch."""
         return client.post(f"/api/scope/action/{action}")
 
     # ----- target ----------------------------------------------------------------
@@ -413,7 +423,7 @@ def build_server(client: StudioClient, url_note: str = ""):
     # ----- glitch ----------------------------------------------------------------------
     @mcp.tool(annotations=HW)
     def glitch_start(parameters: List[Dict[str, Any]], command: str = "g", data: str = "", expected: Optional[str] = None, output_len: int = 4, repeats: int = 1, order: Literal["nested", "random"] = "nested", reset: Literal["none", "nrst", "pdic"] = "nrst", reset_on: Literal["never", "reset", "always"] = "reset", reset_delay: float = 0.05, glitch_timeout: int = 1000, arm_scope: bool = True, wait: bool = False, timeout_s: float = 1800) -> Dict[str, Any]:
-        """Sweep glitch parameters. parameters is a list of {path, start, stop, step} or {path, values:[...]} over scope settings (e.g. glitch.width, glitch.offset, glitch.ext_offset, glitch.repeat); every combination is tried 'repeats' times in nested or random order. Each point sends SimpleSerial command with hex data and reads output_len bytes; a valid reply different from expected (hex) counts as success, no reply as reset. reset chooses how to recover the target (nrst pin, pdic, none), reset_on when (never, after a reset result, always), reset_delay in seconds. Configure glitch.clk_src/output/trigger_src first with scope_set_setting."""
+        """Sweep glitch parameters. parameters is a list of {path, start, stop, step} or {path, values:[...]} over scope settings (e.g. glitch.width, glitch.offset, glitch.ext_offset, glitch.repeat); every combination is tried 'repeats' times in nested or random order. Each point sends SimpleSerial command with hex data and reads output_len bytes; a valid reply different from expected (hex) counts as success, no reply as reset, a mangled reply as garbled, and on a Husky a point whose glitch counter did not move as not_fired. reset chooses how to recover the target (nrst pin, pdic, none), reset_on when (never, after a reset result, always), reset_delay in seconds. Configure glitch.clk_src/output/trigger_src first with scope_set_setting."""
         params = {"parameters": parameters, "command": command, "data": data, "expected": expected, "output_len": output_len, "repeats": repeats, "order": order, "reset": reset, "reset_on": reset_on, "reset_delay": reset_delay, "glitch_timeout": glitch_timeout, "arm_scope": arm_scope}
         res = client.post("/api/glitch/start", {k: v for k, v in params.items() if v is not None})
         if wait:

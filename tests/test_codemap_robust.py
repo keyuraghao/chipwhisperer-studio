@@ -140,12 +140,13 @@ def test_simulator_glitches_emulated_firmware():
             v = tg.simpleserial_read_witherrors("r", 4)
             c["reset" if not v["valid"] else "normal" if bytes(v["payload"]) == (2500).to_bytes(4, "little") else "success"] += 1
         return c
-    assert sweep(0.5) == {"normal": 40}
-    mid = sweep(20.0)
+    # the simulated Husky takes the width in phase steps (4592 per period at 7.37 MHz): 23 is 0.5 percent, 918 is 20, 2250 is 49
+    assert sweep(23) == {"normal": 40}
+    mid = sweep(918)
     assert mid["success"] >= 8 and mid["normal"] >= 4, mid
-    assert sweep(49.0) == {"reset": 40}
-    g.enabled, g.repeat = False, 0
-    assert sweep(20.0) == {"normal": 40}
+    assert sweep(2250) == {"reset": 40}
+    g.enabled, g.trigger_src = False, "manual"
+    assert sweep(918) == {"normal": 40}
 
 
 def test_simulator_run_cache_is_bounded():

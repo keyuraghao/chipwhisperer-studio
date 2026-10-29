@@ -138,6 +138,21 @@ def test_cpa(client):
     assert header["guess"] == 0x2b and corr.shape[0] == 3000
 
 
+def test_cpa_open_point_range(client):
+    """An open-ended point range, as the MCP cpa_start tool sends it (point_start given, point_end None), used to raise TypeError in Session.start_cpa."""
+    for pr in ([100, None], [100, 0], [0, None]):
+        r = client.post("/api/analysis/cpa/start", json={"model": "sbox_hw", "report_every": 50, "point_range": pr})
+        assert r.status_code == 200, r.text
+        for _ in range(200):
+            res = client.get("/api/analysis/cpa").json()
+            if res.get("done"):
+                break
+            time.sleep(0.1)
+        assert res["done"] and res["error"] is None, res.get("error")
+        if pr[0] == 0:  # a range that starts later cuts the first bytes' leak out, so only the full range must recover the key
+            assert res["best_key"] == "2b7e151628aed2a6abf7158809cf4f3c"
+
+
 def test_export_import(client):
     r = client.post("/api/traces/export", json={"path": "t1", "format": "npz"})
     assert r.status_code == 200, r.text
@@ -159,7 +174,7 @@ def test_glitch(client):
     client.put("/api/scope/settings", json={"path": "glitch.trigger_src", "value": "ext_single"})
     client.put("/api/scope/settings", json={"path": "glitch.repeat", "value": 5})
     r = client.post("/api/glitch/start", json={
-        "parameters": [{"path": "glitch.width", "start": 0, "stop": 45, "step": 15},
+        "parameters": [{"path": "glitch.width", "start": 0, "stop": 1500, "step": 500},  # Husky phase steps (4592 per period at 7.37 MHz): 0, 11, 22 and 33 percent
                        {"path": "glitch.ext_offset", "start": 0, "stop": 80, "step": 20, "int": True}],
         "repeats": 2, "command": "g", "expected": "c4090000", "output_len": 4, "reset": "nrst",
     })
@@ -172,7 +187,7 @@ def test_glitch(client):
     assert res["counts"]["success"] > 0 and res["counts"]["normal"] > 0
     r = client.post("/api/glitch/export", json={"path": "g.csv"})
     assert r.status_code == 200
-    client.put("/api/scope/settings", json={"path": "glitch.repeat", "value": 0})
+    client.put("/api/scope/settings", json={"path": "glitch.trigger_src", "value": "manual"})  # glitch off again (repeat is 1..8192 on a Husky)
 
 
 def test_websocket_frames(client):

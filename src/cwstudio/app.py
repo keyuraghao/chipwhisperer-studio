@@ -182,6 +182,22 @@ def create_app(session: Session) -> App:
         except Exception as e:  # noqa: BLE001
             err(e)
 
+    @app.get("/api/scope/health")
+    async def scope_health(refresh: bool = False):
+        """Temperature and rails (Husky XADC), clock locks, external clock drift, sticky capture errors, USB controller errors, glitches fired and the last trigger length, with a problems list in plain words. The reading is refreshed every few seconds while the scope is idle; refresh=true reads it now."""
+        try:
+            return await run(session.health, refresh)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
+    @app.post("/api/scope/health/clear")
+    async def scope_health_clear():
+        """Clear the scope's sticky errors and alarms (Husky: SAM, XADC, ADC, external clock and trace errors, the glitch counter) and read the health again."""
+        try:
+            return await run(session.clear_errors)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
     @app.post("/api/scope/action/{action}")
     async def scope_action(action: str):
         try:

@@ -301,8 +301,8 @@ def test_adc_samples_limit_is_refused_up_front():
     """chipwhisperer's samples setter takes any number and the capture then dies with "consecutive timeouts" (a Husky at 140000 samples on the stress rig): Studio refuses a value above the scope's limit with the real reason, and lets it through when streaming."""
     from cwstudio.capabilities import adc_sample_limit
     husky = SimScope(sim_model="husky")
-    assert adc_sample_limit(husky) is None  # the simulator has no FIFO limit of its own (it validates 1..131070 itself)
-    husky.adc.max_samples = 131124
+    assert adc_sample_limit(husky) == 137209  # the simulated Husky reports the real FIFO limit at 12 bits
+    husky.adc.max_samples = 131124  # a hardware build that reports a smaller limit
     assert adc_sample_limit(husky) == 131124
     check_setting(husky, "adc.samples", 131124)
     with pytest.raises(Unsupported, match="at most 131124 samples"):
@@ -352,7 +352,8 @@ def test_adc_mul_husky_only(client, model):
             else:
                 paths.add(n["path"])
     walk(client.get("/api/scope/settings").json())
-    assert ("clock.adc_mul" in paths) == husky and "clock.clkgen_freq" in paths
+    assert ("clock.adc_mul" in paths) == husky
+    assert ("clock.clkgen_freq" in paths) == (model != "nano") and ("adc.clk_freq" in paths) == (model == "nano")  # the Nano has no CLKGEN: its clocks are adc.clk_freq and io.clkout
     assert client.get("/api/capabilities").json()["clock"]["adc_mul"]["available"] == husky
     sc = SimScope(sim_model=model)
     assert hasattr(sc.clock, "adc_mul") == husky
@@ -640,9 +641,12 @@ def test_trigger_applied_to_scope_and_captures(client, model):
             else:
                 flat[n["path"]] = n.get("value")
     walk(client.get("/api/scope/settings").json())
-    assert flat["trigger.triggers"] == r["current"]["trigger.triggers"] and flat["adc.basic_mode"] == r["current"]["adc.basic_mode"]
     if model != "nano":
+        assert flat["trigger.triggers"] == r["current"]["trigger.triggers"] and flat["adc.basic_mode"] == r["current"]["adc.basic_mode"]
         assert flat["trigger.triggers"] == "tio3 OR tio4" and flat["adc.basic_mode"] == "falling_edge"
+    else:
+        assert "trigger.triggers" not in flat and "adc.basic_mode" not in flat  # the Nano has no trigger settings: TIO4 rising edge, full stop
+        assert r["current"]["trigger.triggers"] == "tio4"
     client.post("/api/capture/start", json={"count": 2, "clear": True})
     deadline = time.time() + 20
     while time.time() < deadline and client.get("/api/status").json()["job"]["running"]:

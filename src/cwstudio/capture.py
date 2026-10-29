@@ -76,6 +76,19 @@ class CaptureJob(LongJob):
         self._rate_n0 = 0
         self.last_wave: Optional[np.ndarray] = None
         self.last_index = -1
+        # per model: the Husky captures adc.segments traces per arm (split into stored traces here) and reports sticky capture errors after each capture
+        from cwstudio.capabilities import model_of
+        from cwstudio.profiles import MODEL_PROFILES
+        prof = (MODEL_PROFILES.get(model_of(scope) or "") or {}).get("adc", {})
+        self.segments = 1
+        if prof.get("segments"):
+            try:
+                self.segments = max(1, int(getattr(scope.adc, "segments", 1)))
+            except (AttributeError, TypeError, ValueError):
+                self.segments = 1
+        self._reads_errors = bool(prof.get("errors")) and hasattr(getattr(scope, "adc", None), "errors")
+        self.hw_errors: Optional[str] = None  # the last capture error the hardware reported (Husky adc.errors)
+        self.hw_error_count = 0
 
     def start(self):
         if self.mode == "simpleserial" and self.target is None:
@@ -97,31 +110,41 @@ class CaptureJob(LongJob):
                 return False
         self._last_step = time.time()
         try:
-            if self.mode == "trigger_only":
-                trace = self._capture_trigger_only()
+            if self.segments > 1:
+                traces = self._capture_segmented()
+            elif self.mode == "trigger_only":
+                traces = self._capture_trigger_only()
             else:
-                trace = self._capture_simpleserial()
+                traces = self._capture_simpleserial()
         except Exception as e:  # noqa: BLE001
             self.error = f"{type(e).__name__}: {e}"
             log.error("capture error: %s", self.error)
             return True
-        if trace is None:
+        self._read_errors()
+        if traces is None:
             self.timeouts += 1
             self.consecutive_timeouts += 1
+            why = f" ({self.hw_errors})" if self.hw_errors else ""
             self.bus.publish("log", {"level": "WARNING", "logger": "capture",
-                                     "msg": f"capture timeout ({self.consecutive_timeouts} in a row)"})
+                                     "msg": f"capture timeout ({self.consecutive_timeouts} in a row){why}"})
             if self.consecutive_timeouts >= self.max_timeouts:
-                self.error = f"{self.max_timeouts} consecutive timeouts - check trigger and target"
+                self.error = f"{self.max_timeouts} consecutive timeouts - check trigger and target" + why
                 return True
             return False
         self.consecutive_timeouts = 0
-        wave, tin, tout, key = trace
-        idx = -1
-        if self.store_traces:
-            idx = self.store.append(wave, tin, tout, key)
-        self.done_count += 1
-        self.last_wave = wave
-        self.last_index = idx
+        if isinstance(traces, tuple):
+            traces = [traces]
+        for wave, tin, tout, key in traces:
+            idx = -1
+            if self.store_traces:
+                idx = self.store.append(wave, tin, tout, key)
+            self.done_count += 1
+            self.last_wave = wave
+            self.last_index = idx
+            if self.count and self.done_count >= self.count:
+                break
+        wave, idx = self.last_wave, self.last_index
+        tin, tout, key = traces[-1][1], traces[-1][2], traces[-1][3]
         now = time.time()
         if now - self._rate_t0 >= 1.0:
             self.rate = (self.done_count - self._rate_n0) / (now - self._rate_t0)
@@ -150,9 +173,26 @@ class CaptureJob(LongJob):
     def progress(self) -> Dict[str, Any]:
         return {
             "done": self.done_count, "total": self.count, "target": self.count, "timeouts": self.timeouts,
-            "rate": round(self.rate, 1), "stored": len(self.store), "mode": self.mode,
+            "rate": round(self.rate, 1), "stored": len(self.store), "mode": self.mode, "segments": self.segments,
+            "hw_errors": self.hw_errors, "hw_error_count": self.hw_error_count,
             "elapsed": round((getattr(self, "ended_at", None) or time.time()) - (self.started_at or time.time()), 1),  # frozen once the job has ended
         }
+
+    def _read_errors(self):
+        """What the Husky's capture error register says after this capture (sticky until the next arm): kept for the status and the capture banner, logged once per distinct message."""
+        if not self._reads_errors:
+            return
+        try:
+            e = self.scope.adc.errors
+        except Exception:  # noqa: BLE001
+            return
+        text = "" if e in (None, 0, False, "0", "False", "") else str(e).strip()
+        if not text:
+            return
+        self.hw_error_count += 1
+        if text != self.hw_errors:
+            self.hw_errors = text
+            self.bus.publish("log", {"level": "WARNING", "logger": "capture", "msg": f"the scope reported a capture error: {text}"})
 
     # --- capture primitives ------------------------------------------------
     def _capture_simpleserial(self):
@@ -173,6 +213,42 @@ class CaptureJob(LongJob):
         if wave is None or len(wave) == 0:
             return None
         return np.asarray(wave, np.float32), b"", b"", b""
+
+    def _capture_segmented(self):
+        """One arm, adc.segments triggers (one SimpleSerial command each, or the target's own in trigger-only mode), one download, split into one trace per segment: the Husky's fast path."""
+        seg = self.segments
+        pairs = []
+        if self.mode == "simpleserial":
+            pairs = [self.gen.next_pair() for _ in range(seg)]
+        self.scope.arm()
+        out_len = int(getattr(self.target, "output_len", 16) or 16)
+        texts_out = []
+        last_key = None
+        for key, text in pairs:
+            if key != last_key:
+                self.target.set_key(bytearray(key), ack=self.ack)
+                last_key = key
+            self.target.simpleserial_write("p", bytearray(text))
+            try:
+                r = self.target.simpleserial_read("r", out_len, ack=self.ack)
+            except Exception:  # noqa: BLE001  a missed reply is a timeout for that segment, not a crash
+                r = None
+            texts_out.append(bytes(r) if r is not None else b"")
+        timed_out = self.scope.capture()
+        if timed_out:
+            return None
+        wave = self.scope.get_last_trace()
+        if wave is None or len(wave) == 0:
+            return None
+        wave = np.asarray(wave, np.float32)
+        n = len(wave) // seg
+        if n == 0 or len(wave) != n * seg:
+            raise RuntimeError(f"segmented capture returned {len(wave)} samples, not {seg} segments of equal length")
+        traces = []
+        for i in range(seg):
+            key, text = pairs[i] if pairs else (b"", b"")
+            traces.append((wave[i * n:(i + 1) * n].copy(), bytes(text), texts_out[i] if texts_out else b"", bytes(key)))
+        return traces
 
 
 def _hex(s: Optional[str]) -> Optional[bytes]:

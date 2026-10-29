@@ -28,10 +28,13 @@ class _Settings:
         for name, default, _doc in self.FIELDS:
             object.__setattr__(self, name, default)
 
+    _hidden: frozenset = frozenset()  # fields this model's hardware does not have: kept for the simulator's own use, left out of the settings tree
+
     def _dict_repr(self):
         rtn = OrderedDict()
         for name, _default, _doc in self.FIELDS:
-            rtn[name] = getattr(self, name)
+            if name not in self._hidden:
+                rtn[name] = getattr(self, name)
         return rtn
 
     def __repr__(self):
@@ -91,18 +94,90 @@ class SimADC(_Settings):
         ("timeout", 2.0, "Capture timeout in seconds."),
         ("offset", 0, "Number of samples to skip after the trigger."),
         ("presamples", 0, "Samples to record before the trigger."),
-        ("samples", 5000, "Number of ADC samples to record in a single capture (1 to 131070)."),
+        ("samples", 5000, "Number of ADC samples to record in a single capture (the limit depends on the model: 24400 on a Lite, 96000 on a Pro, 137209 on a Husky at 12 bits, 100000 on a Nano)."),
         ("decimate", 1, "Keep one sample out of every `decimate`."),
         ("trig_count", 0, "Number of ADC clock cycles the trigger was active (read only)."),
+        # Husky
+        ("bits_per_sample", 12, "ADC resolution: 12, or 8 for more samples and faster streaming (Husky)."),
+        ("max_samples", 137209, "Most samples one capture can hold at the current bits_per_sample (read only, Husky)."),
+        ("max_presamples", 26605, "Most presamples at the current bits_per_sample (read only, Husky)."),
+        ("segments", 1, "Captures per arm, each `samples` long (Husky): the fast way to collect many traces."),
+        ("segment_cycles", 0, "ADC cycles between segments when segment_cycle_counter_en is set (Husky)."),
+        ("segment_cycle_counter_en", False, "Start a new segment every segment_cycles instead of on each trigger (Husky)."),
+        ("stream", False, "Stream samples to the host while capturing: no sample limit, about 10 MS/s (Pro and Husky)."),
+        ("errors", "", "Sticky capture errors since the last arm (Husky: clip, gain, segment, presample, FIFO over/underflow, trigger too soon); write anything to clear."),
+        # Nano
+        ("clk_freq", 7.5e6, "ADC clock in Hz: 240 MHz divided by 1, 2, 4, 8, 16, 32 or 64 (Nano)."),
+        ("clk_src", "int", "ADC clock source: int (the Nano's own divider) or ext (the HS1 input) (Nano)."),
     ]
+    _MODEL_FIELDS = {
+        "nano": {"state", "samples", "clk_freq", "clk_src"},
+        "lite": {"state", "basic_mode", "timeout", "offset", "presamples", "samples", "decimate", "trig_count"},
+        "pro": {"state", "basic_mode", "timeout", "offset", "presamples", "samples", "decimate", "trig_count", "stream"},
+        "husky": {"state", "basic_mode", "timeout", "offset", "presamples", "samples", "decimate", "trig_count", "bits_per_sample", "max_samples", "max_presamples", "segments", "segment_cycles", "segment_cycle_counter_en", "stream", "errors"},
+    }
 
-    def __init__(self):
-        pass
+    def __init__(self, model: str = "husky"):
+        self.model = model
+        shown = self._MODEL_FIELDS.get("husky" if model in ("husky", "huskyplus") else model, self._MODEL_FIELDS["husky"])
+        self._hidden = frozenset(name for name, _d, _doc in self.FIELDS if name not in shown)
+        self._refresh_limits()
+
+    def _profile(self):
+        from cwstudio.profiles import MODEL_PROFILES
+        return MODEL_PROFILES.get(self.model) or MODEL_PROFILES["husky"]
+
+    def _refresh_limits(self):
+        adc = self._profile()["adc"]
+        bits = int(self._bits_per_sample) if self.model in ("husky", "huskyplus") else adc["bits"]
+        self._max_samples = adc["max_samples"].get(bits) or adc["max_samples"][adc["bits"]]
+        self._max_presamples = adc.get("max_presamples", {}).get(bits, self._max_samples)
 
     def _validate_samples(self, v):
         v = int(v)
-        if not 1 <= v <= 131070:
-            raise ValueError("samples must be 1..131070")
+        limit = self._max_samples
+        streaming = self._profile()["adc"]["stream"] and self._stream
+        if v < 1 or (v > limit and not streaming) or v > 100_000_000:
+            raise ValueError(f"samples must be 1..{limit}" + (" (or turn on adc.stream)" if self._profile()["adc"]["stream"] else ""))
+        return v
+
+    def _validate_presamples(self, v):
+        v = int(v)
+        if v < 0 or v > self._max_presamples:
+            raise ValueError(f"presamples must be 0..{self._max_presamples}")
+        if self.model in ("husky", "huskyplus") and v == 1:
+            raise ValueError("presamples cannot be 1 on the Husky")
+        return v
+
+    def _validate_bits_per_sample(self, v):
+        v = int(v)
+        if v not in (8, 12):
+            raise ValueError("bits_per_sample must be 8 or 12")
+        self._bits_per_sample = v
+        self._refresh_limits()
+        if self._samples > self._max_samples and not self._stream:
+            self._samples = self._max_samples
+        return v
+
+    def _validate_segments(self, v):
+        v = int(v)
+        if not 1 <= v <= 65535:
+            raise ValueError("segments must be 1..65535")
+        return v
+
+    def _validate_errors(self, v):
+        return ""  # any write clears, like the hardware
+
+    def _validate_clk_freq(self, v):
+        from cwstudio.profiles import NANO_BASE_HZ, NANO_DIVISORS
+        if v is None:
+            return None
+        want = float(v)
+        return NANO_BASE_HZ / min(NANO_DIVISORS, key=lambda d: abs(NANO_BASE_HZ / d - want))
+
+    def _validate_clk_src(self, v):
+        if v not in ("int", "ext"):
+            raise ValueError("clk_src must be int or ext")
         return v
 
     def _validate_basic_mode(self, v):
@@ -126,13 +201,16 @@ class SimClock(_Settings):
         ("clkgen_freq", 7384615, "Target clock frequency in Hz."),
         ("clkgen_locked", True, "CLKGEN locked (read only)."),
         ("freq_ctr", 7384615, "Frequency counter reading (read only)."),
+        ("extclk_monitor_enabled", False, "Flag a change of the external clock frequency (Husky)."),
+        ("extclk_error", False, "The external clock changed since the PLL was set; write False to clear (Husky)."),
     ]
+    _HUSKY_ONLY = ("adc_mul", "extclk_monitor_enabled", "extclk_error")
 
     def __init__(self, husky: bool = True):
         self._husky = husky  # clock.adc_mul exists on the Husky only; as a CW-Lite, Pro or Nano the simulator has no such attribute, like the hardware
 
     def _dict_repr(self):
-        return OrderedDict((name, getattr(self, name)) for name, _default, _doc in self.FIELDS if self._husky or name != "adc_mul")
+        return OrderedDict((name, getattr(self, name)) for name, _default, _doc in self.FIELDS if self._husky or name not in self._HUSKY_ONLY)
 
     def _derive(self, clkgen=None, mul=None):
         """The ADC rate follows the target clock (CLKGEN; on EXTCLK the simulated target is clocked from CLKGEN through HS2 as usual, so the same frequency) times the multiplier, as on the hardware."""
@@ -207,30 +285,156 @@ class SimIO(_Settings):
         ("target_pwr", True, "Target power switch."),
         ("glitch_hp", False, "High-power crowbar MOSFET."),
         ("glitch_lp", False, "Low-power crowbar MOSFET."),
+        ("clkout", 7.5e6, "Target clock output in Hz: 240 MHz divided by 1, 2, 4, 8, 16, 32 or 64, or None for high-Z (Nano)."),
     ]
 
-    def __init__(self):
-        pass
+    def __init__(self, model: str = "husky"):
+        self.model = model
+        self._hidden = frozenset({"hs2", "target_pwr", "glitch_hp", "glitch_lp"} if model == "nano" else {"clkout"})
+
+    def _validate_clkout(self, v):
+        from cwstudio.profiles import NANO_BASE_HZ, NANO_DIVISORS
+        if v is None:
+            return None
+        want = float(v)
+        return NANO_BASE_HZ / min(NANO_DIVISORS, key=lambda d: abs(NANO_BASE_HZ / d - want))
 
 
 @_make_props
 class SimGlitch(_Settings):
     FIELDS = [
-        ("enabled", False, "Enable the glitch module (Husky-style)."),
-        ("clk_src", "clkgen", "Glitch clock source."),
-        ("width", 0.0, "Glitch pulse width, percent of a clock period (-49.8..49.8)."),
-        ("width_fine", 0, "Fine width adjust."),
-        ("offset", 0.0, "Glitch offset, percent of a clock period."),
-        ("offset_fine", 0, "Fine offset adjust."),
+        ("enabled", False, "Power the glitch MMCMs (Husky)."),
+        ("mmcm_locked", True, "Glitch MMCMs locked (read only, Husky)."),
+        ("clk_src", "clkgen", "Glitch clock source: target, clkgen (Lite, Pro) or pll (Husky)."),
+        ("phase_shift_steps", 4592, "Phase steps per glitch clock period: 56 x VCO / clkgen (read only, Husky)."),
+        ("width", 0.0, "Glitch pulse width: percent of a clock period (-49.8..49.8) on a Lite or Pro, phase steps (0..phase_shift_steps/2) on a Husky."),
+        ("width_fine", 0, "Fine width adjust, -255..255 DCM steps (Lite, Pro)."),
+        ("offset", 0.0, "Glitch offset: percent of a clock period on a Lite or Pro, phase steps on a Husky."),
+        ("offset_fine", 0, "Fine offset adjust, -255..255 DCM steps (Lite, Pro)."),
         ("trigger_src", "manual", "continuous, manual, ext_single, ext_continuous."),
         ("arm_timing", "after_scope", "no_glitch, before_scope, after_scope."),
-        ("ext_offset", 0, "Clock cycles between trigger and glitch."),
-        ("repeat", 1, "Number of consecutive glitch pulses."),
+        ("ext_offset", 0, "Clock cycles between trigger and glitch (CPU cycles of 8.3 ns on a Nano)."),
+        ("repeat", 1, "Number of consecutive glitch cycles (on a Nano the pulse length in 8.3 ns cycles, 0 = off)."),
+        ("num_glitches", 1, "Glitches per trigger, 1..32, each with its own ext_offset and repeat (Husky)."),
+        ("actual_num_glitches", 0, "Glitches fired since the counter was reset (read only, Husky)."),
         ("output", "clock_xor", "clock_xor, clock_or, glitch_only, clock_only, enable_only."),
+    ]
+    _MODEL_FIELDS = {
+        "nano": {"ext_offset", "repeat"},
+        "lite": {"clk_src", "width", "width_fine", "offset", "offset_fine", "trigger_src", "arm_timing", "ext_offset", "repeat", "output"},
+        "husky": {"enabled", "mmcm_locked", "clk_src", "phase_shift_steps", "width", "offset", "trigger_src", "arm_timing", "ext_offset", "repeat", "num_glitches", "actual_num_glitches", "output"},
+    }
+
+    def __init__(self, model: str = "husky"):
+        self.model = model
+        key = "husky" if model in ("husky", "huskyplus") else ("nano" if model == "nano" else "lite")
+        shown = self._MODEL_FIELDS[key]
+        self._hidden = frozenset(name for name, _d, _doc in self.FIELDS if name not in shown)
+        if key == "husky":
+            self._width, self._offset = 0, 0
+        if key == "nano":
+            self._repeat = 0  # off until a sweep sets it, like default_setup on the hardware
+
+    def _husky(self) -> bool:
+        return self.model in ("husky", "huskyplus")
+
+    def _validate_width(self, v):
+        if self._husky():
+            v = int(v)
+            if not 0 <= v <= self._phase_shift_steps // 2:
+                raise ValueError(f"width must be 0..{self._phase_shift_steps // 2} phase steps")
+            return v
+        v = float(v)
+        if not -49.8 <= v <= 49.8:
+            raise ValueError("width must be -49.8..49.8 percent")
+        return v
+
+    def _validate_offset(self, v):
+        if self._husky():
+            v = int(v)
+            half = self._phase_shift_steps // 2
+            if not -half <= v <= half:
+                raise ValueError(f"offset must be -{half}..{half} phase steps")
+            return v
+        v = float(v)
+        if not -49.8 <= v <= 49.8:
+            raise ValueError("offset must be -49.8..49.8 percent")
+        return v
+
+    def _validate_repeat(self, v):
+        v = int(v)
+        if self.model == "nano":
+            if v < 0:
+                raise ValueError("repeat must be 0 or more")
+            return v
+        if not 1 <= v <= 8192:
+            raise ValueError("repeat must be 1..8192")
+        return v
+
+    def _validate_num_glitches(self, v):
+        v = int(v)
+        if not 1 <= v <= 32:
+            raise ValueError("num_glitches must be 1..32")
+        return v
+
+    def width_percent(self) -> float:
+        """The pulse width as a percent of a target clock period whatever the model's own unit, for the simulated target's outcome model."""
+        if self.model == "nano":
+            return min(49.8, abs(int(self._repeat)) * 6.25)  # 8.3 ns cycles against a 133 ns period at 7.5 MHz
+        if self._husky():
+            return abs(int(self._width)) / max(1, int(self._phase_shift_steps)) * 100.0
+        return abs(float(self._width))
+
+    def reset_glitch_counter(self):
+        self._actual_num_glitches = 0
+
+
+@_make_props
+class SimXADC(_Settings):
+    """The Husky's FPGA monitor: temperature, rails and sticky alarms. The simulator sits at 48 C; a test can set temp above temp_trigger to raise the alarm."""
+    FIELDS = [
+        ("temp", 48.2, "FPGA temperature in C."),
+        ("max_temp", 51.0, "Highest temperature seen since power-up."),
+        ("temp_trigger", 85.0, "User alarm threshold in C (clocks shut down above it)."),
+        ("vccint", 1.0, "Core rail in V."),
+        ("vccaux", 1.8, "Auxiliary rail in V."),
+        ("vccbram", 1.0, "Block RAM rail in V."),
+        ("status", "", "Sticky alarms; write 0 to clear."),
     ]
 
     def __init__(self):
         pass
+
+    def _validate_temp(self, v):
+        v = float(v)
+        self._max_temp = max(float(self._max_temp), v)
+        if v > float(self._temp_trigger):
+            self._status = "user temperature alarm"
+        return v
+
+    def _validate_status(self, v):
+        return ""
+
+
+class SimErrors:
+    """scope.errors: the SAM3U's serial overflow flags (every model) with the library's clear()."""
+
+    def __init__(self, scope):
+        self._scope = scope
+        self.sam_errors = ""
+
+    def clear(self):
+        self.sam_errors = ""
+        sc = self._scope
+        if getattr(sc, "XADC", None) is not None:
+            sc.XADC.status = 0
+        if hasattr(sc.adc, "_errors"):
+            sc.adc._errors = ""
+        if hasattr(sc.clock, "_extclk_error"):
+            sc.clock._extclk_error = False
+
+    def _dict_repr(self):
+        return OrderedDict(sam_errors=self.sam_errors)
 
 
 class SimScope:
@@ -243,11 +447,15 @@ class SimScope:
         self.sn = "SIM000001"
         self.fw_version = {"major": 0, "minor": 1, "debug": 0}
         self.gain = SimGain()
-        self.adc = SimADC()
+        self.adc = SimADC(sim_model)
         self.clock = SimClock(husky=sim_model in ("husky", "huskyplus"))
         self.trigger = SimTrigger()
-        self.io = SimIO()
-        self.glitch = SimGlitch()
+        self.io = SimIO(sim_model)
+        self.glitch = SimGlitch(sim_model)
+        if sim_model == "nano":
+            self.clock._adc_mul = 1  # the Nano samples once per target clock at its default 7.5 MHz / 7.5 MHz
+        self.XADC = SimXADC() if sim_model in ("husky", "huskyplus") else None
+        self.errors = SimErrors(self)
         self.connectStatus = True
         self._armed = False
         self._last_trace = np.zeros(0, np.float32)
@@ -272,12 +480,18 @@ class SimScope:
         rtn = OrderedDict()
         rtn["sn"] = self.sn
         rtn["fw_version"] = self.fw_version
-        rtn["gain"] = self.gain._dict_repr()
+        nano = self.sim_model == "nano"
+        if not nano:
+            rtn["gain"] = self.gain._dict_repr()  # the Nano front end has a fixed gain
         rtn["adc"] = self.adc._dict_repr()
-        rtn["clock"] = self.clock._dict_repr()
-        rtn["trigger"] = self.trigger._dict_repr()
+        if not nano:
+            rtn["clock"] = self.clock._dict_repr()  # the Nano's clocks are adc.clk_freq and io.clkout
+            rtn["trigger"] = self.trigger._dict_repr()  # the Nano triggers on TIO4 rising edge, full stop
         rtn["io"] = self.io._dict_repr()
         rtn["glitch"] = self.glitch._dict_repr()
+        if self.XADC is not None:
+            rtn["XADC"] = self.XADC._dict_repr()
+        rtn["errors"] = self.errors._dict_repr()
         return rtn
 
     def __repr__(self):
@@ -292,16 +506,68 @@ class SimScope:
         return f"{self._name} ({label})" if label else self._name
 
     def default_setup(self, verbose=True):
-        self.gain.gain = 30
         self.adc.samples = 5000
         self.adc.offset = 0
         self.adc.basic_mode = "rising_edge"
-        self.clock.clkgen_freq = 7.37e6
-        self.clock.adc_src = "clkgen_x4"
         self.trigger.triggers = "tio4"
         self.io.tio1 = "serial_rx"
         self.io.tio2 = "serial_tx"
+        if self.sim_model == "nano":
+            self.adc.clk_freq = 7.5e6
+            self.io.clkout = 7.5e6
+            self.glitch.repeat = 0
+            return
+        self.gain.gain = 30
+        self.clock.clkgen_freq = 7.37e6
+        if self.sim_model in ("husky", "huskyplus"):
+            self.clock.adc_mul = 4
+            self.adc.segments = 1
+            self.glitch.enabled = False
+        else:
+            self.clock.adc_src = "clkgen_x4"
         self.io.hs2 = "clkgen"
+
+    def cglitch_setup(self, default_setup=True):
+        """Clock glitching: the glitch clock on HS2, crowbar off (like the library's scope.cglitch_setup)."""
+        if self.sim_model == "nano":
+            raise AttributeError("the CW-Nano has no clock glitch")
+        if default_setup:
+            self.default_setup()
+        self.glitch.clk_src = "pll" if self.sim_model in ("husky", "huskyplus") else "clkgen"
+        self.glitch.output = "clock_xor"
+        self.glitch.trigger_src = "ext_single"
+        self.io.hs2 = "glitch"
+        self.io.glitch_hp = False
+        self.io.glitch_lp = False
+        if self.sim_model in ("husky", "huskyplus"):
+            self.glitch.enabled = True
+
+    def vglitch_setup(self, glitcht="lp", default_setup=True):
+        """Voltage glitching: glitch_only output, the chosen crowbar MOSFET on (like the library's scope.vglitch_setup)."""
+        if default_setup:
+            self.default_setup()
+        if self.sim_model == "nano":
+            self.glitch.repeat = 1
+            return
+        self.glitch.output = "glitch_only"
+        self.glitch.trigger_src = "ext_single"
+        self.io.hs2 = "clkgen"
+        self.io.glitch_hp = glitcht in ("hp", "both")
+        self.io.glitch_lp = glitcht in ("lp", "both")
+        if self.sim_model in ("husky", "huskyplus"):
+            self.glitch.enabled = True
+
+    def glitch_disable(self):
+        """Glitch output off and the crowbar MOSFETs released (like the library's scope.glitch_disable)."""
+        if self.sim_model == "nano":
+            self.glitch.repeat = 0
+            return
+        self.glitch.trigger_src = "manual"
+        self.io.glitch_hp = False
+        self.io.glitch_lp = False
+        self.io.hs2 = "clkgen"
+        if self.sim_model in ("husky", "huskyplus"):
+            self.glitch.enabled = False
 
     def con(self, **kwargs):
         self.connectStatus = True
@@ -316,6 +582,7 @@ class SimScope:
             raise OSError("scope not connected")
         self._armed = True
         self.adc._state = True
+        self._segment_pts = []  # (plaintext, key) of every command seen while armed: a segmented capture (adc.segments > 1) records one segment per command
         if self.target is not None:
             self.target._traffic = []  # the advanced triggers see what happens on the lines from now on
 
@@ -351,7 +618,16 @@ class SimScope:
         if self.capture_delay:
             time.sleep(self.capture_delay)
         fw_run = getattr(self.target, "_last_run", None)
-        if fw_run is not None:
+        segments = self._segments()
+        if segments > 1 and fw_run is None:
+            pts = list(getattr(self, "_segment_pts", []))[:segments]
+            if len(pts) < segments:  # fewer triggers than segments: the hardware waits for the rest and times out
+                self.adc._errors = (self.adc._errors + ", " if self.adc._errors else "") + f"segmenting error: {len(pts)} of {segments} segments triggered before the timeout"
+                return self._timeout(deadline)
+            self._last_trace = np.concatenate([self._synth(pt, key) for pt, key in pts]).astype(np.float32)
+            leak_start, leak_spacing = self._leak_pos()
+            trig = int(leak_start + 16 * leak_spacing)
+        elif fw_run is not None:
             from cwstudio.codemap.sim import synth
             self._last_trace, trig = synth(self, *fw_run)
             self.target._last_run = None
@@ -363,7 +639,33 @@ class SimScope:
         self._armed = False
         self.adc._state = False
         self.adc._trig_count = trig
+        self._after_capture()
         return False
+
+    def _segments(self) -> int:
+        """Segments per arm on the simulated Husky (1 on every other model)."""
+        if self.sim_model not in ("husky", "huskyplus"):
+            return 1
+        try:
+            return max(1, int(self.adc.segments))
+        except (AttributeError, TypeError, ValueError):
+            return 1
+
+    def get_last_trace_segmented(self) -> np.ndarray:
+        """The last capture as one row per segment (the library's scope.get_last_trace_segmented)."""
+        n = max(1, int(self.adc.samples))
+        w = self._last_trace
+        rows = max(1, len(w) // n)
+        return w[: rows * n].reshape(rows, n)
+
+    def _after_capture(self):
+        """What the Husky reports after a capture: the clip error when the front end saturates (a gain above 70 in the simulator) and the count of glitches fired."""
+        if self.sim_model not in ("husky", "huskyplus"):
+            return
+        if int(self.gain.gain) >= 70 and "clip" not in self.adc._errors:
+            self.adc._errors = (self.adc._errors + ", " if self.adc._errors else "") + "clip error: the ADC saturated (lower gain.db)"
+        if self.target is not None and self.target._glitch_active():
+            self.glitch._actual_num_glitches = min(65535, self.glitch._actual_num_glitches + int(self.glitch.num_glitches))
 
     def _timeout(self, deadline: float) -> bool:
         time.sleep(max(0.0, deadline - time.time()))
@@ -413,6 +715,7 @@ class SimScope:
         self._armed = False
         self.adc._state = False
         self.adc._trig_count = trig
+        self._after_capture()
         self._trig_fired = float(fire)  # where the trigger fired, in ADC samples from the target's trigger rise (tests and the log)
         return False
 
@@ -447,13 +750,21 @@ class SimScope:
     def get_last_trace(self, as_int: bool = False) -> np.ndarray:
         """The last trace as floats in -0.5 to 0.5 or, with ``as_int``, as the raw unsigned ADC codes of the model (float = code / 2**bits - 0.5, like the hardware)."""
         if as_int:
-            full = 1 << self.ADC_BITS.get(self.sim_model, 10)
+            bits = self.ADC_BITS.get(self.sim_model, 10)
+            if self.sim_model in ("husky", "huskyplus"):
+                bits = int(self.adc.bits_per_sample)
+            full = 1 << bits
             return np.clip(np.round((self._last_trace.astype(np.float64) + 0.5) * full), 0, full - 1).astype(np.int16)
         return self._last_trace
 
     # --- leakage model ------------------------------------------------------
     def _spc(self) -> int:
         """ADC samples per target clock cycle (4 with the default clkgen_x4 / adc_mul 4)."""
+        if self.sim_model == "nano":
+            try:
+                return max(1, int(round(float(self.adc.clk_freq or 0) / float(self.io.clkout or 1))))
+            except (TypeError, ValueError, ZeroDivisionError):
+                return 1
         try:
             return int(self.clock._adc_mul)  # also set by adc_src on the models without adc_mul
         except (AttributeError, TypeError, ValueError):
@@ -638,6 +949,8 @@ class SimTarget:
         g = self.scope.glitch if self.scope else None
         if g is None:
             return False
+        if g.model == "nano":
+            return int(g.repeat) > 0  # the Nano fires on the TIO4 edge whenever repeat is nonzero
         if not (g.enabled or g.repeat > 0):
             return False
         return g.trigger_src in ("ext_single", "ext_continuous") and g.repeat > 0
@@ -646,10 +959,10 @@ class SimTarget:
         """'normal', 'success' or 'reset' for the current glitch settings."""
         g = self.scope.glitch
         lo, hi = self.glitch_window
-        w = abs(float(g.width))
+        w = g.width_percent()
         if w < 1.0:
             return "normal"
-        if w > self.glitch_width_ok[1] + 5 or int(g.repeat) > 20:
+        if w > self.glitch_width_ok[1] + 5 or (g.model != "nano" and int(g.repeat) > 20):
             return "reset"
         in_window = lo <= int(g.ext_offset) <= hi
         if in_window and self.glitch_width_ok[0] <= w <= self.glitch_width_ok[1]:
@@ -687,11 +1000,11 @@ class SimTarget:
     def _fw_glitch(self) -> str:
         """Outcome of the armed glitch on the emulated firmware: 'normal', 'skip' (the core misses instructions where the glitch lands) or 'reset' (too strong: the target crashes). Where it lands (ext_offset) is up to the firmware itself."""
         g = self.scope.glitch
-        w = abs(float(g.width))
+        w = g.width_percent()
         lo, hi = self.glitch_width_ok
         if w < 1.0:
             return "normal"
-        if w > hi + 5 or int(g.repeat) > 20:
+        if w > hi + 5 or (g.model != "nano" and int(g.repeat) > 20):
             return "reset"
         r = self.scope._rng.random()
         if lo <= w <= hi:
@@ -759,6 +1072,8 @@ class SimTarget:
             self._last_ct = encrypt_block(self._key, data) if len(data) == 16 else b""
             self._triggered = True
             self._trigger_count += 1
+            if self.scope is not None and getattr(self.scope, "_armed", False):
+                getattr(self.scope, "_segment_pts", []).append((data, self._key))
             resp = self._last_ct
             if self._glitch_active() and self._glitch_outcome() == "success":
                 resp = bytes(b ^ 0xFF for b in resp)

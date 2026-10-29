@@ -30,7 +30,7 @@ KNOWN_CHOICES: Dict[str, List[Any]] = {
     "adc.fifo_fill_mode": ["normal", "enabled", "segment"],
     "adc.bits_per_sample": [8, 12],
     "clock.adc_src": ["clkgen_x4", "clkgen_x1", "extclk_x4", "extclk_x1", "extclk_dir"],
-    "clock.clkgen_src": ["system", "extclk"],
+    "clock.clkgen_src": ["system", "extclk", "extclk_aux_io"],  # extclk_aux_io is Husky-only; capabilities.gate_settings disables it elsewhere
     "clock.freq_ctr_src": ["clkgen", "extclk"],
     "trigger.module": ["basic", "SAD", "DECODEIO", "UART", "edge_counter", "ADC", "trace", "bitbanger"],  # the union of all models; capabilities.gate_settings narrows it to the connected one (Pro: basic, SAD, DECODEIO; Husky: the rest)
     "trigger.triggers": ["tio1", "tio2", "tio3", "tio4", "nrst", "sma", "userio_d0", "userio_d1",
@@ -54,6 +54,22 @@ KNOWN_CHOICES: Dict[str, List[Any]] = {
     "adc.clk_src": ["int", "ext"],
     "adc.test_mode": [True, False],
     "adc.stream_mode": [True, False],
+    # Husky groups whose docstrings do not list their options as bullets, so they rendered as free text
+    "userio.mode": ["normal", "trace", "target_debug_jtag", "target_debug_swd", "fpga_debug", "swo_trace_plus_debug"],
+    "io.aux_io_mcx": ["high_z", "userio_ck", "hs2"],
+    "io.glitch_trig_mcx": ["glitch", "trigger", "inverted glitch", "inverted trigger"],
+    "LA.clk_source": ["target", "usb", "pll"],
+    "LA.capture_group": ["glitch", "CW 20-pin", "USERIO 20-pin"],
+    "LA.trigger_source": ["glitch", "capture", "glitch_source", "glitch_trigger", "trigger_glitch", "HS1"] + [f"{e}_userio_d{i}" for e in ("rising", "falling") for i in range(8)] + [f"{e}_tio{i}" for e in ("rising", "falling") for i in range(4)],
+    "trace.trace_mode": ["parallel", "swo"],
+    "trace.clock.fe_clock_src": ["target_clock", "trace_clock", "usb_clock"],
+    "trace.capture.mode": ["while_trig", "count_cycles", "count_writes", "off"],
+    "ADS4128.mode": ["normal", "test ramp", "test alternating"],
+    "userio.clock_source": ["target", "usb"],
+    "LEDs.setting": [0, 1, 2, 3],
+    "SAD.emode": [True, False],
+    "SAD.multiple_triggers": [True, False],
+    "SAD.always_armed": [True, False],
 }
 
 # Leaves that are informative only, even if the property has a setter.

@@ -1,6 +1,6 @@
 # ChipWhisperer Studio MCP tool reference
 
-Generated from the MCP server of chipwhisperer-studio 0.5.3 by tools/skill_reference.py (107 tools). Do not edit by hand.
+Generated from the MCP server of chipwhisperer-studio 0.5.3 by tools/skill_reference.py (109 tools). Do not edit by hand.
 
 Each entry: `name(arguments)` with defaults (`?` means optional with no default), whether it changes anything, then the server's own description. Every result arrives wrapped as `{"result": ...}`.
 
@@ -20,7 +20,9 @@ Each entry: `name(arguments)` with defaults (`?` means optional with no default)
 - `scope_get_settings(filter=None, include_docs=False)` [read only]: All scope settings as a flat list of {path, value, type, writable, choices} read back from the hardware; filter keeps paths containing the text (e.g. 'glitch', 'adc', 'clock'); include_docs adds each setting's documentation.
 - `scope_set_setting(path, value)` [changes state]: Set one scope setting by dotted path (e.g. 'gain.db'=25, 'adc.samples'=5000, 'adc.offset'=0, 'trigger.triggers'='tio4', 'clock.clkgen_freq'=7.37e6, 'glitch.width'=10). Returns the value read back from the hardware.
 - `scope_set_settings(settings)` [changes state]: Set several scope settings in order, given as {path: value}; stops at the first error and reports what was applied.
-- `scope_action(action)` [changes state]: Run a scope action: default_setup (recommended defaults), arm_capture (arm and wait for one trigger without talking to the target, to test triggering), reset_fpga or glitch_disable (stop glitching and restore the clock and power outputs).
+- `scope_health(refresh=True)` [read only]: How the scope is doing: FPGA temperature and rails with alarms (Husky), PLL or DCM lock, external clock drift, sticky capture errors (clip, FIFO, trigger too soon), USB controller serial overflows, glitches fired and the last trigger length, plus 'problems': plain sentences about anything wrong and what to do. Read fresh from the hardware by default.
+- `scope_clear_errors()` [changes state]: Clear the scope's sticky errors and alarms (a Husky powers its glitch, logic analyser and SAD blocks down after an XADC alarm until this is done) and return the health read afterwards.
+- `scope_action(action)` [changes state]: Run a scope action: default_setup (recommended defaults), arm_capture (arm and wait for one trigger without talking to the target, to test triggering), reset_fpga, glitch_disable (stop glitching and restore the clock and power outputs), cglitch_setup (clock glitch preset: glitch clock on HS2, crowbar off) or vglitch_lp / vglitch_hp / vglitch_both (voltage glitch preset with that crowbar MOSFET). The presets keep the capture settings; the Nano has no clock glitch.
 
 ## Target and serial
 
@@ -59,7 +61,7 @@ Each entry: `name(arguments)` with defaults (`?` means optional with no default)
 
 ## Glitch
 
-- `glitch_start(parameters, command='g', data='', expected=None, output_len=4, repeats=1, order='nested', reset='nrst', reset_on='reset', reset_delay=0.05, glitch_timeout=1000, arm_scope=True, wait=False, timeout_s=1800)` [changes state]: Sweep glitch parameters. parameters is a list of {path, start, stop, step} or {path, values:[...]} over scope settings (e.g. glitch.width, glitch.offset, glitch.ext_offset, glitch.repeat); every combination is tried 'repeats' times in nested or random order. Each point sends SimpleSerial command with hex data and reads output_len bytes; a valid reply different from expected (hex) counts as success, no reply as reset. reset chooses how to recover the target (nrst pin, pdic, none), reset_on when (never, after a reset result, always), reset_delay in seconds. Configure glitch.clk_src/output/trigger_src first with scope_set_setting.
+- `glitch_start(parameters, command='g', data='', expected=None, output_len=4, repeats=1, order='nested', reset='nrst', reset_on='reset', reset_delay=0.05, glitch_timeout=1000, arm_scope=True, wait=False, timeout_s=1800)` [changes state]: Sweep glitch parameters. parameters is a list of {path, start, stop, step} or {path, values:[...]} over scope settings (e.g. glitch.width, glitch.offset, glitch.ext_offset, glitch.repeat); every combination is tried 'repeats' times in nested or random order. Each point sends SimpleSerial command with hex data and reads output_len bytes; a valid reply different from expected (hex) counts as success, no reply as reset, a mangled reply as garbled, and on a Husky a point whose glitch counter did not move as not_fired. reset chooses how to recover the target (nrst pin, pdic, none), reset_on when (never, after a reset result, always), reset_delay in seconds. Configure glitch.clk_src/output/trigger_src first with scope_set_setting.
 - `glitch_results(only=None, limit=500)` [read only]: Results of the current or last glitch sweep: counts per outcome and each point's parameter values, outcome and response; only filters by outcome.
 - `glitch_export(path='glitch_results.csv')` [changes state]: Save the glitch sweep results as CSV (relative paths go into Studio's data folder).
 

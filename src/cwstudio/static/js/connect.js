@@ -166,6 +166,20 @@ export function initConnect(ctx, el) {
       ['Data dir', st.data_dir],
       ['Compute', (meta.accel && meta.accel.label) ? meta.accel.label + (meta.accel.reason ? ' · ' + meta.accel.reason : '') : '-']];
     if (st.hardware_stuck) rows.push(['Hardware', `stuck in ${st.hardware_stuck.name} for ${Math.round(st.hardware_stuck.seconds)} s: unplug the ChipWhisperer, plug it back in and restart Studio`]);
+    const hl = st.health || {};
+    if (st.scope.connected && hl.model) {
+      if (hl.xadc) rows.push(['FPGA', `${hl.xadc.temp} C (max ${hl.xadc.max_temp} C) · VCCINT ${hl.xadc.rails.vccint} V · VCCAUX ${hl.xadc.rails.vccaux} V · VBRAM ${hl.xadc.rails.vccbram} V${hl.xadc.alarms ? ' · ALARM: ' + hl.xadc.alarms : ''}`]);
+      if (hl.locked) rows.push(['Clocks', Object.entries(hl.locked).map(([k, v]) => `${k.replace('_locked', '')} ${v ? 'locked' : 'NOT LOCKED'}`).join(' · ') + (hl.freq_ctr != null ? ` · counter ${(hl.freq_ctr / 1e6).toFixed(3)} MHz` : '')]);
+      if (hl.adc_errors) rows.push(['Capture errors', hl.adc_errors]);
+      if (hl.sam_errors) rows.push(['USB controller', hl.sam_errors]);
+      if (hl.glitches_fired != null) rows.push(['Glitches fired', String(hl.glitches_fired)]);
+    }
     rows.forEach(([k, v]) => info.append(h('span', { class: 'k' }, k), h('span', {}, String(v))));
+    if (st.scope.connected && hl.model) {
+      const probs = hl.problems || [];
+      const box = h('div', { class: 'help ' + (probs.length ? 'warn' : ''), style: 'grid-column: 1 / -1' }, probs.length ? h('ul', {}, ...probs.map((p) => h('li', {}, p))) : 'Health: no problems reported.',
+        h('button', { class: 'btn sm', style: 'margin-left:8px', title: 'clear the sticky errors and alarms, then read again', onclick: async () => { try { await post('/api/scope/health/clear'); ctx.refreshStatus(); } catch (e) { toast(e.message, 'err'); } } }, 'Clear errors'));
+      info.append(box);
+    }
   });
 }

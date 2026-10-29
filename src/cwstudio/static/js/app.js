@@ -169,6 +169,16 @@ function applyStatus(st) {
   }
   else if (job && job.error) setChip('chip-job', 'err', `${job.name} error`);
   else setChip('chip-job', '', 'Idle');
+  const hc = document.getElementById('chip-health'), health = st.health || {};
+  if (!sc.connected || !health.model) hc.style.display = 'none';
+  else {
+    hc.style.display = '';
+    const probs = health.problems || [];
+    const temp = health.xadc && health.xadc.temp != null ? `${Math.round(health.xadc.temp)} C` : null;
+    if (probs.length) setChip('chip-health', probs.some((p) => /alarm|not locked/.test(p)) ? 'err' : 'warn', `${probs.length} problem${probs.length > 1 ? 's' : ''}${temp ? ' · ' + temp : ''}`);
+    else setChip('chip-health', 'on', temp ? `${temp}` : 'Healthy');
+    hc.title = probs.length ? probs.join('\n') : 'Scope health: no problems';
+  }
   document.getElementById('btn-stop').disabled = !(job && job.running);
   document.getElementById('btn-run').disabled = !sc.connected || (job && job.running);
   document.getElementById('btn-single').disabled = !sc.connected || (job && job.running);
