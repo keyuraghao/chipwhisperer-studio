@@ -5,7 +5,7 @@
 Two kinds of work are supported:
 
 * **short jobs** - a callable submitted with `submit()`/`call()`; runs to completion and resolves a `Future`.
-* **one long job** - an object with a `step()` method (see `LongJob`).  The worker calls `step()` repeatedly and services queued short jobs between steps, so the UI stays responsive during a long capture or glitch sweep.
+* **one long job** - an object with a `step()` method (see `LongJob`).  The worker calls `step()` repeatedly and services queued short jobs between steps, so the UI stays responsive during a long capture or glitch sweep. Short jobs come first, but never for longer than `STEP_FAIRNESS` seconds in a row: a stream of slow reads from many clients (the whole settings tree costs about half a second of USB traffic on a Husky) would otherwise stop a capture dead.
 """
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from typing import Any, Callable, Dict, List, Optional
 
 log = logging.getLogger("cwstudio.worker")
+
+STEP_FAIRNESS = 0.25  # seconds of queued short jobs a long job tolerates before it is stepped anyway
 
 
 class HardwareTimeout(TimeoutError):
@@ -218,13 +220,17 @@ class HardwareWorker:
 
     # --- main loop --------------------------------------------------------
     def _run(self):
+        last_step = time.monotonic()
         while self._running:
             long = self.long_job
             active_long = long is not None and not long.finished.is_set()
-            try:
-                item = self._q.get(timeout=0.0 if active_long else 0.05)
-            except queue.Empty:
-                item = None
+            if active_long and time.monotonic() - last_step >= STEP_FAIRNESS:
+                item = None  # the short jobs have had their share: step the long job before the next one
+            else:
+                try:
+                    item = self._q.get(timeout=0.0 if active_long else 0.05)
+                except queue.Empty:
+                    item = None
             if item is not None:
                 fn, args, kwargs, fut = item
                 if fn is None:
@@ -258,6 +264,7 @@ class HardwareWorker:
                     done = True
                 finally:
                     self._current = None
+                    last_step = time.monotonic()  # measured from the end of the step, so a slow step does not starve the short jobs in turn
                 if done:
                     self._end_long(long)
                     continue

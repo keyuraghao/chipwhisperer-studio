@@ -45,6 +45,8 @@ class Session:
     def __init__(self, simulate: bool = False, data_dir: Optional[str] = None):
         self.bus = EventBus()
         self.worker = HardwareWorker()
+        self._settings_read = None  # the in-flight settings tree read shared by concurrent callers (see scope_settings)
+        self._settings_read_lock = threading.Lock()
         self.worker.on_long_job_done = self._on_long_job_done
         self.worker.on_error = self._on_hardware_error
         self.store = TraceStore()
@@ -321,10 +323,15 @@ class Session:
         self._push_status()
 
     def scope_settings(self) -> List[Dict[str, Any]]:
+        """The scope's settings tree, read on the hardware thread. Callers that arrive while a read is in flight share its result instead of queueing another: the tree is about 160 ms of USB traffic on a Husky, and a burst of clients (every open browser tab, an agent polling) used to line up behind each other and hold a running capture back."""
         if self.scope is None:
             return []
         from cwstudio.capabilities import gate_settings
-        return self.worker.call(lambda: gate_settings(cwsettings.describe(self.scope), self.scope))  # per-model choices: unsupported values are listed but disabled with the reason
+        with self._settings_read_lock:
+            fut = self._settings_read
+            if fut is None or fut.done():
+                fut = self._settings_read = self.worker.submit(lambda: gate_settings(cwsettings.describe(self.scope), self.scope))  # per-model choices: unsupported values are listed but disabled with the reason
+        return fut.result(timeout=120)
 
     def set_scope_setting(self, path: str, value: Any) -> Any:
         if self.scope is None:

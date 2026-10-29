@@ -41,6 +41,37 @@ def test_coerce():
     assert cws.coerce("[1, 2]", [0]) == [1, 2]
 
 
+def test_describe_reads_each_property_once():
+    """On real hardware every property read is a USB transaction: the tree walk must not re-read a group's values or fetch a leaf just to see whether it is a group (a Husky tree was 470 ms, now 160 ms)."""
+    reads = []
+
+    class Group:
+        def __init__(self, name, leaves, groups=()):
+            self._name, self._leaves, self._groups = name, leaves, {g._name: g for g in groups}
+
+        def __getattr__(self, key):
+            if key.startswith("_"):
+                raise AttributeError(key)
+            if key in self._groups:
+                return self._groups[key]
+            if key in self._leaves:
+                reads.append(f"{self._name}.{key}")
+                return self._leaves[key]
+            raise AttributeError(key)
+
+        def _dict_repr(self):
+            d = {k: getattr(self, k) for k in self._leaves}
+            for g in self._groups.values():
+                d[g._name] = g._dict_repr()
+            return d
+
+    root = Group("root", {"a": 1}, [Group("adc", {"samples": 5000, "timeout": 2.0}), Group("clock", {"clkgen_freq": 7.37e6}, [Group("pll", {"locked": True})])])
+    nodes = cws.describe(root)
+    flat = cws.flatten(nodes)
+    assert flat["adc.samples"] == 5000 and flat["clock.pll.locked"] is True and flat["a"] == 1
+    assert sorted(reads) == sorted(["root.a", "adc.samples", "adc.timeout", "clock.clkgen_freq", "pll.locked"]), reads
+
+
 def test_worker_short_and_long_jobs():
     w = HardwareWorker()
     w.start()
@@ -75,6 +106,54 @@ def test_worker_short_and_long_jobs():
         time.sleep(0.05)
         w.stop_long_job()
         assert j2.finished.wait(5)
+    finally:
+        w.stop()
+
+
+def test_worker_long_job_is_not_starved_by_short_jobs():
+    """Many clients streaming slow reads (a Husky settings tree is half a second of USB) used to stop a capture dead: short jobs always came first. The long job now gets a step at least every STEP_FAIRNESS seconds, and a slow step does not starve the short jobs in turn."""
+    import threading
+    w = HardwareWorker()
+    w.start()
+    try:
+        class Steps(LongJob):
+            name = "steps"
+
+            def __init__(self):
+                super().__init__()
+                self.n = 0
+
+            def step(self):
+                self.n += 1
+                time.sleep(0.01)
+                return False
+
+        j = Steps()
+        assert w.start_long_job(j)
+        stop = threading.Event()
+        served = [0]
+
+        def flood():
+            pending = []
+            while not stop.is_set():  # a backlog of slow reads, so the queue is never empty (many HTTP clients at once)
+                pending = [f for f in pending if not f.done()]
+                while len(pending) < 8:
+                    pending.append(w.submit(lambda: time.sleep(0.03)))
+                time.sleep(0.005)
+            for f in pending:
+                f.result(timeout=10)
+                served[0] += 1
+        t = threading.Thread(target=flood, daemon=True)
+        t.start()
+        time.sleep(1.0)
+        stop.set()
+        under_load = j.n  # before the backlog drains and the job steps freely
+        t.join(5)
+        w.stop_long_job()
+        assert j.finished.wait(5)
+        # a second of flooding at STEP_FAIRNESS 0.25 gives three or four steps (one every window plus a read and a step); without fairness it is one
+        assert under_load >= 2, f"long job stepped only {under_load} times under load"
+        assert served[0] >= 8, f"short jobs starved: {served[0]} served"
     finally:
         w.stop()
 
