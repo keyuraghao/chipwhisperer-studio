@@ -323,8 +323,35 @@ def gate_settings(nodes, scope) -> list:
     return walk(nodes)
 
 
+def adc_sample_limit(scope) -> Optional[int]:
+    """The most ADC samples one non-streaming capture can hold on this scope, or None when unknown or when streaming is on. Hardware thread only (the Husky reports it per bits_per_sample)."""
+    m = model_of(scope)
+    adc = getattr(scope, "adc", None)
+    if adc is None:
+        return None
+    try:
+        if getattr(adc, "stream", False):
+            return None
+        if m in ("husky", "huskyplus") and hasattr(adc, "max_samples"):
+            return int(adc.max_samples) or None
+    except Exception:  # noqa: BLE001
+        return None
+    return {"lite": 24400, "pro": 96000}.get(m)
+
+
 def check_setting(scope, path: str, value) -> None:
     """Refuse a scope setting value the connected model does not support (raises :class:`Unsupported` with the reason)."""
+    if path == "adc.samples":
+        # chipwhisperer's setter takes any number; above the FIFO the capture then fails with a misleading "consecutive timeouts". Stop it here with the real limit.
+        limit = adc_sample_limit(scope)
+        try:
+            v = int(float(value))
+        except (TypeError, ValueError):
+            v = None
+        if limit and v is not None and v > limit:
+            m = model_of(scope)
+            more = " at 12 bits per sample (adc.bits_per_sample = 8 allows more)" if m in ("husky", "huskyplus") and getattr(getattr(scope, "adc", None), "bits_per_sample", 12) == 12 else ""
+            raise Unsupported(f"adc.samples = {v}: the {LABELS.get(m, m)} holds at most {limit} samples per capture{more}; turn on adc.stream for longer captures")
     gates = setting_gates(scope)
     g = gates.get(path)
     if not g:

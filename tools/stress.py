@@ -740,7 +740,7 @@ def run_step(name: str, size, budget_gb: float, timeout: float) -> dict:
             peak = max(peak, cur)
             if cur > budget_gb * GB:
                 why = f"memory budget exceeded ({cur / GB:.1f} GB > {budget_gb} GB)"
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError, KeyError):  # the step exited between poll() and the read (a zombie's status has no VmRSS line)
             break
         if time.time() - t0 > timeout:
             why = f"timed out after {timeout:.0f} s"

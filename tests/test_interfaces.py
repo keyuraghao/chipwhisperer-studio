@@ -297,6 +297,27 @@ def test_setting_gates_unit():
 
 
 
+def test_adc_samples_limit_is_refused_up_front():
+    """chipwhisperer's samples setter takes any number and the capture then dies with "consecutive timeouts" (a Husky at 140000 samples on the stress rig): Studio refuses a value above the scope's limit with the real reason, and lets it through when streaming."""
+    from cwstudio.capabilities import adc_sample_limit
+    husky = SimScope(sim_model="husky")
+    assert adc_sample_limit(husky) is None  # the simulator has no FIFO limit of its own (it validates 1..131070 itself)
+    husky.adc.max_samples = 131124
+    assert adc_sample_limit(husky) == 131124
+    check_setting(husky, "adc.samples", 131124)
+    with pytest.raises(Unsupported, match="at most 131124 samples"):
+        check_setting(husky, "adc.samples", 140000)
+    with pytest.raises(Unsupported, match="bits_per_sample"):
+        check_setting(husky, "adc.samples", "200000")
+    husky.adc.stream = True
+    check_setting(husky, "adc.samples", 500000)  # streaming lifts the limit
+    lite = SimScope(sim_model="lite")
+    assert adc_sample_limit(lite) == 24400
+    with pytest.raises(Unsupported, match="ChipWhisperer-Lite holds at most 24400"):
+        check_setting(lite, "adc.samples", 24401)
+    check_setting(lite, "adc.samples", 24400)
+
+
 def test_setting_gates_cached_per_scope(monkeypatch):
     """The settings tree and every setting write consult the gates; they are computed once per connected scope, again for another scope, and after invalidate_gates()."""
     from cwstudio import capabilities as capmod
