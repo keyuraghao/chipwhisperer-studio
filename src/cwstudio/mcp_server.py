@@ -102,6 +102,17 @@ class StudioClient:
             return False
 
 
+def _samples(x: np.ndarray) -> List[float]:
+    """Samples rounded to 6 decimals as plain floats, done in numpy: a Python round() per sample is twenty times slower."""
+    return np.round(x.astype(np.float64), 6).tolist()
+
+
+def _poll(deadline: float, delay: float) -> float:
+    """Sleep ``delay`` (not past ``deadline``) and return the next delay: short at first so a quick job answers promptly, doubling up to half a second."""
+    time.sleep(max(0.0, min(delay, deadline - time.time())))
+    return min(delay * 2, 0.5)
+
+
 def _decimate(x: np.ndarray, max_points: int) -> Dict[str, Any]:
     """Summarise a waveform and return at most ``max_points`` samples (min/max pairs when decimating so peaks survive)."""
     n = int(x.shape[0])
@@ -111,7 +122,7 @@ def _decimate(x: np.ndarray, max_points: int) -> Dict[str, Any]:
     out.update({"min": float(x.min()), "max": float(x.max()), "mean": float(x.mean()), "std": float(x.std()), "argmin": int(x.argmin()), "argmax": int(x.argmax())})
     max_points = max(2, int(max_points))
     if n <= max_points:
-        out.update({"step": 1, "samples": [round(float(v), 6) for v in x]})
+        out.update({"step": 1, "samples": _samples(x)})
         return out
     bins = max_points // 2
     step = int(np.ceil(n / bins))
@@ -119,7 +130,7 @@ def _decimate(x: np.ndarray, max_points: int) -> Dict[str, Any]:
     xp = np.concatenate([x, np.full(pad, x[-1], dtype=x.dtype)]) if pad else x
     blocks = xp.reshape(-1, step)
     mm = np.stack([blocks.min(axis=1), blocks.max(axis=1)], axis=1).reshape(-1)
-    out.update({"step": step, "decimation": "min/max per block", "samples": [round(float(v), 6) for v in mm]})
+    out.update({"step": step, "decimation": "min/max per block", "samples": _samples(mm)})
     return out
 
 
@@ -165,13 +176,13 @@ def build_server(client: StudioClient, url_note: str = ""):
 
     def wait_job(timeout: float) -> Dict[str, Any]:
         end = time.time() + timeout
-        st = client.get("/api/status")
-        while time.time() < end:
+        delay = 0.05
+        while True:
             st = client.get("/api/status")
             job = st.get("job") or {}
-            if not job.get("running"):
+            if not job.get("running") or time.time() >= end:
                 break
-            time.sleep(0.5)
+            delay = _poll(end, delay)
         return st
 
     # ----- general -------------------------------------------------------------
@@ -375,11 +386,12 @@ def build_server(client: StudioClient, url_note: str = ""):
             return {"started": True}
         end = time.time() + timeout_s
         res: Dict[str, Any] = {}
+        delay = 0.05
         while time.time() < end:
             res = client.get("/api/analysis/cpa") or {}
             if res and (res.get("done") or res.get("error")):
                 break
-            time.sleep(0.5)
+            delay = _poll(end, delay)
         return res
 
     @mcp.tool(annotations=HW)
@@ -511,8 +523,9 @@ def build_server(client: StudioClient, url_note: str = ""):
         """Compile a ChipWhisperer firmware project for a platform with GCC or clang using ChipWhisperer's makefiles. crypto_target picks the AES/crypto implementation (TINYAES128C, AVRCRYPTOLIB, MBEDTLS, HWAES...), ss_ver the SimpleSerial protocol (SS_VER_2_1 for current Studio/ChipWhisperer, SS_VER_1_1 legacy), cflags adds compiler flags, make_args adds make variables (e.g. 'OPT=2 EXTRA_OPTS=...'), clean rebuilds from scratch. Returns the .hex path, sizes and programmer, plus the end of the build log."""
         res = client.post("/api/firmware/build", {"project": project, "platform": platform, "compiler": compiler, "crypto_target": crypto_target, "ss_ver": ss_ver, "cflags": cflags, "make_args": make_args, "clean": clean, "jobs": jobs})
         end = time.time() + timeout_s
+        delay = 0.05
         while wait and time.time() < end and res.get("state") == "running":
-            time.sleep(0.5)
+            delay = _poll(end, delay)
             res = client.get("/api/firmware/build")
         if wait and log_tail:
             res["log_tail"] = client.get("/api/firmware/build/log")["lines"][-log_tail:]

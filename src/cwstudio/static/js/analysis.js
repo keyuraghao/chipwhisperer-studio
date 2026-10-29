@@ -34,7 +34,7 @@ export function initAnalysis(ctx, el) {
 
   function render(res) {
     last = res;
-    status.textContent = `${res.done ? (res.error ? 'error: ' + res.error : 'done') : 'running'} · ${res.traces_used}/${res.total} traces · ${res.elapsed}s`;
+    status.textContent = `${res.done ? (res.error ? 'error: ' + res.error : 'done') : 'running'} · ${res.traces_used}/${res.total} traces · ${res.elapsed}s${res.backend === 'cuda' ? ' · GPU' : ''}`;
     status.className = 'help mono' + (res.error ? ' err' : '');
     keyEl.innerHTML = '';
     res.bytes.forEach((b) => {

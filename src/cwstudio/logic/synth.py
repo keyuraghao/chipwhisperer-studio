@@ -4,6 +4,7 @@ The simulator uses them for its demo traffic (UART SimpleSerial exchange, SPI fl
 """
 from __future__ import annotations
 
+import bisect
 import math
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -25,11 +26,10 @@ class Line:
     def set(self, t: float, v: int) -> "Line":
         v = int(v) & 1
         if self.vals and t < self.times[-1]:
-            self.times.append(float(t))
-            self.vals.append(v)
-            order = np.argsort(np.asarray(self.times), kind="stable")
-            self.times = [self.times[i] for i in order]
-            self.vals = [self.vals[i] for i in order]
+            # an out of order change goes in at its place (after any change at the same time, like the stable sort it replaces)
+            k = bisect.bisect_right(self.times, float(t))
+            self.times.insert(k, float(t))
+            self.vals.insert(k, v)
             return self
         if v != self.level:
             self.times.append(float(t))

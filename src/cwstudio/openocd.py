@@ -17,7 +17,7 @@ import weakref
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional
 
-from cwstudio.capabilities import LABELS, Unsupported, capabilities, model_of, require
+from cwstudio.capabilities import LABELS, Unsupported, cached_capabilities, capabilities, model_of, require
 
 log = logging.getLogger("cwstudio.openocd")
 
@@ -87,13 +87,13 @@ def tcl_query(port: int, command: str, timeout: float = 10.0, host: str = "127.0
     with socket.create_connection((host, port), timeout=timeout) as s:
         s.settimeout(timeout)
         s.sendall(command.encode("utf-8") + b"\x1a")
-        buf = b""
+        buf = bytearray()
         while not buf.endswith(b"\x1a"):
             chunk = s.recv(65536)
             if not chunk:
                 break
             buf += chunk
-    return buf.rstrip(b"\x1a").decode("utf-8", "replace")
+    return bytes(buf).rstrip(b"\x1a").decode("utf-8", "replace")
 
 
 def wrap_command(command: str) -> str:
@@ -209,7 +209,9 @@ class OpenOCD:
         scope = self.s.scope
         if scope is None:
             raise Unsupported("connect a scope first")
-        caps = self.s.worker.call(capabilities, scope, None, timeout=30)
+        caps = cached_capabilities(scope)
+        if caps is None:
+            caps = self.s.worker.call(capabilities, scope, None, timeout=30)
         if transport not in ("jtag", "swd"):
             raise ValueError("transport must be 'jtag' or 'swd'")
         require(caps[transport], transport.upper())

@@ -10,14 +10,13 @@ Each source is a generator: it does a little hardware work, yields while waiting
 from __future__ import annotations
 
 import logging
-import math
 import os
 import time
 from typing import Any, Callable, Dict, Generator, List, Optional
 
 import numpy as np
 
-from cwstudio.capabilities import HUSKY, LA_GROUPS, Unsupported, model_of
+from cwstudio.capabilities import LA_GROUPS, Unsupported, model_of
 from cwstudio.logic import synth
 from cwstudio.logic.model import AnalogChannel, LogicCapture, auto_level, schmitt
 from cwstudio.worker import LongJob
@@ -310,9 +309,10 @@ class SimLA:
             if r is None:
                 continue
             v0, e = r
-            arr = np.zeros(n + 1, np.int8)
+            arr = np.zeros(n + 1, np.uint8)
             arr[e] = 1
-            bits[i] = ((np.cumsum(arr[:n]) & 1) ^ v0).astype(np.uint8)
+            arr[0] ^= v0
+            bits[i] = np.bitwise_xor.accumulate(arr[:n])
         self._data = bits
         self._armed = False
 
@@ -377,9 +377,10 @@ class SimMeasure:
     def __call__(self, n: int) -> np.ndarray:
         sr = adc_rate(self.scope)
         r = synth.render({"x": self.signals[self.signal]}, sr, self.t, n)["x"]
-        arr = np.zeros(n + 1, np.int8)
+        arr = np.zeros(n + 1, np.uint8)
         arr[r[1]] = 1
-        bits = (np.cumsum(arr[:n]) & 1) ^ r[0]
+        arr[0] ^= r[0]
+        bits = np.bitwise_xor.accumulate(arr[:n])
         self.t += n / sr
         return synth.to_analog(bits, self.rng, noise=0.015, rise_samples=max(0.5, sr / 20e6))
 

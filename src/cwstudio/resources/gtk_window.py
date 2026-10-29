@@ -105,6 +105,18 @@ def main():
     if os.environ.get("CWSTUDIO_DEVTOOLS") or os.environ.get("CWSTUDIO_WINDOW_SNAPSHOT"):
         settings.set_property("enable-write-console-messages-to-stdout", True)  # JavaScript console messages in the terminal, for debugging
     settings.set_property("enable-back-forward-navigation-gestures", False)
+    # GPU rendering: WebKitGTK's default policy (on demand) often leaves a canvas-heavy page like the waveform view in software compositing; ask for the GPU unless CWSTUDIO_WINDOW_GPU=0 (WebKit still falls back by itself when no GPU driver works)
+    gpu = os.environ.get("CWSTUDIO_WINDOW_GPU", "1").strip().lower() not in ("0", "no", "off", "false")
+    try:
+        policy = WebKit2.HardwareAccelerationPolicy
+        settings.set_hardware_acceleration_policy(policy.ALWAYS if gpu else policy.NEVER)
+    except Exception as e:  # noqa: BLE001  older WebKitGTK without the property
+        print(f"hardware acceleration policy not settable: {e}", file=sys.stderr, flush=True)
+    for prop in ("enable-webgl", "enable-accelerated-2d-canvas"):
+        try:
+            settings.set_property(prop, gpu)
+        except Exception:  # noqa: BLE001  the property was removed in newer WebKitGTK (always on)
+            pass
 
     def same_origin(uri):
         u = urlparse(uri or "")

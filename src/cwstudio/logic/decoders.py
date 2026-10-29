@@ -31,6 +31,7 @@ class Result:
         self.meta: Dict[str, Any] = {}
         self.warnings: List[str] = []
         self._final = False
+        self._items: Optional[List[Dict[str, Any]]] = None
 
     def row(self, rid: str, label: str, channel: Optional[int]) -> str:
         if rid not in self.rows:
@@ -66,13 +67,17 @@ class Result:
         return sum(len(r["s"]) for r in self.rows.values())
 
     def items(self) -> List[Dict[str, Any]]:
-        """Every annotation, sorted by start."""
+        """Every annotation, sorted by start. The list is built once and shared: callers copy an item before changing it."""
         self.finalize()
+        if self._items is not None:
+            return self._items
         out = []
         for rid, r in self.rows.items():
-            for k in range(len(r["s"])):
-                out.append({"row": rid, "label": r["label"], "channel": r["channel"], "s": int(r["s"][k]), "e": int(r["e"][k]), "text": r["text"][k], "kind": r["kind"][k], "value": r["value"][k]})
+            label, channel = r["label"], r["channel"]
+            for s, e, text, kind, value in zip(r["s"].tolist(), r["e"].tolist(), r["text"], r["kind"], r["value"]):
+                out.append({"row": rid, "label": label, "channel": channel, "s": s, "e": e, "text": text, "kind": kind, "value": value})
         out.sort(key=lambda x: (x["s"], x["e"]))
+        self._items = out
         return out
 
     def texts(self, rid: str, kinds: Optional[Sequence[str]] = None) -> List[str]:
@@ -99,22 +104,25 @@ class Result:
             lo = int(ss(r["emax"], a, side="right"))
             hi = int(ss(s, b, side="left"))
             items: List[List[Any]] = []
-            if hi - lo <= max(8, px // 6):
-                for k in range(lo, hi):
-                    if e[k] > a:
-                        items.append([int(s[k]), int(e[k]), r["text"][k], r["kind"][k]])
+            # lo comes from the running maximum of the ends, so an item in lo..hi can still end before a (after a long neighbour); both branches leave those out
+            idx = np.arange(lo, hi)
+            idx = idx[e[lo:hi] > a]
+            if idx.shape[0] <= max(8, px // 6):
+                for k in idx.tolist():
+                    items.append([int(s[k]), int(e[k]), r["text"][k], r["kind"][k]])
             else:
-                key = np.floor((s[lo:hi] - a) / (4 * spp)).astype(np.int64)
+                key = np.floor((s[idx] - a) / (4 * spp)).astype(np.int64)
                 cut = np.flatnonzero(np.diff(key)) + 1
                 starts = np.concatenate(([0], cut))
-                ends = np.concatenate((cut, [hi - lo]))
-                for g0, g1 in zip(starts, ends):
-                    k0, k1 = lo + int(g0), lo + int(g1)
-                    if k1 - k0 == 1:
+                ends = np.concatenate((cut, [idx.shape[0]]))
+                for g0, g1 in zip(starts.tolist(), ends.tolist()):
+                    if g1 - g0 == 1:
+                        k0 = int(idx[g0])
                         items.append([int(s[k0]), int(e[k0]), r["text"][k0], r["kind"][k0]])
                     else:
-                        kinds = set(r["kind"][k0:k1])
-                        items.append([int(s[k0]), int(e[k0:k1].max()), f"{k1 - k0}", "error" if "error" in kinds else "agg", k1 - k0])
+                        sel = idx[g0:g1]
+                        kinds = set(r["kind"][k] for k in sel.tolist())
+                        items.append([int(s[sel[0]]), int(e[sel].max()), f"{g1 - g0}", "error" if "error" in kinds else "agg", g1 - g0])
             out.append({"row": rid, "label": r["label"], "channel": r["channel"], "items": items})
         return out
 
@@ -319,9 +327,9 @@ def decode_spi(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) -> R
         if c_cs.init == cs_level:
             first_rel = release_e[0] if release_e.shape[0] else cap.n
             windows.append((0, int(first_rel)))
-        for a in assert_e:
-            k = ss(release_e, a, side="right")
-            windows.append((int(a), int(release_e[k]) if k < release_e.shape[0] else cap.n))
+        k = ss(release_e, assert_e, side="right")
+        rel = np.where(k < release_e.shape[0], release_e[np.minimum(k, max(release_e.shape[0] - 1, 0))], cap.n) if release_e.shape[0] else np.full(assert_e.shape[0], cap.n, np.int64)
+        windows += list(zip(assert_e.tolist(), rel.tolist()))
     else:
         windows = [(0, cap.n)]
     rows = {}
@@ -339,23 +347,29 @@ def decode_spi(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) -> R
             mode_warn = True
         nwords = se.shape[0] // ws
         tw = {"mosi": [], "miso": []}
-        for wi in range(nwords):
-            idx = se[wi * ws:(wi + 1) * ws]
-            k0 = int(ss(all_e, idx[0], side="left")) - 1
-            start = max(w0, int(all_e[k0])) if k0 >= 0 else w0
-            k1 = int(ss(all_e, idx[-1], side="right"))
-            end = min(w1, int(all_e[k1])) if k1 < all_e.shape[0] else w1
+        if nwords:
+            # every word at once: a (words, bits) matrix of sample edges, the word's start at the SCK edge before its first bit and its end at the edge after its last bit, both clipped to the window
+            idx = se[:nwords * ws].reshape(nwords, ws)
+            k0 = ss(all_e, idx[:, 0], side="left") - 1
+            start = np.where(k0 >= 0, np.maximum(w0, all_e[np.maximum(k0, 0)]), w0)
+            k1 = ss(all_e, idx[:, -1], side="right")
+            end = np.where(k1 < all_e.shape[0], np.minimum(w1, all_e[np.minimum(k1, all_e.shape[0] - 1)]), w1)
+            end = np.maximum(end, start + 1)
+            st_l, en_l = start.tolist(), end.tolist()
+            weights = 1 << np.arange(ws - 1, -1, -1, dtype=np.int64) if msb else 1 << np.arange(ws, dtype=np.int64)
             for key, ci in (("mosi", mosi), ("miso", miso)):
                 if ci is None:
                     continue
-                bits = cap.channels[ci].value_at(idx)
-                order = bits if msb else bits[::-1]
-                v = 0
-                for b in order:
-                    v = (v << 1) | int(b)
-                res.add(rows[key], start, end, _fmt(v, ws, fmt), "data", v)
-                tw[key].append(v)
-                words[key].append(v)
+                bits = cap.channels[ci].value_at(idx.ravel()).reshape(nwords, ws).astype(np.int64)
+                vals = (bits @ weights).tolist()
+                r = res.rows[rows[key]]
+                r["s"] += st_l
+                r["e"] += en_l
+                r["text"] += [_fmt(v, ws, fmt) for v in vals]
+                r["kind"] += ["data"] * nwords
+                r["value"] += vals
+                tw[key] = vals
+                words[key] += vals
         if se.shape[0] % ws and cs is not None:
             res.add(trow, se[nwords * ws], w1, f"incomplete word ({se.shape[0] % ws} bits)", "warn")
         if nwords and cs is not None:
@@ -377,28 +391,29 @@ def decode_i2c(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) -> R
     rid = res.row("i2c", "I2C", sda)
     snv = _newvals(c_scl)
     scl_rise = c_scl.edges[snv == 1].astype(np.int64)
-    scl_all = c_scl.edges.astype(np.int64)
+    scl_fall = c_scl.edges[snv == 0].astype(np.int64)
     sda_e = c_sda.edges.astype(np.int64)
     dnv = _newvals(c_sda)
-    # events: (index, order, kind) with SDA changes before SCL rises at the same sample (data setup)
-    ev = np.concatenate((np.stack((sda_e, np.zeros_like(sda_e), dnv.astype(np.int64)), 1), np.stack((scl_rise, np.ones_like(scl_rise), np.full_like(scl_rise, 2)), 1))) if sda_e.shape[0] + scl_rise.shape[0] else np.zeros((0, 3), np.int64)
-    ev = ev[np.lexsort((ev[:, 1], ev[:, 0]))] if ev.shape[0] else ev
+    # SDA changes while SCL is high (at the sample and the one before) are the start and stop conditions; every other SDA change is data setup and only the sampled bit matters
+    ctl = (sda_e > 0) & (c_scl.value_at(np.maximum(sda_e - 1, 0)) == 1) & (c_scl.value_at(sda_e) == 1)
+    ctl_e, ctl_kind = sda_e[ctl], dnv[ctl].astype(np.int64)
+    # the bit on every SCL rise, sampled once for the whole capture
+    sda_at_rise = c_sda.value_at(scl_rise).tolist()
+    # events: (index, order, kind or rise number) with SDA changes before SCL rises at the same sample (data setup)
+    ev_i = np.concatenate((ctl_e, scl_rise))
+    ev_o = np.concatenate((np.zeros(ctl_e.shape[0], np.int64), np.ones(scl_rise.shape[0], np.int64)))
+    ev_k = np.concatenate((ctl_kind, np.arange(scl_rise.shape[0], dtype=np.int64)))
+    order_ = np.lexsort((ev_o, ev_i))
+    ev = zip(ev_i[order_].tolist(), ev_o[order_].tolist(), ev_k[order_].tolist())
+    nfall = scl_fall.shape[0]
 
     def next_fall(i):
-        k = int(ss(scl_all, i, side="right"))
-        while k < scl_all.shape[0]:
-            if c_scl.value_at(int(scl_all[k])) == 0:
-                return int(scl_all[k])
-            k += 1
-        return i + 1
+        k = ss(scl_fall, i, side="right")
+        return int(scl_fall[k]) if k < nfall else i + 1
 
     def prev_fall(i):
-        k = int(ss(scl_all, i, side="left")) - 1
-        while k >= 0:
-            if c_scl.value_at(int(scl_all[k])) == 0:
-                return int(scl_all[k])
-            k -= 1
-        return max(0, i - 1)
+        k = ss(scl_fall, i, side="left") - 1
+        return int(scl_fall[k]) if k >= 0 else max(0, i - 1)
 
     state = "idle"
     bits: List[Tuple[int, int]] = []
@@ -408,21 +423,19 @@ def decode_i2c(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) -> R
     last_addr = None
     stats = {"transactions": 0, "nacks": 0, "bytes": 0}
     for idx, order, kind in ev:
-        idx = int(idx)
         if order == 0:
-            if idx > 0 and c_scl.value_at(idx - 1) == 1 and c_scl.value_at(idx) == 1:
-                if kind == 0:  # SDA falls while SCL high: (repeated) start
-                    rep = state != "idle"
-                    res.add(rid, idx, next_fall(idx), "Sr" if rep else "S", "start", "repeated start" if rep else "start")
-                    state, bits, byte_no = "data", [], 0
-                    stats["transactions"] += 0 if rep else 1
-                else:  # SDA rises while SCL high: stop
-                    res.add(rid, prev_fall(idx), idx + 1, "P", "stop", "stop")
-                    state, bits = "idle", []
+            if kind == 0:  # SDA falls while SCL high: (repeated) start
+                rep = state != "idle"
+                res.add(rid, idx, next_fall(idx), "Sr" if rep else "S", "start", "repeated start" if rep else "start")
+                state, bits, byte_no = "data", [], 0
+                stats["transactions"] += 0 if rep else 1
+            else:  # SDA rises while SCL high: stop
+                res.add(rid, prev_fall(idx), idx + 1, "P", "stop", "stop")
+                state, bits = "idle", []
             continue
         if state == "idle":
             continue
-        bits.append((idx, c_sda.value_at(idx)))
+        bits.append((idx, sda_at_rise[kind]))
         if len(bits) < 9:
             continue
         val = 0
@@ -485,11 +498,10 @@ def decode_onewire(cap: LogicCapture, chans: Dict[str, Any], o: Dict[str, Any]) 
     rom_row = res.row("rom", "ROM", ci)
     nv = _newvals(c)
     e = c.edges.astype(np.int64)
-    pulses = []  # (fall, rise)
-    for j in range(e.shape[0]):
-        if nv[j] == 0:
-            r = int(e[j + 1]) if j + 1 < e.shape[0] else cap.n
-            pulses.append((int(e[j]), r))
+    # (fall, rise) of every low pulse; a pulse still low at the end of the capture ends at cap.n
+    falls = np.flatnonzero(nv == 0)
+    rises = np.where(falls + 1 < e.shape[0], e[np.minimum(falls + 1, max(e.shape[0] - 1, 0))], cap.n) if falls.shape[0] else falls
+    pulses = list(zip(e[falls].tolist(), rises.tolist()))
     if us < 1:
         res.warnings.append(f"the sample rate {sr:g} Hz is too low for 1-Wire bit slots (at least 1 MHz is needed)")
     od = False  # overdrive speed

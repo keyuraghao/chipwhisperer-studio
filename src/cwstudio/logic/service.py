@@ -673,10 +673,9 @@ class LogicService:
                 continue
             if isinstance(r, Exception):
                 continue
-            for it in r.items():
-                it["decoder"] = d["name"]
-                it["decoder_id"] = did
-                rows.append(it)
+            # r.items() is cached on the result and shared, so each item is copied with the decoder fields rather than changed in place
+            name = d["name"]
+            rows += [dict(it, decoder=name, decoder_id=did) for it in r.items()]
         if len(ids) > 1:
             rows.sort(key=lambda x: (x["s"], x["e"]))
         q = str(p.get("q") or "").strip().lower()

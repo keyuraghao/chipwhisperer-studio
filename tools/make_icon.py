@@ -29,10 +29,10 @@ def draw(size: int) -> Image.Image:
     ss = 8
     big = size * ss
     k = big / 32
-    # Diagonal gradient (x1=0, y1=0 to x2=1, y2=1): the colour depends on (x + y)
-    yy, xx = np.mgrid[0:big, 0:big]
-    t = ((xx + yy) / (2 * (big - 1)))[..., None]
-    grad = Image.fromarray((np.array(TOP_LEFT) * (1 - t) + np.array(BOTTOM_RIGHT) * t).round().astype(np.uint8), "RGB")
+    # Diagonal gradient (x1=0, y1=0 to x2=1, y2=1): the colour depends on (x + y) only, so one colour per diagonal is enough (full-size float grids need gigabytes at 8192 px)
+    t = np.linspace(0, 1, 2 * big - 1, dtype=np.float32)[:, None]
+    lut = (np.array(TOP_LEFT, np.float32) * (1 - t) + np.array(BOTTOM_RIGHT, np.float32) * t).round().astype(np.uint8)
+    grad = Image.fromarray(lut[np.add.outer(np.arange(big, dtype=np.int32), np.arange(big, dtype=np.int32))], "RGB")
     mask = Image.new("L", (big, big), 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, big - 1, big - 1), radius=round(RADIUS * k), fill=255)
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))

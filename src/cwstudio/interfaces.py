@@ -12,7 +12,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
-from cwstudio.capabilities import Unsupported, capabilities, require
+from cwstudio.capabilities import Unsupported, cached_capabilities, capabilities, require
 from cwstudio.openocd import OpenOCD
 from cwstudio.web import HTTPException, Request
 
@@ -113,9 +113,13 @@ class Interfaces:
         return self.s.worker.call(fn, *args, timeout=timeout, **kwargs)
 
     def caps(self) -> Dict[str, Any]:
-        if self.s.scope is None:
+        scope = self.s.scope
+        if scope is None:
             return capabilities(None)
-        return self._call(capabilities, self.s.scope, self.s.target)
+        c = cached_capabilities(scope)
+        if c is not None:
+            return c  # computed earlier for this scope object: no need to queue on the hardware thread
+        return self._call(capabilities, scope, self.s.target)
 
     def _gate(self, *keys: str, what: str = "") -> Dict[str, Any]:
         self._scope()
@@ -798,8 +802,10 @@ def register_routes(app, session) -> None:
         except HTTPException:
             raise
         except Exception as e:  # noqa: BLE001
+            from cwstudio.worker import HardwareBusy, HardwareTimeout
+            code = 503 if isinstance(e, HardwareBusy) else 504 if isinstance(e, HardwareTimeout) else 400  # the same statuses as app.py's err(): a busy or stuck hardware thread is retryable, not a client error
             log.debug("interfaces API error", exc_info=True)
-            raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
+            raise HTTPException(status_code=code, detail=f"{type(e).__name__}: {e}")
 
     async def body(req: Request) -> Dict[str, Any]:
         try:

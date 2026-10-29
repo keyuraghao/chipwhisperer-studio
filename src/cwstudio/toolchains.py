@@ -30,6 +30,8 @@ REGISTRY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resour
 COMPILERS = ("gcc", "clang")
 MARKER = ".cwstudio-toolchain.json"
 USER_AGENT = "ChipWhisperer-Studio"
+UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]")
+ARCHIVE_EXT_RE = re.compile(r"\.(zip|tar\.gz|tgz|tar\.bz2|tar\.xz|txz)$")
 
 
 class Cancelled(Exception):
@@ -62,29 +64,43 @@ class TooSlow(OSError):
 
 def download(url: str, dest: str, sha256: Optional[str] = None, progress: Optional[Callable[[int, int], None]] = None,
              cancel: Optional[threading.Event] = None, chunk: int = 1 << 18, min_speed: float = 0, grace: float = 15.0) -> str:
-    """Stream ``url`` to ``dest`` (via ``dest.part``), verifying ``sha256`` if given. With ``min_speed`` (bytes/s), raise :class:`TooSlow` if the average rate after ``grace`` seconds stays below it, so the caller can try a mirror."""
+    """Stream ``url`` to ``dest`` (via ``dest.part``), verifying ``sha256`` if given. A ``dest.part`` left by a download that broke off is resumed with a ``Range`` request when the server supports it (the part is hashed first), and started over otherwise. With ``min_speed`` (bytes/s), raise :class:`TooSlow` if the average rate after ``grace`` seconds stays below it, so the caller can try a mirror."""
     os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
     part = dest + ".part"
     h = hashlib.sha256()
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    headers = {"User-Agent": USER_AGENT}
+    have = os.path.getsize(part) if os.path.isfile(part) else 0
+    if have:
+        headers["Range"] = f"bytes={have}-"
+    req = urllib.request.Request(url, headers=headers)
     t0 = time.time()
-    with net.urlopen(req, timeout=30) as r, open(part, "wb") as f:
+    with net.urlopen(req, timeout=30) as r:
+        resumed = have > 0 and getattr(r, "status", None) == 206  # anything else (200, or a file:// URL) is the whole file again: truncate
+        if resumed:
+            with open(part, "rb") as f:
+                for buf in iter(lambda: f.read(1 << 20), b""):
+                    h.update(buf)
+        else:
+            have = 0
         total = int(r.headers.get("Content-Length") or 0)
-        done = 0
-        while True:
-            if cancel is not None and cancel.is_set():
-                raise Cancelled()
-            buf = r.read(chunk)
-            if not buf:
-                break
-            f.write(buf)
-            h.update(buf)
-            done += len(buf)
-            if progress:
-                progress(done, total)
-            elapsed = time.time() - t0
-            if min_speed and elapsed > grace and done / elapsed < min_speed and (not total or done < total * 0.8):
-                raise TooSlow(f"{url} is too slow ({done / elapsed / 1024:.0f} KB/s)")
+        if total:
+            total += have  # a 206 answer reports only what is left to send
+        done = have
+        with open(part, "ab" if resumed else "wb") as f:
+            while True:
+                if cancel is not None and cancel.is_set():
+                    raise Cancelled()
+                buf = r.read(chunk)
+                if not buf:
+                    break
+                f.write(buf)
+                h.update(buf)
+                done += len(buf)
+                if progress:
+                    progress(done, total)
+                elapsed = time.time() - t0
+                if min_speed and elapsed > grace and (done - have) / elapsed < min_speed and (not total or done < total * 0.8):
+                    raise TooSlow(f"{url} is too slow ({(done - have) / elapsed / 1024:.0f} KB/s)")
     digest = h.hexdigest()
     if sha256 and digest.lower() != sha256.lower():
         os.remove(part)
@@ -94,8 +110,9 @@ def download(url: str, dest: str, sha256: Optional[str] = None, progress: Option
 
 
 def _inside(root: str, path: str) -> bool:
-    root = os.path.realpath(root)
-    return os.path.realpath(path) == root or os.path.realpath(path).startswith(root + os.sep)
+    """Whether ``path`` resolves to ``root`` or below it. ``root`` must already be a real path (``os.path.realpath``): resolving it once per archive instead of three times per member makes extraction about 3x cheaper on the path checks."""
+    real = os.path.realpath(path)
+    return real == root or real.startswith(root + os.sep)
 
 
 def extract(archive: str, dest: str, members: Optional[Callable[[str], Optional[str]]] = None,
@@ -105,6 +122,7 @@ def extract(archive: str, dest: str, members: Optional[Callable[[str], Optional[
     ``members`` may map each archive path to a new relative path (or None to skip it); it is used to pull a sub-folder out of a large source archive.
     """
     os.makedirs(dest, exist_ok=True)
+    root = os.path.realpath(dest)
     if archive.endswith(".zip"):
         with zipfile.ZipFile(archive) as z:
             for info in z.infolist():
@@ -114,7 +132,7 @@ def extract(archive: str, dest: str, members: Optional[Callable[[str], Optional[
                 if not name:
                     continue
                 target = os.path.join(dest, name)
-                if not _inside(dest, target):
+                if not _inside(root, target):
                     raise ValueError(f"unsafe path in archive: {info.filename}")
                 if info.is_dir():
                     os.makedirs(target, exist_ok=True)
@@ -130,13 +148,14 @@ def extract(archive: str, dest: str, members: Optional[Callable[[str], Optional[
         for m in t:
             if cancel is not None and cancel.is_set():
                 raise Cancelled()
-            name = members(m.name) if members else m.name
+            original = m.name  # the path as the archive names it, for error messages
+            name = members(original) if members else original
             if not name:
                 continue
             m.name = name
             target = os.path.join(dest, name)
-            if not _inside(dest, target):
-                raise ValueError(f"unsafe path in archive: {m.name}")
+            if not _inside(root, target):
+                raise ValueError(f"unsafe path in archive: {original}")
             if m.issym() or m.islnk():
                 link = m.linkname if m.issym() else (members(m.linkname) if members else m.linkname)
                 if not link:
@@ -144,8 +163,8 @@ def extract(archive: str, dest: str, members: Optional[Callable[[str], Optional[
                 if m.islnk():
                     m.linkname = link
                 base = os.path.dirname(target) if m.issym() else dest
-                if os.path.isabs(link) or not _inside(dest, os.path.join(base, link)):
-                    raise ValueError(f"unsafe link in archive: {m.name} -> {m.linkname}")
+                if os.path.isabs(link) or not _inside(root, os.path.join(base, link)):
+                    raise ValueError(f"unsafe link in archive: {original} -> {m.linkname}")
             elif not (m.isfile() or m.isdir()):
                 continue  # devices, fifos
             m.mode &= 0o755 if m.isdir() or m.mode & 0o111 else 0o644
@@ -388,8 +407,8 @@ class ToolchainManager:
 
     def _install(self, e: Dict[str, Any], dl: Dict[str, Any], job: Dict[str, Any]):
         url = dl["url"]
-        fname = re.sub(r"[^A-Za-z0-9._-]", "_", url.rstrip("/").split("/")[-1].split("?")[0]) or "archive"
-        if not re.search(r"\.(zip|tar\.gz|tgz|tar\.bz2|tar\.xz|txz)$", fname):
+        fname = UNSAFE_NAME_RE.sub("_", url.rstrip("/").split("/")[-1].split("?")[0]) or "archive"
+        if not ARCHIVE_EXT_RE.search(fname):
             fname += ".tar.gz" if "codeload" in url or "tar.gz" in url else ""
         dl_dir = os.path.join(self.root, ".downloads")
         archive = os.path.join(dl_dir, fname)

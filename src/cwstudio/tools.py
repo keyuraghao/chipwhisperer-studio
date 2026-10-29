@@ -32,10 +32,11 @@ class NotesStore:
 
     def list(self) -> List[Dict[str, Any]]:
         out = []
-        for fn in os.listdir(self.root):
-            p = os.path.join(self.root, fn)
-            if os.path.isfile(p) and fn.endswith((".md", ".txt")) and not fn.startswith("."):
-                out.append({"name": fn, "bytes": os.path.getsize(p), "mtime": os.path.getmtime(p)})
+        for entry in os.scandir(self.root):  # one stat per file instead of three
+            fn = entry.name
+            if fn.endswith((".md", ".txt")) and not fn.startswith(".") and entry.is_file():
+                st = entry.stat()
+                out.append({"name": fn, "bytes": st.st_size, "mtime": st.st_mtime})
         return sorted(out, key=lambda n: -n["mtime"])
 
     def get(self, name: str) -> Dict[str, Any]:
@@ -74,7 +75,7 @@ class NotesStore:
 # calculator
 # ----------------------------------------------------------------------------
 def _hw(x: int) -> int:
-    return bin(int(x) & ((1 << 4096) - 1)).count("1")
+    return (int(x) & ((1 << 4096) - 1)).bit_count()
 
 
 def _hd(a: int, b: int) -> int:

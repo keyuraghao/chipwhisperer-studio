@@ -28,9 +28,8 @@ def detect_format(path: str) -> str:
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     if ext in ("vcd", "csv", "sr"):
         return ext
-    if head is None:
-        with open(path, "rb") as f:
-            head = f.read(512)
+    with open(path, "rb") as f:
+        head = f.read(512)
     if head.startswith(b"PK"):
         return "sr"
     if b"$" in head[:200] and (b"$timescale" in head or b"$var" in head or b"$date" in head or b"$version" in head):
@@ -117,7 +116,12 @@ def read_vcd(path: str) -> LogicCapture:
     if not names:
         raise ValueError("the VCD file declares no wire or reg variables" + (f" (only {', '.join(skipped)})" if skipped else ""))
     times: List[int] = []
-    ch_ev: List[List[Tuple[int, int]]] = [[] for _ in names]
+    # one flat list of times and one of values per channel (a tuple per change would cost more than the parsing itself)
+    ch_t: List[List[int]] = [[] for _ in names]
+    ch_v: List[List[int]] = [[] for _ in names]
+    first = {ident: ids[0] for ident, ids in chan_of.items()}  # a scalar change names one channel
+    get_first = first.get
+    get_ids = chan_of.get
     t = 0
     tok = body.split()
     i = 0
@@ -125,21 +129,28 @@ def read_vcd(path: str) -> LogicCapture:
     while i < nt:
         w = tok[i]
         c0 = w[0]
-        if c0 == "#":
+        if c0 == "1" or c0 == "0":
+            ci = get_first(w[1:])
+            if ci is not None:
+                ch_t[ci].append(t)
+                ch_v[ci].append(c0 == "1")
+        elif c0 == "#":
             t = int(w[1:])
             times.append(t)
-        elif c0 in "01xXzZ" and len(w) > 1:
-            ids = chan_of.get(w[1:])
-            if ids:
-                ch_ev[ids[0]].append((t, 1 if c0 == "1" else 0))
+        elif c0 in "xXzZ" and len(w) > 1:
+            ci = get_first(w[1:])
+            if ci is not None:
+                ch_t[ci].append(t)
+                ch_v[ci].append(0)
         elif c0 in "bB":
             val = w[1:]
             i += 1
-            ids = chan_of.get(tok[i]) if i < nt else None
+            ids = get_ids(tok[i]) if i < nt else None
             if ids:
                 val = val.rjust(len(ids), "0" if val[0] in "01" else val[0])[-len(ids):]
                 for k, ci in enumerate(ids):
-                    ch_ev[ci].append((t, 1 if val[k] == "1" else 0))
+                    ch_t[ci].append(t)
+                    ch_v[ci].append(val[k] == "1")
         elif c0 in "rRsS":
             i += 1
         elif w == "$comment":
@@ -166,12 +177,11 @@ def read_vcd(path: str) -> LogicCapture:
     chans = []
     dt = edge_dtype(n)
     for ci, name in enumerate(names):
-        ev = ch_ev[ci]
-        if not ev:
+        if not ch_t[ci]:
             chans.append(Channel(name, 0, np.zeros(0, dt)))
             continue
-        tt = np.fromiter((e[0] for e in ev), np.int64, len(ev))
-        vv = np.fromiter((e[1] for e in ev), np.int8, len(ev))
+        tt = np.asarray(ch_t[ci], np.int64)
+        vv = np.asarray(ch_v[ci], np.int8)
         pos = to_idx(tt)
         last = np.ones(pos.shape[0], bool)
         last[:-1] = pos[1:] != pos[:-1]
@@ -373,6 +383,80 @@ def _iso_seconds(col: List[str]) -> Optional[np.ndarray]:
     return (arr - arr.min()).astype(np.float64) * 1e-9
 
 
+def _csv_is_num(x: str) -> bool:
+    try:
+        float(x)
+        return True
+    except ValueError:
+        return False
+
+
+def _csv_header(first_row: List[str]) -> Optional[List[str]]:
+    """The header row when the first row is not all numbers (nor an ISO timestamp row)."""
+    if not all(_csv_is_num(x) for x in first_row) and not _ISO.match(first_row[0]):
+        return [x.strip() for x in first_row]
+    return None
+
+
+def _csv_parse_fast(body_lines: List[str], dialect) -> Optional[Tuple[np.ndarray, Optional[List[str]], None]]:
+    """The whole table through ``np.loadtxt`` (a C parser, 10x faster than csv.reader plus float()): (data, header, None), or None when the file needs the careful path (ISO timestamps, blank cells, words, ragged rows), which also writes the error messages."""
+    head = [r for r in csv.reader(body_lines[:50], dialect) if r and any(x.strip() for x in r)]
+    if not head:
+        return None
+    header = _csv_header(head[0])
+    if header is not None and len(head) < 2:
+        return None
+    first = head[1] if header else head[0]
+    if _ISO.match(first[0]):
+        return None
+    # the data starts at the first line with content, or after it when that line is the header
+    start = next(k for k, ln in enumerate(body_lines) if ln.strip()) + (1 if header is not None else 0)
+    try:
+        data = np.loadtxt(body_lines[start:], delimiter=dialect.delimiter, comments=None, dtype=np.float64, ndmin=2)
+    except (ValueError, TypeError, IndexError):
+        return None
+    if data.shape[0] == 0 or (header is not None and data.shape[1] != len(header)):
+        return None
+    return data, header, None
+
+
+def _csv_parse_slow(body_lines: List[str], dialect) -> Tuple[np.ndarray, Optional[List[str]], Optional[np.ndarray]]:
+    """Row by row through csv.reader: ISO timestamps in the first column, blank cells read as 0, and a message naming the first bad cell or ragged row."""
+    rows = [r for r in csv.reader(body_lines, dialect) if r and any(x.strip() for x in r)]
+    if not rows:
+        raise ValueError("the CSV file is empty")
+    header = _csv_header(rows[0])
+    if header is not None:
+        rows = rows[1:]
+    if not rows:
+        raise ValueError("the CSV file has a header but no data")
+    ncol = len(header) if header else len(rows[0])
+    for k, r in enumerate(rows):
+        if len(r) != ncol:
+            raise ValueError(f"row {k + (2 if header else 1)} has {len(r)} columns but {'the header' if header else 'the first row'} has {ncol}")
+    iso = _iso_seconds([r[0] for r in rows])
+    first_col = 1 if iso is not None else 0
+    data = np.zeros((len(rows), ncol), np.float64)
+    try:
+        # whole columns of number strings at once
+        for j in range(first_col, ncol):
+            data[:, j] = np.array([r[j] for r in rows], dtype=np.float64)
+        fast = True
+    except ValueError:
+        fast = False  # an empty cell or a word: the loop below fills blanks with 0 and names the bad cell
+    for k, r in enumerate([] if fast else rows):
+        for j in range(first_col, ncol):
+            x = r[j].strip()
+            if not x:
+                continue
+            try:
+                data[k, j] = float(x)
+            except ValueError:
+                col_name = header[j] if header else f"column {j + 1}"
+                raise ValueError(f"row {k + (2 if header else 1)}, column {col_name!r}: {x!r} is not a number. Studio imports raw logic exports (a time or sample column, then one 0/1 column per channel), not decoded protocol tables") from None
+    return data, header, iso
+
+
 def read_csv(path: str, samplerate: Optional[float] = None) -> LogicCapture:
     with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
         text = f.read()
@@ -398,46 +482,9 @@ def read_csv(path: str, samplerate: Optional[float] = None) -> LogicCapture:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
     except csv.Error:
         dialect = csv.excel
-    rows = [r for r in csv.reader(body_lines, dialect) if r and any(x.strip() for x in r)]
-    if not rows:
-        raise ValueError("the CSV file is empty")
-
-    def is_num(x):
-        try:
-            float(x)
-            return True
-        except ValueError:
-            return False
-    header = None
-    if not all(is_num(x) for x in rows[0]) and not _ISO.match(rows[0][0]):
-        header = [x.strip() for x in rows[0]]
-        rows = rows[1:]
-    if not rows:
-        raise ValueError("the CSV file has a header but no data")
-    ncol = len(header) if header else len(rows[0])
-    for k, r in enumerate(rows):
-        if len(r) != ncol:
-            raise ValueError(f"row {k + (2 if header else 1)} has {len(r)} columns but {'the header' if header else 'the first row'} has {ncol}")
-    iso = _iso_seconds([r[0] for r in rows])
-    first_col = 1 if iso is not None else 0
-    data = np.zeros((len(rows), ncol), np.float64)
-    try:
-        # fast path: numpy parses whole columns of number strings in C
-        for j in range(first_col, ncol):
-            data[:, j] = np.array([r[j] for r in rows], dtype=np.float64)
-        fast = True
-    except ValueError:
-        fast = False  # an empty cell or a word: the slow path below fills blanks with 0 and names the bad cell
-    for k, r in enumerate([] if fast else rows):
-        for j in range(first_col, ncol):
-            x = r[j].strip()
-            if not x:
-                continue
-            try:
-                data[k, j] = float(x)
-            except ValueError:
-                col_name = header[j] if header else f"column {j + 1}"
-                raise ValueError(f"row {k + (2 if header else 1)}, column {col_name!r}: {x!r} is not a number. Studio imports raw logic exports (a time or sample column, then one 0/1 column per channel), not decoded protocol tables") from None
+    parsed = _csv_parse_fast(body_lines, dialect) or _csv_parse_slow(body_lines, dialect)
+    data, header, iso = parsed
+    ncol = data.shape[1]
     if iso is not None:
         data[:, 0] = iso
         if header is None:

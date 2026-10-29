@@ -45,6 +45,9 @@ CRYPTO_TARGETS = ["TINYAES128C", "AVRCRYPTOLIB", "MBEDTLS", "AESSIMPLE", "MASKED
 SS_VERSIONS = ["SS_VER_2_1", "SS_VER_1_1", "SS_VER_1_0"]  # SS_VER_2_0 is deprecated and stops the build with an #error in simpleserial.c
 SOURCE_MARKER = ".cwstudio-source.json"
 TARGET_RE = re.compile(r"^\s*TARGET\s*[:?]?=\s*(\S+)", re.M)
+PLATFORM_RE = re.compile(r"\s*(?:else\s+)?ifeq\s+\(\$\(PLATFORM\),\s*([A-Za-z0-9_]+)\s*\)")
+HAL_VAR_RE = re.compile(r"(HAL|MCU|PLTNAME|EXTRAPATH)\s*[:?]?=\s*(.*)$")
+BUILD_ERROR_RE = re.compile(r"\berror\b|Error \d|\*\*\*")
 
 
 def parse_platforms(makefile_hal: str) -> List[Dict[str, Any]]:
@@ -54,7 +57,7 @@ def parse_platforms(makefile_hal: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     cur: Optional[Dict[str, Any]] = None
     for line in text.splitlines():
-        m = re.match(r"\s*(?:else\s+)?ifeq\s+\(\$\(PLATFORM\),\s*([A-Za-z0-9_]+)\s*\)", line)
+        m = PLATFORM_RE.match(line)
         if m:
             cur = {"name": m.group(1), "hal": None, "mcu": None, "label": m.group(1), "extra": False}
             out.append(cur)
@@ -64,7 +67,7 @@ def parse_platforms(makefile_hal: str) -> List[Dict[str, Any]]:
         s = line.strip()
         if s.startswith("#"):
             continue
-        kv = re.match(r"(HAL|MCU|PLTNAME|EXTRAPATH)\s*[:?]?=\s*(.*)$", s)
+        kv = HAL_VAR_RE.match(s)
         if kv and cur.get("_" + kv.group(1)) is None:
             k, v = kv.group(1), kv.group(2).strip()
             cur["_" + k] = True
@@ -582,7 +585,7 @@ class FirmwareManager:
             if job.get("state") == "cancelled":
                 return
             if rc != 0 or not os.path.isfile(plan["hex"]):
-                errs = [ln for ln in self.build_lines if re.search(r"\berror\b|Error \d|\*\*\*", ln)]
+                errs = [ln for ln in self.build_lines if BUILD_ERROR_RE.search(ln)]
                 job["state"] = "failed"
                 job["error"] = (errs[0] if errs else f"make exited with code {rc}")[:500]
                 log.error("Build failed: %s", job["error"])

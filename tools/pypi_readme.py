@@ -30,7 +30,7 @@ def absolute(target: str, tag: str) -> str:
     if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith(("#", "//")):
         return target  # already absolute (https:, mailto:) or an anchor on the same page
     path, _, frag = target.partition("#")
-    path = path.lstrip("./")
+    path = re.sub(r"^(\./)+", "", path)  # not str.lstrip("./"), which would also eat the dots of .github/ or ../
     if path.lower().endswith(IMAGE_EXT):
         url = f"https://raw.githubusercontent.com/{REPO}/{tag}/{path}"
     else:

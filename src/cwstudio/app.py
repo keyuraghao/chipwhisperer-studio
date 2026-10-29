@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import logging
 import mimetypes
@@ -13,7 +14,7 @@ from starlette.staticfiles import StaticFiles
 
 from cwstudio.web import App, FileResponse, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 
-from cwstudio import __version__, hardware
+from cwstudio import __version__, accel, hardware
 from cwstudio.analysis import MODELS
 from cwstudio.capabilities import LABELS, SIM_MODELS
 from cwstudio import tools
@@ -105,15 +106,19 @@ def create_app(session: Session) -> App:
             "ss_versions": SS_VERSIONS,
             "sim_models": {k: LABELS[k] for k in SIM_MODELS},
             "mcp_command": mcp_command(),
+            "accel": accel.info(),  # GPU or CPU for the CPA (cwstudio.accel)
         }
 
     @app.get("/api/capabilities")
     async def capabilities():
         """What the connected scope supports: protocols, triggers, programmers, debug and logic-analyser sources, each with the reason when unavailable."""
-        from cwstudio.capabilities import capabilities as caps
+        from cwstudio.capabilities import cached_capabilities, capabilities as caps
         scope, target = session.scope, session.target
         if scope is None:
-            return caps(None)  # nothing to read from hardware
+            return await run(caps, None)  # nothing to read from hardware, but the sigrok probe behind it touches the file system
+        cached = cached_capabilities(scope)
+        if cached is not None:
+            return cached  # computed earlier for this scope object: answered without queueing on the hardware thread
         return await run(session.worker.call, caps, scope, target, timeout=30)  # firmware features and component probes are scope reads: they run on the hardware thread like every other
 
     @app.get("/api/pinout")
@@ -250,7 +255,8 @@ def create_app(session: Session) -> App:
     @app.get("/api/target/serial")
     async def serial_log(since: float = 0):
         with session._serial_lock:
-            return [r for r in session.serial_buffer if r["t"] > since]
+            buf = session.serial_buffer
+            return buf[bisect.bisect_right(buf, since, key=lambda r: r["t"]):]  # records are appended in time order, so the first one after `since` is found by bisection instead of a scan of the whole buffer
 
     @app.post("/api/target/simpleserial")
     async def simpleserial(req: Request):
@@ -289,7 +295,7 @@ def create_app(session: Session) -> App:
 
     @app.delete("/api/traces")
     async def traces_clear():
-        session.store.clear()
+        await run(session.store.clear)
         session.bus.publish("traces", session.store.summary())
         return session.store.summary()
 
@@ -306,19 +312,21 @@ def create_app(session: Session) -> App:
     @app.get("/api/traces/{index}")
     async def trace_one(index: int):
         try:
-            data = session.trace_bytes(index)
+            data = await run(session.trace_bytes, index)  # copies the samples into a frame: off the event loop
         except IndexError:
             raise HTTPException(status_code=404, detail="no such trace")
         return Response(content=data, media_type="application/octet-stream")
 
     @app.get("/api/traces/{index}/meta")
     async def trace_meta(index: int):
-        try:
+        def _meta():
             wave, tin, tout, key = session.store.get(index)
+            return {"index": index, "n": int(len(wave)), "textin": tin.hex(), "textout": tout.hex(), "key": key.hex(),
+                    "min": float(wave.min()) if len(wave) else 0, "max": float(wave.max()) if len(wave) else 0}
+        try:
+            return await run(_meta)  # min and max walk the whole trace: off the event loop
         except IndexError:
             raise HTTPException(status_code=404, detail="no such trace")
-        return {"index": index, "n": int(len(wave)), "textin": tin.hex(), "textout": tout.hex(), "key": key.hex(),
-                "min": float(wave.min()) if len(wave) else 0, "max": float(wave.max()) if len(wave) else 0}
 
     @app.post("/api/traces/export")
     async def traces_export(req: Request):
@@ -400,7 +408,7 @@ def create_app(session: Session) -> App:
     @app.get("/api/analysis/cpa/corr/{b}")
     async def cpa_corr(b: int):
         try:
-            return Response(content=session.cpa_corr_bytes(b), media_type="application/octet-stream")
+            return Response(content=await run(session.cpa_corr_bytes, b), media_type="application/octet-stream")
         except Exception as e:  # noqa: BLE001
             err(e)
 
@@ -648,7 +656,7 @@ def create_app(session: Session) -> App:
         p = await body(req)
         try:
             return await run(session.tutorials.fetch, on_modified=p.get("on_modified") or None)
-        except ValueError as e:
+        except Exception as e:  # noqa: BLE001
             err(e)
 
     # Kernel routes take an optional kernel id (query or body field "kernel"): a notebook's path for that notebook's own kernel, a temporary id, or nothing for the shared default kernel.
@@ -775,7 +783,8 @@ def create_app(session: Session) -> App:
     async def calc_stats(req: Request):
         """Statistics of explicit values, of samples start..end of one stored trace, or of one sample across stored traces."""
         p = await body(req)
-        try:
+
+        def _stats():
             if "values" in p:
                 return tools.stats(p["values"])
             if p.get("source") == "trace":
@@ -787,6 +796,8 @@ def create_app(session: Session) -> App:
                 s0, s1 = int(p["sample"]), int(p.get("sample_end") or int(p["sample"]) + 1)
                 return tools.stats(waves[:, s0:s1].mean(axis=1) if s1 - s0 > 1 else waves[:, s0])
             raise ValueError("give values, or source=trace/sample")
+        try:
+            return await run(_stats)  # the sample source stacks every stored trace into one array: off the event loop
         except Exception as e:  # noqa: BLE001
             err(e)
 

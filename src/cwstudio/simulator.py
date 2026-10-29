@@ -564,7 +564,7 @@ class SimScope:
                     idx = np.arange(lo, hi)
                     wave[lo:hi] -= 0.12 * np.exp(-0.5 * ((idx - c) / r_sigma) ** 2)
         wave *= gain_scale
-        return np.clip(wave, -0.5, 0.5).astype(np.float32)
+        return np.clip(wave, -0.5, 0.5, out=wave)  # float32 already: clip in place instead of a copy
 
 
 class SimTarget:

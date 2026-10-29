@@ -260,8 +260,8 @@ class HardwareWorker:
                     self._current = None
                 if done:
                     self._end_long(long)
-                continue
-            # Idle: run periodic tasks.
+                    continue
+            # Periodic tasks: all of them when idle, only those registered with only_idle=False (the status push) between the steps of a long job
             now = time.monotonic()
             with self._periodic_lock:
                 tasks = list(self._periodic)

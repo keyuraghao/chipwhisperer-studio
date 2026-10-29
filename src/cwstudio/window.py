@@ -74,6 +74,7 @@ _helper_env = system_env
 
 
 def find_gtk_python() -> str:
+    """The first system Python whose GTK helper reports WebKitGTK (``--check``); used by :func:`available` and the Connect tab, while :func:`_open_gtk` starts the helper directly and lets it report."""
     errors = []
     for py in _gtk_pythons():
         try:
@@ -88,12 +89,56 @@ def find_gtk_python() -> str:
     raise WindowUnavailable("WebKitGTK is not available (" + "; ".join(errors or ["no python3 found"]) + "). " + LINUX_HINT)
 
 
+START_TIMEOUT = 20.0  # seconds the GTK helper gets to load GTK and WebKitGTK and report OPENED or UNAVAILABLE
+
+
+def _first_line(proc: subprocess.Popen, timeout: float) -> Optional[str]:
+    """The first line the helper prints, or None when it prints nothing within timeout (its stdout is read on a thread so a hung helper cannot hang Studio)."""
+    box: List[str] = []
+    t = threading.Thread(target=lambda: box.append(proc.stdout.readline()), name="gtk-helper-start", daemon=True)
+    t.start()
+    t.join(timeout)
+    return box[0] if box else None
+
+
+def _launch_gtk(url: str, width: int, height: int) -> subprocess.Popen:
+    """Start the GTK helper with the first system Python that has WebKitGTK. The helper itself reports OPENED once the window shows or UNAVAILABLE with the reason, so one start replaces a separate --check run (which would load GTK and WebKitGTK twice, about half a second)."""
+    errors = []
+    for py in _gtk_pythons():
+        cmd = [py, GTK_HELPER, "--url", url, "--title", TITLE, "--icon", ICON, "--width", str(width), "--height", str(height)]
+        try:
+            proc = subprocess.Popen(cmd, env=_helper_env(), stdout=subprocess.PIPE, text=True)
+        except OSError as e:
+            errors.append(f"{py}: {e}")
+            continue
+        line = _first_line(proc, START_TIMEOUT)
+        if line is not None and line.startswith("OPENED"):
+            log.debug("window: %s", py)
+            def forward():  # whatever the helper prints later (snapshot and download notes for tests) still reaches Studio's output
+                for ln in proc.stdout:
+                    sys.stdout.write(ln)
+            threading.Thread(target=forward, name="gtk-helper-output", daemon=True).start()
+            return proc
+        if proc.poll() is None:
+            proc.kill()
+        rest = ""
+        try:
+            rest = proc.stdout.read() or ""
+            proc.wait(5)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        if line is None:
+            reason = f"no answer within {START_TIMEOUT:.0f} s"
+        else:
+            reason = (line + rest).strip() or f"exited with status {proc.returncode}"
+        errors.append(f"{py}: {reason[:200]}")
+    raise WindowUnavailable("WebKitGTK is not available (" + "; ".join(errors or ["no python3 found"]) + "). " + LINUX_HINT)
+
+
 def _open_gtk(url: str, width: int, height: int, should_close: Callable[[], bool]) -> None:
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         raise WindowUnavailable("there is no graphical display (no DISPLAY or WAYLAND_DISPLAY)")
-    py = find_gtk_python()
-    cmd = [py, GTK_HELPER, "--url", url, "--title", TITLE, "--icon", ICON, "--width", str(width), "--height", str(height)]
-    proc = subprocess.Popen(cmd, env=_helper_env())
+    proc = _launch_gtk(url, width, height)
     try:
         while proc.poll() is None and not should_close():
             try:

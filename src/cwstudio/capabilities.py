@@ -95,7 +95,34 @@ def _has(scope, attr: str) -> bool:
 FW_TOO_OLD = "the scope firmware is too old for {what}; update it with scope.upgrade_firmware() (for example in a Notebook cell), see https://chipwhisperer.readthedocs.io/en/latest/firmware.html"
 
 
+# The capabilities of the connected scope, computed once per scope object and model: the firmware feature reads (scope.check_feature is a USB control transfer each) and the sigrok probe behind every entry do not change while the scope object lives. invalidate_gates() clears it on connect and disconnect, together with the setting gates below.
+_caps_cache: Dict[str, Any] = {"ref": None, "model": None, "caps": None}
+
+
+def cached_capabilities(scope) -> Optional[Dict[str, Any]]:
+    """The cached capabilities of ``scope`` when they were computed for this very object (and simulated model), else None: callers that would otherwise go through the hardware thread can answer from the cache without queueing on it."""
+    if scope is None:
+        return None
+    ref = _caps_cache["ref"]
+    if ref is not None and ref() is scope and _caps_cache["model"] == getattr(scope, "sim_model", None):
+        return _caps_cache["caps"]
+    return None
+
+
 def capabilities(scope, target=None) -> Dict[str, Any]:
+    cached = cached_capabilities(scope)
+    if cached is not None:
+        return cached
+    out = _compute_capabilities(scope, target)
+    if scope is not None:
+        try:
+            _caps_cache.update(ref=weakref.ref(scope), model=getattr(scope, "sim_model", None), caps=out)
+        except TypeError:  # an object without weak reference support: no caching
+            _caps_cache.update(ref=None, model=None, caps=None)
+    return out
+
+
+def _compute_capabilities(scope, target=None) -> Dict[str, Any]:
     m = model_of(scope)
     if m is None:
         none = cap(False, "connect a scope first" if scope is None else f"this scope type ({scope_type(scope)}) is not supported by the Interfaces tab")
@@ -208,8 +235,9 @@ _gate_cache: Dict[str, Any] = {"ref": None, "model": None, "gates": None}
 
 
 def invalidate_gates() -> None:
-    """Forget the cached setting gates (the session calls it on scope connect and disconnect)."""
+    """Forget the cached setting gates and capabilities (the session calls it on scope connect and disconnect)."""
     _gate_cache.update(ref=None, model=None, gates=None)
+    _caps_cache.update(ref=None, model=None, caps=None)
 
 
 def setting_gates(scope, caps: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:

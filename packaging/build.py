@@ -90,11 +90,7 @@ def main():
             for dp, _dn, fns in os.walk(bundle):
                 for fn in fns:
                     full = os.path.join(dp, fn)
-                    info = zipfile.ZipInfo(os.path.relpath(full, args.out))
-                    info.external_attr = (os.stat(full).st_mode & 0xFFFF) << 16
-                    info.compress_type = zipfile.ZIP_DEFLATED
-                    with open(full, "rb") as fh:
-                        z.writestr(info, fh.read())
+                    z.write(full, os.path.relpath(full, args.out))  # streams the file and keeps its mode and modification time
         print("built", zpath)
     print("done:", bundle)
 

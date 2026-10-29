@@ -220,11 +220,13 @@ class Server:
         self.tools: Dict[str, Any] = {}
         self.resources: Dict[str, Any] = {}
         self.prompts: Dict[str, _Callable] = {}
+        self._tools_listed: Optional[List[Dict[str, Any]]] = None  # the tools/list result, built once: registration is over before run() and the schemas never change
 
     # ----- registration -------------------------------------------------------
     def tool(self, annotations: Optional[Dict[str, Any]] = None) -> Callable:
         def deco(fn: Callable) -> Callable:
             self.tools[fn.__name__] = (_Callable(fn), annotations or {})
+            self._tools_listed = None
             return fn
         return deco
 
@@ -250,16 +252,18 @@ class Server:
         return res
 
     def _tools_list(self, _params) -> Dict[str, Any]:
-        tools = []
-        for name, (c, ann) in self.tools.items():
-            t = {"name": name, "title": name.replace("_", " ").capitalize(), "description": c.doc, "inputSchema": c.input_schema()}
-            out = c.output_schema()
-            if out:
-                t["outputSchema"] = out
-            if ann:
-                t["annotations"] = ann
-            tools.append(t)
-        return {"tools": tools}
+        if self._tools_listed is None:
+            tools = []
+            for name, (c, ann) in self.tools.items():
+                t = {"name": name, "title": name.replace("_", " ").capitalize(), "description": c.doc, "inputSchema": c.input_schema()}
+                out = c.output_schema()
+                if out:
+                    t["outputSchema"] = out
+                if ann:
+                    t["annotations"] = ann
+                tools.append(t)
+            self._tools_listed = tools
+        return {"tools": self._tools_listed}
 
     def _tools_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
         name = params.get("name")
@@ -351,6 +355,10 @@ class Server:
             msg = json.loads(raw)
         except ValueError as e:
             return {"jsonrpc": "2.0", "id": None, "error": {"code": PARSE_ERROR, "message": f"parse error: {e}"}}
+        return self.handle_parsed(msg)
+
+    def handle_parsed(self, msg: Any) -> Optional[Any]:
+        """Handle a message or batch already decoded from JSON."""
         if isinstance(msg, list):
             if not msg:
                 return {"jsonrpc": "2.0", "id": None, "error": {"code": INVALID_REQUEST, "message": "empty batch"}}
@@ -564,21 +572,21 @@ class Server:
                     return
                 try:
                     msg = json.loads(raw)
-                except ValueError:
-                    msg = None
+                except ValueError as e:
+                    return self._send(200, _wire({"jsonrpc": "2.0", "id": None, "error": {"code": PARSE_ERROR, "message": f"parse error: {e}"}}).encode("utf-8"))
                 is_init = isinstance(msg, dict) and msg.get("method") == "initialize"
                 headers = {}
                 if is_init:
                     sid = uuid.uuid4().hex
                     http_sessions.add(sid)
                     headers["Mcp-Session-Id"] = sid
-                elif msg is not None:
+                else:
                     sid = self.headers.get("Mcp-Session-Id")
                     if not sid:
                         return self._error(400, "missing Mcp-Session-Id header")
                     if sid not in http_sessions:
                         return self._error(404, "unknown or ended session")
-                resp = server.handle_raw(raw)
+                resp = server.handle_parsed(msg)  # decoded once above, not again
                 if resp is None:
                     return self._send(202, b"", headers=headers)
                 self._send(200, _wire(resp).encode("utf-8"), headers=headers)

@@ -56,6 +56,8 @@ classifiers = [
 
 [project.optional-dependencies]
 window = []  # the window is built in now; kept so "chipwhisperer-studio[window]" still installs
+# GPU for the CPA: CuPy for CUDA 12 with the toolkit headers it compiles its kernels against (NVIDIA driver 525 or newer). Studio detects it at start and falls back to numpy; CWSTUDIO_GPU=0 turns it off.
+gpu = ["cupy-cuda12x[ctk]>=13"]
 test = ["pytest", "httpx"]
 # The official MCP SDK is only used by the interoperability test; Studio has its own MCP server.
 test-mcp = ["pytest", "httpx", "mcp>=2.2"]

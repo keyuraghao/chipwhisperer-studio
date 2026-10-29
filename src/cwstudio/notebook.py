@@ -277,6 +277,15 @@ def _is_mpl_figure(obj) -> bool:
     return type(obj).__module__.startswith("matplotlib") and hasattr(obj, "savefig") and hasattr(obj, "get_figwidth")
 
 
+TEXT_PLAIN_LIMIT = 1 << 20  # characters of text/plain a cell result may carry; the rest would only slow every window down and bloat the .ipynb
+
+
+def _cap_text(text: str) -> str:
+    if len(text) <= TEXT_PLAIN_LIMIT:
+        return text
+    return text[:TEXT_PLAIN_LIMIT] + f"... ({len(text) - TEXT_PLAIN_LIMIT} more characters)"
+
+
 def rich_bundle(obj: Any, figure_format: str = "png") -> Dict[str, Any]:
     """Jupyter-style mime bundle for an object (text/plain always, plus HTML, PNG, SVG, markdown when the object provides them; matplotlib figures as images)."""
     if _is_mpl_figure(obj):
@@ -306,10 +315,10 @@ def rich_bundle(obj: Any, figure_format: str = "png") -> Dict[str, Any]:
             data[mime] = base64.b64encode(data[mime]).decode()
     if isinstance(obj, np.ndarray):
         with np.printoptions(threshold=200, edgeitems=5):
-            data["text/plain"] = repr(obj)
+            data["text/plain"] = _cap_text(repr(obj))
     else:
         try:
-            data["text/plain"] = repr(obj)
+            data["text/plain"] = _cap_text(repr(obj))
         except Exception as e:  # noqa: BLE001
             data["text/plain"] = f"<unrepresentable {type(obj).__name__}: {e}>"
     return data
@@ -319,6 +328,9 @@ def rich_bundle(obj: Any, figure_format: str = "png") -> Dict[str, Any]:
 # IPython syntax
 # ----------------------------------------------------------------------------
 _MAGIC_LINE = re.compile(r"^(\s*)(?:(\w+)\s*=\s*)?([%!])(.*)$")
+_HELP_LINE = re.compile(r"^(\s*)([\w.]+)\?{1,2}\s*$")
+_BRACE_EXPR = re.compile(r"(?<!\{)\{([^{}]+)\}(?!\})")
+_DOLLAR_NAME = re.compile(r"(?<!\$)\$([A-Za-z_]\w*)")
 
 
 def _scan(line: str, depth: int, quote: str):
@@ -377,8 +389,8 @@ def transform(code: str) -> str:
                 name, _, arg = rest.partition(" ")
                 call = f"__studio_magic__({name!r}, {arg!r})"
             out.append(f"{indent}{var} = {call}" if var else f"{indent}{call}")
-        elif at_start and line.rstrip().endswith("?") and not line.lstrip().startswith("#") and re.match(r"^\s*[\w.]+\?{1,2}\s*$", line):
-            out.append(re.sub(r"^(\s*)([\w.]+)\?{1,2}\s*$", r"\1help(\2)", line))
+        elif at_start and line.rstrip().endswith("?") and not line.lstrip().startswith("#") and _HELP_LINE.match(line):
+            out.append(_HELP_LINE.sub(r"\1help(\2)", line))
         else:
             out.append(line)
         i += 1
@@ -399,8 +411,8 @@ def expand(cmd: str, ns: Dict[str, Any]) -> str:
             return str(eval(expr, ns))  # noqa: S307 - user's own notebook code
         except Exception:  # noqa: BLE001
             return m.group(0)
-    cmd = re.sub(r"(?<!\{)\{([^{}]+)\}(?!\})", brace, cmd)
-    cmd = re.sub(r"(?<!\$)\$([A-Za-z_]\w*)", lambda m: str(ns[m.group(1)]) if m.group(1) in ns else m.group(0), cmd)
+    cmd = _BRACE_EXPR.sub(brace, cmd)
+    cmd = _DOLLAR_NAME.sub(lambda m: str(ns[m.group(1)]) if m.group(1) in ns else m.group(0), cmd)
     return cmd.replace("{{", "{").replace("}}", "}").replace("$$", "$")
 
 

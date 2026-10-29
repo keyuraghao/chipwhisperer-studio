@@ -141,16 +141,21 @@ class Session:
             "target_kind": self.target_kind,
             "traces": self.store.summary(),
             "job": {"name": job.name, "running": busy, "error": job.error, **job.progress()} if job else None,
-            "cpa": self.cpa.result.to_json() if self.cpa else None,
+            "cpa": self._cpa_summary(),
             "uptime": round(time.time() - self.started, 1),
             "simulate_default": self.simulate_default,
             "data_dir": self.data_dir,
             "clients": self.bus.subscriber_count,
             "hardware_stuck": self.worker.stuck(),
         }
-        if st["cpa"]:
-            st["cpa"] = {k: v for k, v in st["cpa"].items() if k in ("model", "traces_used", "total", "done", "error")}
         return st
+
+    def _cpa_summary(self) -> Optional[Dict[str, Any]]:
+        """The five fields status() shows about the CPA, read from the result directly (its full to_json() sorts every byte's guesses and copies the whole history, and status runs every 2 s)."""
+        if not self.cpa:
+            return None
+        r = self.cpa.result
+        return {"model": r.model, "traces_used": r.traces_used, "total": r.total, "done": r.done, "error": r.error}
 
     def scope_info(self) -> Dict[str, Any]:
         """The connected scope's name, type, serial number and firmware from the cache filled on the hardware thread; never touches USB from the calling thread."""
@@ -574,11 +579,14 @@ class Session:
         idx = list(range(start, min(end, len(self.store)), max(1, step)))
         if not idx:
             return trace_event("traces", np.zeros(0, np.float32), {"indices": [], "samples": 0}).frame()
-        waves = [self.store.waves[i] for i in idx]
+        with self.store._lock:  # a clear() in between would make the indices dangle
+            waves = [self.store.waves[i] for i in idx]
+            generation = self.store.generation
         s = min(len(w) for w in waves)
-        block = np.stack([w[:s] for w in waves]).astype(np.float32, copy=False)
-        return trace_event("traces", block.ravel(), {"indices": idx, "samples": s,
-                                                     "generation": self.store.generation}).frame()
+        block = np.empty((len(waves), s), np.float32)  # one copy straight into the frame's sample block (the waves are float32 already)
+        for k, w in enumerate(waves):
+            block[k] = w[:s]
+        return trace_event("traces", block.ravel(), {"indices": idx, "samples": s, "generation": generation}).frame()
 
     def stats_bytes(self, start: int = 0, end: Optional[int] = None) -> bytes:
         st = self.store.stats(start, end)

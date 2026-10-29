@@ -7,6 +7,7 @@ Times: sample ``i`` of a capture is at ``(i - trigger) / samplerate`` seconds, s
 from __future__ import annotations
 
 import itertools
+import math
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -36,6 +37,11 @@ def ss(a: np.ndarray, v, side: str = "left"):
         if isinstance(v, (int, np.integer)) and not isinstance(v, bool):
             lo, hi = _LIMITS.get(a.dtype.str) or _limits(a.dtype)
             return int(a.searchsorted(a.dtype.type(min(max(int(v), lo), hi)), side=side))
+        if isinstance(v, (float, np.floating)) and math.isfinite(v):
+            # a scalar float key: math.floor/ceil and a typed scalar are 3x faster than the array path below (the CAN decoder and the viewer call this per bit and per row)
+            lo, hi = _LIMITS.get(a.dtype.str) or _limits(a.dtype)
+            iv = math.floor(v) if side == "right" else math.ceil(v)
+            return int(a.searchsorted(a.dtype.type(min(max(iv, lo), hi)), side=side))
         v = np.asarray(v)
         if v.dtype.kind == "f":
             v = np.floor(v) if side == "right" else np.ceil(v)
@@ -74,14 +80,14 @@ class Channel:
     def dense(self, start: int, stop: int) -> np.ndarray:
         """Samples ``start..stop-1`` as a uint8 0/1 array."""
         n = max(0, stop - start)
-        out = np.zeros(n + 1, np.int8)
+        out = np.zeros(n + 1, np.uint8)
         lo = ss(self.edges, start, side="right")
         hi = ss(self.edges, stop - 1, side="right")
         if hi > lo:
             out[self.edges[lo:hi] - start] = 1
-        v0 = self.init ^ (int(lo) & 1)
-        res = np.cumsum(out[:n], dtype=np.int64) & 1
-        return (res ^ v0).astype(np.uint8)
+        # the level at start goes into the first cell, then a running xor over uint8 flips at every edge (half the time of an int64 cumsum)
+        out[0] ^= self.init ^ (int(lo) & 1)
+        return np.bitwise_xor.accumulate(out[:n])
 
     def info(self, index: int) -> Dict[str, Any]:
         return {"index": index, "name": self.name, "color": self.color, "hidden": self.hidden, "edges": int(self.edges.shape[0]), "init": self.init}

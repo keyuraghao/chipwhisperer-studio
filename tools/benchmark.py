@@ -98,15 +98,14 @@ def fill_store(store, n: int, s: int, seed: int = 1, leak: bool = True):
     # Values on a 10-bit ADC grid like a CW-Lite or Nano capture, so file compression behaves as with real traces
     base = (np.round((rng.standard_normal((64, s)) * 0.05 + 0.5) * 1024) / 1024 - 0.5).astype(np.float32)
     pts = rng.integers(0, 256, (n, 16), dtype=np.uint8)
-    pos = [min(s - 1, 40 + 25 * b) for b in range(16)]
+    pos = np.array([min(s - 1, 40 + 25 * b) for b in range(16)])
+    leaks = 0.01 * hw[pts ^ np.frombuffer(KEY, np.uint8)] if leak else None  # (n, 16): the leak of every key byte of every trace at once
     t = time.perf_counter()
     for i in range(n):
         w = base[i % 64].copy()  # a new array per trace, as the scope returns
         if leak:
-            p = pts[i]
-            for b in range(16):
-                w[pos[b]] += 0.01 * hw[p[b] ^ KEY[b]]
-        store.append(w, p.tobytes() if leak else bytes(16), bytes(16), KEY)
+            np.add.at(w, pos, leaks[i])
+        store.append(w, pts[i].tobytes() if leak else bytes(16), bytes(16), KEY)
     return time.perf_counter() - t
 
 
@@ -219,7 +218,8 @@ def run_isolated(name: str, **kw):
     t = time.time()
     p = subprocess.run(cmd, capture_output=True, text=True, env=dict(os.environ, PYTHONPATH=SRC))
     if p.returncode != 0:
-        return {"error": (p.stderr or p.stdout).strip().splitlines()[-1] if (p.stderr or p.stdout) else f"exit {p.returncode}", **kw}
+        lines = (p.stderr or p.stdout or "").strip().splitlines()
+        return {"error": lines[-1] if lines else f"exit {p.returncode}", **kw}
     res = json.loads(p.stdout.strip().splitlines()[-1])
     res["wall_s"] = time.time() - t
     return res

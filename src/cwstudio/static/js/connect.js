@@ -163,7 +163,8 @@ export function initConnect(ctx, el) {
       ['Firmware', st.scope.fw_version ? JSON.stringify(st.scope.fw_version) : '-'],
       ['Target', st.target.connected ? st.target.type : 'not connected'],
       ['Traces', `${st.traces.count} (${st.traces.samples} samples)`],
-      ['Data dir', st.data_dir]];
+      ['Data dir', st.data_dir],
+      ['Compute', (meta.accel && meta.accel.label) ? meta.accel.label + (meta.accel.reason ? ' · ' + meta.accel.reason : '') : '-']];
     if (st.hardware_stuck) rows.push(['Hardware', `stuck in ${st.hardware_stuck.name} for ${Math.round(st.hardware_stuck.seconds)} s: unplug the ChipWhisperer, plug it back in and restart Studio`]);
     rows.forEach(([k, v]) => info.append(h('span', { class: 'k' }, k), h('span', {}, String(v))));
   });

@@ -10,7 +10,7 @@ import struct
 import threading
 import time
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Union
 
 import numpy as np
 
@@ -18,7 +18,7 @@ import numpy as np
 class Event:
     __slots__ = ("kind", "payload", "binary", "droppable", "_frame")
 
-    def __init__(self, kind: str, payload: Dict[str, Any], binary: Optional[bytes] = None,
+    def __init__(self, kind: str, payload: Dict[str, Any], binary: Optional[Union[bytes, memoryview]] = None,
                  droppable: bool = False):
         self.kind = kind
         self.payload = payload
@@ -60,7 +60,7 @@ def trace_event(kind: str, wave: np.ndarray, meta: Dict[str, Any], droppable: bo
     payload = dict(meta)
     payload["n"] = int(w.shape[0])
     payload["dtype"] = "f32"
-    return Event(kind, payload, w.tobytes(), droppable=droppable)
+    return Event(kind, payload, memoryview(w).cast("B"), droppable=droppable)  # no copy here: frame() joins header and samples in one pass (the frame is encoded once and then shared)
 
 
 class Subscriber:

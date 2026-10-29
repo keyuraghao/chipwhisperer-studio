@@ -13,10 +13,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from screenshots import KEY_CHECK, LOGIC_HIDDEN, ROOT, Api, _free_port, _up, connect_sim, neutral_pythonpath, newest_build  # noqa: E402
@@ -485,22 +487,28 @@ def slug(name: str) -> str:
 
 def duration(ff: str, path: str) -> float:
     err = subprocess.run([ff, "-i", path], capture_output=True, text=True).stderr
-    h, m, sec = err.split("Duration: ")[1].split(",")[0].split(":")
-    return int(h) * 3600 + int(m) * 60 + float(sec)
+    m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", err)
+    if not m:
+        raise RuntimeError(f"ffmpeg reported no duration for {path}: {err.strip()[-300:]}")
+    h, mi, sec = m.groups()
+    return int(h) * 3600 + int(mi) * 60 + float(sec)
 
 
 def make_clips(ff: str, mp4: str, chapters, folder: str, skip=("Introduction", "Get it")):
     """Cut every chapter into a looping animated WebP (10 fps, 960 px wide); GitHub plays these inline, unlike MP4."""
     os.makedirs(folder, exist_ok=True)
     total = duration(ff, mp4)
-    for i, (start, name) in enumerate(chapters):
-        if name in skip:
-            continue
+
+    def cut(i, start, name):
         end = chapters[i + 1][0] if i + 1 < len(chapters) else total
         path = os.path.join(folder, slug(name) + ".webp")
         # Margins keep the previous chapter's last frames and the next chapter's first ones out of the clip
         subprocess.check_call([ff, "-y", "-loglevel", "error", "-ss", f"{start + 1.0:.2f}", "-t", f"{end - start - 1.6:.2f}", "-i", mp4, "-vf", "fps=10,scale=960:-1:flags=lanczos", "-c:v", "libwebp_anim", "-quality", "60", "-compression_level", "3", "-loop", "0", path])
-        print(f"clip {name}: {path} ({os.path.getsize(path) / 1e6:.1f} MB)", flush=True)
+        return f"clip {name}: {path} ({os.path.getsize(path) / 1e6:.1f} MB)"
+    # One ffmpeg per chapter, several at a time: the WebP encoder is single threaded, so the clips take about one chapter's time per core
+    with ThreadPoolExecutor(max(1, os.cpu_count() or 1)) as ex:
+        for line in ex.map(lambda a: cut(*a), [(i, start, name) for i, (start, name) in enumerate(chapters) if name not in skip]):
+            print(line, flush=True)
 
 
 def convert(webm: str, out: str, chapters, width: int):
