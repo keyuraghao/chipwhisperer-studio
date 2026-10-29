@@ -217,8 +217,14 @@ class TraceStore:
                              _to_bytes(t.key)))
             proj.close(save=False)
         elif path.endswith(".npy"):
-            W = np.load(path)
-            rows = [(W[i], b"", b"", b"") for i in range(W.shape[0])]
+            W = np.load(path, mmap_mode="r")
+            base = path[:-len("_waves.npy")] if path.endswith("_waves.npy") else None
+            side = {}
+            for name in ("textins", "textouts", "keys"):  # the rest of an npy set (export or a capture streamed to disk) when it sits next to the waves
+                f = f"{base}_{name}.npy" if base else None
+                side[name] = np.load(f) if f and os.path.exists(f) else None
+            tin, tout, key = side["textins"], side["textouts"], side["keys"]
+            rows = [(np.array(W[i]), tin[i].tobytes() if tin is not None else b"", tout[i].tobytes() if tout is not None else b"", key[i].tobytes() if key is not None else b"") for i in range(W.shape[0])]
         else:
             raise ValueError("supported: .npz, .cwp, .npy, or a .zip holding a ChipWhisperer project or .npz")
         with self._lock:
@@ -229,6 +235,69 @@ class TraceStore:
             self.generation += 1
         log.info("Imported %d traces from %s", len(rows), path)
         return len(rows)
+
+
+class DiskTraceWriter:
+    """Traces written straight to disk as they are captured, for streamed or very long captures that would not fit in memory: ``<base>_waves.npy`` grows one trace at a time (a plain .npy with its header fixed up on close, so np.load and mmap_mode='r' read it), and ``<base>_textins.npy``, ``_textouts.npy`` and ``_keys.npy`` are written on close, the same set the npy export makes."""
+
+    HEADER_LEN = 128  # magic, version, length and a dict padded with spaces: shape digits never outgrow this
+
+    def __init__(self, base: str):
+        base = os.path.expanduser(base)
+        for suffix in ("_waves.npy", ".npy"):
+            if base.endswith(suffix):
+                base = base[:-len(suffix)]
+        self.base = base
+        self.path = base + "_waves.npy"
+        os.makedirs(os.path.dirname(os.path.abspath(base)) or ".", exist_ok=True)
+        self.samples: Optional[int] = None
+        self.count = 0
+        self.textins: List[bytes] = []
+        self.textouts: List[bytes] = []
+        self.keys: List[bytes] = []
+        self._f = open(self.path, "wb")
+        self._f.write(self._header(0, 0))
+        self.closed = False
+
+    def _header(self, n: int, s: int) -> bytes:
+        d = f"{{'descr': '<f4', 'fortran_order': False, 'shape': ({n}, {s}), }}"
+        body = d.ljust(self.HEADER_LEN - 10 - 1) + "\n"  # 6 magic, 2 version, 2 length
+        assert len(body) == self.HEADER_LEN - 10, "npy header overflow"
+        import struct
+        return b"\x93NUMPY" + bytes([1, 0]) + struct.pack("<H", len(body)) + body.encode("latin-1")
+
+    def append(self, wave: np.ndarray, textin: Optional[bytes], textout: Optional[bytes], key: Optional[bytes]) -> int:
+        w = np.ascontiguousarray(np.asarray(wave, dtype=np.float32))
+        if self.samples is None:
+            self.samples = int(w.shape[0])
+        elif w.shape[0] != self.samples:
+            raise RuntimeError(f"trace {self.count} has {w.shape[0]} samples, the file holds {self.samples} per trace (adc.samples changed during the capture)")
+        self._f.write(w.tobytes())
+        self.textins.append(bytes(textin or b""))
+        self.textouts.append(bytes(textout or b""))
+        self.keys.append(bytes(key or b""))
+        self.count += 1
+        return self.count - 1
+
+    @property
+    def nbytes(self) -> int:
+        return self.count * (self.samples or 0) * 4
+
+    def close(self) -> Dict[str, Any]:
+        if self.closed:
+            return self.summary()
+        self.closed = True
+        self._f.flush()
+        self._f.seek(0)
+        self._f.write(self._header(self.count, self.samples or 0))
+        self._f.close()
+        np.save(self.base + "_textins.npy", _bytes_matrix(self.textins))
+        np.save(self.base + "_textouts.npy", _bytes_matrix(self.textouts))
+        np.save(self.base + "_keys.npy", _bytes_matrix(self.keys))
+        return self.summary()
+
+    def summary(self) -> Dict[str, Any]:
+        return {"path": self.path, "base": self.base, "count": self.count, "samples": self.samples or 0, "bytes": self.nbytes, "closed": self.closed}
 
 
 def _to_bytes(v) -> bytes:

@@ -631,6 +631,10 @@ class Session:
         if params.get("clear"):
             self.store.clear()
             self.bus.publish("traces", self.store.summary())
+        if params.get("disk"):
+            params = dict(params)
+            d = os.path.expanduser(str(params["disk"]))
+            params["disk"] = d if os.path.isabs(d) else os.path.join(self.data_dir, d)  # relative paths go into the data folder, like exports
         job = CaptureJob(self.scope, self.target, self.store, self.bus, params)
         if not self.worker.start_long_job(job):
             raise RuntimeError("another job is running")
@@ -894,7 +898,9 @@ class Session:
             if path:
                 vals = prm.get("values") or [prm.get("start", 0)]
                 self.worker.call(check_setting, self.scope, path, vals[0])
-        job = GlitchJob(self.scope, self.target, self.bus, params)
+        from cwstudio import checkers as cwcheckers
+        checker = cwcheckers.resolve(params.get("checker"), params.get("checker_expr"), self.data_dir)  # an unknown name or a bad expression is refused here, before the sweep starts
+        job = GlitchJob(self.scope, self.target, self.bus, params, checker=checker)
         if not self.worker.start_long_job(job):
             raise RuntimeError("another job is running")
         self.last_glitch = job
@@ -908,6 +914,27 @@ class Session:
             return {"results": [], "parameters": [], "counts": {}}
         return {"results": j.results, "parameters": [p["path"] for p in j.params], "counts": j.counts,
                 "running": not j.finished.is_set(), "error": j.error, **j.progress()}
+
+    def glitch_checkers(self) -> Dict[str, Any]:
+        from cwstudio import checkers as cwcheckers
+        return {"checkers": cwcheckers.available(self.data_dir), "folder": cwcheckers.user_dir(self.data_dir), "help": cwcheckers.CONTEXT_HELP}
+
+    def dfa(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Differential fault analysis of AES-128: from the last glitch sweep's replies (source glitch) or from given ciphertexts (correct plus faulty, hex)."""
+        from cwstudio import dfa as cwdfa
+        source = params.get("source") or ("ciphertexts" if ("correct" in params or "faulty" in params) else "glitch")
+        if source == "glitch":
+            j = self.last_glitch
+            if j is None:
+                raise RuntimeError("no glitch sweep yet: sweep with command p, a 16-byte plaintext, output_len 16 and the aes_dfa checker")
+            return cwdfa.from_glitch_results(j.results, j.data or None, j.expected_b)
+        correct = bytes.fromhex(str(params.get("correct") or "").replace(" ", ""))
+        faulty = [bytes.fromhex(str(f).replace(" ", "")) for f in (params.get("faulty") or []) if str(f).strip()]
+        if not faulty:
+            raise ValueError("give the correct ciphertext and at least one faulty ciphertext in hex")
+        out = cwdfa.analyse(correct, faulty)
+        out.update({"correct": correct.hex(), "replies": len(faulty) + 1, "faulty": len(faulty)})
+        return out
 
     def export_glitch(self, path: str) -> str:
         if self.last_glitch is None:

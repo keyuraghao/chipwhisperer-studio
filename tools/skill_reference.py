@@ -19,7 +19,7 @@ SECTIONS = [
     ("Target and serial", ("target_", "serial_", "simpleserial")),
     ("Capture", ("capture_", "job_wait")),
     ("Traces", ("trace",)),
-    ("CPA", ("cpa_",)),
+    ("CPA and DFA", ("cpa_", "dfa_")),
     ("Glitch", ("glitch_",)),
     ("Toolchains", ("toolchain",)),
     ("Firmware", ("firmware_",)),

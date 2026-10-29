@@ -521,6 +521,20 @@ def create_app(session: Session) -> App:
     async def glitch_results():
         return session.glitch_results()
 
+    @app.get("/api/glitch/checkers")
+    async def glitch_checkers():
+        """The result checkers a sweep can use: built-in (expected, loop_counter, aes_dfa, flag, expr) and the user's own from <data_dir>/checkers/*.py, with the ctx help for expressions."""
+        return await run(session.glitch_checkers)
+
+    @app.post("/api/analysis/dfa")
+    async def analysis_dfa(req: Request):
+        """Differential fault analysis of AES-128 (single-byte fault entering round 9). Body: source 'glitch' (the last sweep's replies: the expected reply is the correct ciphertext) or correct (hex) plus faulty (list of hex)."""
+        p = await body(req)
+        try:
+            return await run(session.dfa, p)
+        except Exception as e:  # noqa: BLE001
+            err(e)
+
     @app.post("/api/glitch/export")
     async def glitch_export(req: Request):
         p = await body(req)

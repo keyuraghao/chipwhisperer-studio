@@ -107,3 +107,43 @@ def encrypt_block(key: bytes, pt: bytes) -> bytes:
 
 def last_round_key(key: bytes) -> bytes:
     return bytes(expand_key(bytes(key))[10])
+
+
+def encrypt_block_faulted(key: bytes, pt: bytes, byte: int, xor: int, round_: int = 9) -> bytes:
+    """AES-128 with one byte of the state XORed by ``xor`` as it enters ``round_`` (before that round's SubBytes): the single-byte fault between the two last MixColumns that differential fault analysis recovers the key from. ``round_`` 9 is the classic Piret and Quisquater fault; round 10 faults only one ciphertext byte and give nothing."""
+    rk = _round_keys(bytes(key))
+    sbox, mul2, mul3 = _SBOX, _MUL2, _MUL3
+    s = [pt[i] ^ rk[0][i] for i in range(16)]
+    for rnd in range(1, 11):
+        if rnd == round_:
+            s = list(s)
+            s[byte % 16] ^= xor & 0xFF
+        s = [sbox[s[j]] for j in _SHIFT_ROWS]
+        if rnd != 10:
+            ns = []
+            for c in range(0, 16, 4):
+                a0, a1, a2, a3 = s[c], s[c + 1], s[c + 2], s[c + 3]
+                ns += [
+                    mul2[a0] ^ mul3[a1] ^ a2 ^ a3,
+                    a0 ^ mul2[a1] ^ mul3[a2] ^ a3,
+                    a0 ^ a1 ^ mul2[a2] ^ mul3[a3],
+                    mul3[a0] ^ a1 ^ a2 ^ mul2[a3],
+                ]
+            s = ns
+        k = rk[rnd]
+        s = [s[i] ^ k[i] for i in range(16)]
+    return bytes(s)
+
+
+def master_key_from_round_key(rk10: bytes) -> bytes:
+    """Run the AES-128 key schedule backwards from the tenth round key to the master key (the last-round key is what a DFA or a last-round CPA gives)."""
+    w = [list(rk10[4 * i:4 * i + 4]) for i in range(4)]
+    words = [None] * 40 + w  # type: ignore[list-item]
+    for i in range(43, 3, -1):
+        t = list(words[i - 1])
+        if i % 4 == 0:
+            t = t[1:] + t[:1]
+            t = [_SBOX[b] for b in t]
+            t[0] ^= RCON[i // 4 - 1]
+        words[i - 4] = [words[i][j] ^ t[j] for j in range(4)]
+    return bytes(sum(words[0:4], []))

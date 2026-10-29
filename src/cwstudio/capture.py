@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from cwstudio.events import EventBus, trace_event
-from cwstudio.traces import TraceStore
+from cwstudio.traces import DiskTraceWriter, TraceStore
 from cwstudio.worker import LongJob
 
 log = logging.getLogger("cwstudio.capture")
@@ -57,6 +57,9 @@ class CaptureJob(LongJob):
         self.p = params
         self.count = int(params.get("count", 0) or 0)       # 0 = continuous
         self.store_traces = bool(params.get("store", True))
+        self.disk_base: Optional[str] = params.get("disk") or None  # write every trace to <disk>_waves.npy as it arrives (streamed and very long captures); the memory store still follows ``store``
+        self.disk: Optional[DiskTraceWriter] = None
+        self.disk_info: Optional[Dict[str, Any]] = None
         self.mode = params.get("mode", "simpleserial")      # simpleserial | trigger_only
         self.ack = bool(params.get("ack", True))
         self.max_timeouts = int(params.get("max_timeouts", 10))
@@ -100,6 +103,9 @@ class CaptureJob(LongJob):
             raise RuntimeError("no target connected (use trigger-only mode to capture without a target)")
         if self.gen.text_mode == "tvla" and self.store_traces:
             self.store.meta["tvla_fixed_text"] = self.gen.fixed_text.hex()  # the t-test groups the traces by this plaintext
+        if self.disk_base:
+            self.disk = DiskTraceWriter(self.disk_base)
+            self.disk_info = self.disk.summary()
         self.bus.publish("capture", {"state": "running", **self.progress()})
         if self.mode == "simpleserial" and hasattr(self.target, "flush"):
             try:
@@ -143,6 +149,12 @@ class CaptureJob(LongJob):
             traces = [traces]
         for wave, tin, tout, key in traces:
             idx = -1
+            if self.disk is not None:
+                try:
+                    self.disk.append(wave, tin, tout, key)
+                except Exception as e:  # noqa: BLE001  a full disk or a sample count change ends the capture with the reason
+                    self.error = f"{type(e).__name__}: {e}"
+                    return True
             if self.store_traces:
                 idx = self.store.append(wave, tin, tout, key)
             self.done_count += 1
@@ -170,6 +182,13 @@ class CaptureJob(LongJob):
     def finish(self):
         state = "error" if self.error else ("stopped" if self.stop_requested and not
                                              (self.count and self.done_count >= self.count) else "done")
+        if self.disk is not None:
+            try:
+                self.disk_info = self.disk.close()
+                log.info("Wrote %d traces of %d samples to %s", self.disk.count, self.disk.samples or 0, self.disk.path)
+            except Exception as e:  # noqa: BLE001
+                self.error = self.error or f"{type(e).__name__}: {e}"
+                state = "error"
         if self.last_wave is not None:
             self.bus.publish_event(trace_event("trace", self.last_wave, {
                 "index": self.last_index, "count": self.done_count, "generation": self.store.generation,
@@ -182,6 +201,7 @@ class CaptureJob(LongJob):
             "done": self.done_count, "total": self.count, "target": self.count, "timeouts": self.timeouts,
             "rate": round(self.rate, 1), "stored": len(self.store), "mode": self.mode, "segments": self.segments,
             "hw_errors": self.hw_errors, "hw_error_count": self.hw_error_count,
+            "disk": ({**self.disk_info, "count": self.disk.count, "samples": self.disk.samples or 0, "bytes": self.disk.nbytes} if self.disk is not None and not self.disk.closed else self.disk_info),
             "elapsed": round((getattr(self, "ended_at", None) or time.time()) - (self.started_at or time.time()), 1),  # frozen once the job has ended
         }
 

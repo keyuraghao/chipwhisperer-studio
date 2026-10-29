@@ -145,7 +145,28 @@ export function initAnalysis(ctx, el) {
   async function runSpectrum() {
     try { const r = await post('/api/analysis/spectrum', {}); const x = Float64Array.from(r.freq); if (lkPlot) lkPlot.destroy(); lkPlot = new uPlot({ width: lkPlotEl.clientWidth || 360, height: lkPlotEl.clientHeight || 140, legend: { show: false }, cursor: { show: false }, scales: { x: { time: false } }, axes: [axisStyle({ label: r.sample_rate ? 'Hz' : 'cycles per sample', labelSize: 14 }), axisStyle({ label: 'dB', labelSize: 14, size: 50 })], series: [{}, { stroke: themeColors().corr, width: 1, points: { show: false } }] }, [x, Float64Array.from(r.db)], lkPlotEl); lkOut.textContent = `spectrum of the mean trace: peak at ${r.peak_hz != null ? (r.sample_rate ? (r.peak_hz / 1e6).toFixed(3) + ' MHz' : r.peak_hz.toFixed(4) + ' cycles per sample') : '?'}`; lkOut.className = 'help mono'; } catch (e) { toast(e.message, 'err', 8000); }
   }
+  // differential fault analysis: from the last glitch sweep's replies, or from pasted ciphertexts (correct first)
+  const dfaIn = h('textarea', { class: 'mono', rows: 4, placeholder: 'one ciphertext per line in hex, the correct one first (or leave empty to use the glitch sweep)', style: 'width:100%' });
+  const dfaOut = h('div', { class: 'help mono' });
+  const dfaKey = h('div', { class: 'code', style: 'margin:6px 0;display:none' });
+  async function runDfa() {
+    try {
+      const lines = dfaIn.value.split(/\s+/).map((x) => x.trim()).filter(Boolean);
+      const body = lines.length ? { source: 'ciphertexts', correct: lines[0], faulty: lines.slice(1) } : { source: 'glitch' };
+      const r = await post('/api/analysis/dfa', body);
+      const cols = r.columns.map((c) => `column ${c.column}: ${c.key_bytes ? 'solved' : c.candidates + ' candidates'} from ${c.pairs} fault${c.pairs === 1 ? '' : 's'}`).join(' · ');
+      dfaOut.textContent = `${r.faulty} faulty of ${r.replies} replies, ${r.faulty_used} used · ${cols}` + (r.unusable.length ? ` · ${r.unusable.length} unusable (${r.unusable[0].why})` : '');
+      dfaOut.className = 'help mono';
+      dfaKey.style.display = '';
+      dfaKey.innerHTML = r.key ? `round key 10: ${r.round_key_10}<br>master key: <b>${r.key}</b>` : `round key 10 so far: ${r.round_key_10_partial}<br>${4 - r.solved_columns} column${4 - r.solved_columns === 1 ? '' : 's'} still open: collect more faults (about two per column), sweep ext_offset over the last AES rounds`;
+    } catch (e) { dfaOut.textContent = e.message; dfaOut.className = 'help mono err'; dfaKey.style.display = 'none'; }
+  }
   el.append(
+    h('h2', {}, 'Differential fault analysis'),
+    h('div', { class: 'card' },
+      h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: runDfa, title: 'AES-128, one faulted byte entering round 9' }, 'Run DFA'), h('span', { class: 'muted' }, 'from the glitch sweep (command p, fixed plaintext, expected = correct ciphertext, checker aes_dfa) or the ciphertexts below')),
+      dfaIn, dfaOut, dfaKey,
+      h('div', { class: 'help' }, 'A glitch that corrupts one byte of the AES state between the last two MixColumns changes exactly four ciphertext bytes, one column. Two such faults per column, about eight in all, give the tenth round key; the key schedule run backwards gives the master key. The AES fault campaign button in the Glitch tab sets the sweep up.')),
     h('h2', {}, 'Leakage assessment'),
     h('div', { class: 'card' },
       h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: runTtest, title: 'capture with text mode tvla first' }, 'TVLA t-test'), fixedIn),

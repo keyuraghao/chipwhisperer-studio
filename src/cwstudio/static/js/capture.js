@@ -23,6 +23,7 @@ export function initCapture(ctx, el) {
   const ackChk = h('input', { type: 'checkbox', checked: true });
   const rateIn = h('input', { type: 'number', value: 25, min: 1, max: 60, style: 'width:70px', title: 'max displayed traces per second' });
   const throttleIn = h('input', { type: 'number', value: 0, min: 0, style: 'width:70px', title: 'max captures per second (0 = unlimited)' });
+  const diskIn = h('input', { class: 'flex mono', placeholder: 'empty = memory only; a name or path writes <name>_waves.npy as traces arrive', title: 'for streamed or very long captures that would not fit in memory: every trace goes to disk as it arrives; untick store traces to keep memory flat, then import the set later' });
   const prog = h('progress', { value: 0, max: 1 });
   const progTxt = h('div', { class: 'help mono' }, 'idle');
   const banner = h('div', { class: 'help warn', style: 'display:none' });
@@ -83,7 +84,7 @@ export function initCapture(ctx, el) {
     return Object.assign({
       count: +countIn.value, mode: modeSel.value, key_mode: keyMode.value, text_mode: textMode.value,
       key: keyIn.value, text: textIn.value, store: storeChk.checked, clear: clearChk.checked, ack: ackChk.checked,
-      display_rate: +rateIn.value, max_rate: +throttleIn.value,
+      display_rate: +rateIn.value, max_rate: +throttleIn.value, disk: diskIn.value.trim() || null,
     }, extra || {});
   }
   async function start(extra) {
@@ -120,6 +121,7 @@ export function initCapture(ctx, el) {
       h('div', { class: 'row' }, h('label', {}, 'Plaintext'), textMode, textIn),
       h('div', { class: 'row' }, h('label', {}, storeChk, ' store traces'), h('label', {}, clearChk, ' clear first'), h('label', {}, ackChk, ' expect ack')),
       h('div', { class: 'row' }, h('label', {}, 'Display fps'), rateIn, h('label', {}, 'Max cap/s'), throttleIn),
+      h('div', { class: 'row' }, h('label', { title: 'streamed and very long captures' }, 'Save to disk'), diskIn),
       h('div', { class: 'row' },
         h('button', { class: 'btn', onclick: single }, 'Single'),
         h('button', { class: 'btn primary', onclick: () => start() }, 'Run'),
@@ -149,7 +151,8 @@ export function initCapture(ctx, el) {
     prog.removeAttribute('value'); if (target || state !== 'running') prog.value = target ? p.done : 1;
     const rate = p.rate ? ` · ${p.rate}/s` : '';
     const seg = p.segments > 1 ? ` · ${p.segments} segments per arm` : '';
-    progTxt.textContent = `${state}: ${p.done}${target ? '/' + target : ''} traces${rate}${seg} · ${p.timeouts || 0} timeouts · ${p.elapsed || 0}s` + (p.error ? ` · ${p.error}` : '');
+    const disk = p.disk ? ` · ${fmtBytes(p.disk.bytes || 0)} on disk${p.disk.closed ? ' in ' + p.disk.path : ''}` : '';
+    progTxt.textContent = `${state}: ${p.done}${target ? '/' + target : ''} traces${rate}${seg}${disk} · ${p.timeouts || 0} timeouts · ${p.elapsed || 0}s` + (p.error ? ` · ${p.error}` : '');
     progTxt.className = 'help mono' + (state === 'error' ? ' err' : '');
     if (p.hw_errors) {
       banner.innerHTML = '';

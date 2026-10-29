@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from cwstudio import simtrigger
-from cwstudio.aes import HW, SBOX, encrypt_block
+from cwstudio.aes import HW, SBOX, encrypt_block, encrypt_block_faulted
 
 log = logging.getLogger("cwstudio.sim")
 
@@ -1099,8 +1099,12 @@ class SimTarget:
             if self.scope is not None and getattr(self.scope, "_armed", False):
                 getattr(self.scope, "_segment_pts", []).append((data, self._key))
             resp = self._last_ct
-            if self._glitch_active() and self._glitch_outcome() == "success":
-                resp = bytes(b ^ 0xFF for b in resp)
+            if self._glitch_active() and len(data) == 16:
+                outcome = self._glitch_outcome()
+                if outcome == "reset":
+                    resp = None  # the glitch crashed the encryption: no reply
+                elif outcome == "success":  # a single byte of the state entering round 9 is corrupted: the fault the DFA recovers the key from (which byte follows ext_offset, like the instruction the glitch lands on)
+                    resp = encrypt_block_faulted(self._key, data, int(self.scope.glitch.ext_offset) % 16, int(self.scope._rng.integers(1, 256)))
             self._pending_response = resp
         elif cmd == "g":
             # simpleserial-glitch style: loop counter, expect 0x09C4 (2500) normally

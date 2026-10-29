@@ -25,6 +25,31 @@ export function initGlitch(ctx, el) {
   const resetSel = h('select', {}, h('option', { value: 'nrst' }, 'nRST pin'), h('option', { value: 'pdic' }, 'PDIC pin'), h('option', { value: 'none' }, 'no reset'));
   const resetOn = h('select', {}, h('option', { value: 'reset' }, 'after reset outcome'), h('option', { value: 'always' }, 'before every attempt'), h('option', { value: 'never' }, 'never'));
   const timeoutIn = h('input', { type: 'number', value: 1000, style: 'width:70px', title: 'ms to wait for a response' });
+  const checkerSel = h('select', {}, h('option', { value: 'expected' }, 'expected reply'));
+  const checkerExpr = h('input', { class: 'flex mono', placeholder: "e.g. value < expected_value  or  ('success', 'short') if value < expected_value else None", style: 'display:none' });
+  const checkerHelp = h('div', { class: 'help' }, 'Compare with the expected reply.');
+  let checkerDocs = {}, checkerCtxHelp = '';
+  checkerSel.addEventListener('change', () => { checkerExpr.style.display = checkerSel.value === 'expr' ? '' : 'none'; checkerHelp.textContent = (checkerDocs[checkerSel.value] || '') + (checkerSel.value === 'expr' ? ' ' + checkerCtxHelp : ''); });
+  async function loadCheckers() {
+    try {
+      const r = await get('/api/glitch/checkers');
+      const cur = checkerSel.value; checkerSel.innerHTML = ''; checkerDocs = {}; checkerCtxHelp = r.help || '';
+      (r.checkers || []).forEach((c) => { checkerDocs[c.name] = c.doc; checkerSel.append(h('option', { value: c.name, selected: c.name === cur, title: c.doc }, c.builtin ? c.name : `${c.name} (file)`)); });
+      checkerSel.append(h('option', { value: '', disabled: true }, `add your own: ${r.folder}/<name>.py with check(ctx)`));
+      checkerSel.dispatchEvent(new Event('change'));
+    } catch (e) { /* no server */ }
+  }
+  // AES fault campaign: command p with one fixed plaintext, the correct ciphertext as the expected reply (asked from the target now, unglitched) and the aes_dfa checker; the Analysis tab's DFA card recovers the key from the successes
+  async function aesPreset() {
+    try {
+      const pt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map((b) => b.toString(16).padStart(2, '0')).join('');
+      const r = await post('/api/target/simpleserial', { cmd: 'p', data: pt, read_cmd: 'r', read_len: 16 });
+      const ct = (r && (r.response || r.hex || r.data)) || '';
+      if (!ct || ct.length !== 32) throw new Error('the target did not answer with a 16-byte ciphertext (program simpleserial-aes and connect the target first)');
+      cmdIn.value = 'p'; dataIn.value = pt; expIn.value = ct; lenIn.value = 16; checkerSel.value = 'aes_dfa'; checkerSel.dispatchEvent(new Event('change'));
+      toast('AES fault campaign set: sweep ext_offset over the last rounds, then run the DFA in the Analysis tab', 'ok', 8000);
+    } catch (e) { toast(e.message, 'err', 8000); }
+  }
   const status = h('div', { class: 'help mono' }, 'idle');
   const counts = h('div', { class: 'legend' });
   const canvas = h('canvas', { class: 'scatter' });
@@ -56,7 +81,7 @@ export function initGlitch(ctx, el) {
       const [sel, s, e, st] = r.querySelectorAll('select,input');
       return { path: sel.value, start: +s.value, stop: +e.value, step: +st.value, int: !!paramOf(sel.value).int };
     });
-    return { parameters: ps, repeats: +repIn.value, order: orderSel.value, command: cmdIn.value || 'g', data: dataIn.value, expected: expIn.value || null, output_len: +lenIn.value, reset: resetSel.value, reset_on: resetOn.value, glitch_timeout: +timeoutIn.value };
+    return { parameters: ps, repeats: +repIn.value, order: orderSel.value, command: cmdIn.value || 'g', data: dataIn.value, expected: expIn.value || null, output_len: +lenIn.value, reset: resetSel.value, reset_on: resetOn.value, glitch_timeout: +timeoutIn.value, checker: checkerSel.value || 'expected', checker_expr: checkerSel.value === 'expr' ? checkerExpr.value : null };
   }
   async function start() {
     results = [];
@@ -144,9 +169,9 @@ export function initGlitch(ctx, el) {
   }
   function renderTable() {
     table.innerHTML = '';
-    const fired = results.some((r) => r.fired != null);
-    table.append(h('tr', {}, h('th', {}, '#'), ...paramNames.map((n) => h('th', {}, n.replace('glitch.', ''))), h('th', {}, 'result'), h('th', {}, 'response'), ...(fired ? [h('th', {}, 'fired')] : [])));
-    results.slice(-60).reverse().forEach((r) => table.append(h('tr', {}, h('td', {}, r.i), ...r.values.map((v) => h('td', {}, v)), h('td', {}, h('span', { class: 'badge ' + r.result }, r.result.replace('_', ' '))), h('td', { class: 'mono' }, r.response || '-'), ...(fired ? [h('td', {}, r.fired == null ? '-' : r.fired)] : []))));
+    const fired = results.some((r) => r.fired != null), detail = results.some((r) => r.detail);
+    table.append(h('tr', {}, h('th', {}, '#'), ...paramNames.map((n) => h('th', {}, n.replace('glitch.', ''))), h('th', {}, 'result'), h('th', {}, 'response'), ...(fired ? [h('th', {}, 'fired')] : []), ...(detail ? [h('th', {}, 'detail')] : [])));
+    results.slice(-60).reverse().forEach((r) => table.append(h('tr', {}, h('td', {}, r.i), ...r.values.map((v) => h('td', {}, v)), h('td', {}, h('span', { class: 'badge ' + r.result }, r.result.replace('_', ' '))), h('td', { class: 'mono' }, r.response || '-'), ...(fired ? [h('td', {}, r.fired == null ? '-' : r.fired)] : []), ...(detail ? [h('td', { class: 'muted' }, r.detail || '')] : []))));
   }
   let drawScheduled = false;
   function scheduleDraw() { if (drawScheduled) return; drawScheduled = true; requestAnimationFrame(() => { drawScheduled = false; draw(); renderTable(); }); }
@@ -165,7 +190,9 @@ export function initGlitch(ctx, el) {
       h('div', { class: 'row' }, h('label', {}, 'Command'), cmdIn, dataIn),
       h('div', { class: 'row' }, h('label', {}, 'Expected'), expIn, lenIn),
       h('div', { class: 'row' }, h('label', {}, 'Reset via'), resetSel, resetOn),
-      h('div', { class: 'row' }, h('label', {}, 'Timeout ms'), timeoutIn),
+      h('div', { class: 'row' }, h('label', {}, 'Timeout ms'), timeoutIn, h('button', { class: 'btn sm', onclick: aesPreset, title: 'command p, a random fixed plaintext, the correct ciphertext from the target as expected, output 16 and the aes_dfa checker' }, 'AES fault campaign')),
+      h('div', { class: 'row' }, h('label', { title: 'how a reply is classified' }, 'Checker'), checkerSel, checkerExpr),
+      checkerHelp,
       h('div', { class: 'help' }, 'normal = valid response equal to expected (with no expected value: any valid response unless the scope timed out) · success = valid response but different · garbled = a reply that is not a valid frame · reset = no response · not fired = the Husky glitch counter did not move, so the point tested nothing'),
       h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: start }, 'Start sweep'), h('button', { class: 'btn danger', onclick: () => post('/api/capture/stop') }, 'Stop'), h('button', { class: 'btn', onclick: exportCsv }, 'Export CSV')),
       status),
@@ -185,5 +212,7 @@ export function initGlitch(ctx, el) {
   ctx.on('theme', () => draw());
   function load(res) { results = res.results || []; updateAxes(res.parameters || []); renderCounts(res.counts || {}); draw(); renderTable(); }
   get('/api/glitch/results').then(load).catch(() => {});
+  loadCheckers();
+  ctx.on('caps', loadCheckers);
   if (ctx.caps) applyProfile(ctx.caps);
 }

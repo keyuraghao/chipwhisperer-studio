@@ -1,6 +1,6 @@
 """Glitch parameter sweep implemented as an interleaved long job.
 
-The sweep iterates over a cartesian product of numeric parameter ranges, each bound to a scope settings path (e.g. ``glitch.width``).  For every point it optionally resets the target, arms the scope, sends a SimpleSerial command and classifies the response as ``normal``, ``success`` (valid but unexpected), ``garbled`` (a reply that is not a valid frame), ``reset`` (no reply) or, on a Husky, ``not_fired`` (the glitch counter did not move, so the point measured nothing).
+The sweep iterates over a cartesian product of numeric parameter ranges, each bound to a scope settings path (e.g. ``glitch.width``).  For every point it optionally resets the target, arms the scope, sends a SimpleSerial command and classifies the response as ``normal``, ``success`` (valid but unexpected), ``garbled`` (a reply that is not a valid frame), ``reset`` (no reply) or, on a Husky, ``not_fired`` (the glitch counter did not move, so the point measured nothing). A checker (``checkers.py``) can refine that from what the reply means.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import random
 import time
 from typing import Any, Dict, List, Optional
 
+from cwstudio import checkers as cwcheckers
 from cwstudio import settings as cwsettings
 from cwstudio.events import EventBus, trace_event
 from cwstudio.worker import LongJob
@@ -39,12 +40,14 @@ def _frange(start: float, stop: float, step: float) -> List[float]:
 class GlitchJob(LongJob):
     name = "glitch"
 
-    def __init__(self, scope, target, bus: EventBus, params: Dict[str, Any]):
+    def __init__(self, scope, target, bus: EventBus, params: Dict[str, Any], checker: Optional[cwcheckers.Checker] = None):
         super().__init__()
         self.scope = scope
         self.target = target
         self.bus = bus
         self.p = params
+        self.checker = checker  # refines the default classification from what the reply means (see checkers.py)
+        self.checker_name = params.get("checker") or "expected"
         self.params = params.get("parameters", [])
         if not self.params:
             raise ValueError("no sweep parameters")
@@ -105,11 +108,13 @@ class GlitchJob(LongJob):
         if self.rep == 0:
             for prm, val in zip(self.params, point):
                 cwsettings.set_value(self.scope, prm["path"], val)
-        outcome, resp, fired = self._one_shot()
+        outcome, resp, fired, detail = self._one_shot()
         rec = {"i": self.i, "rep": self.rep, "result": outcome, "response": resp,
                "values": list(point), "t": round(time.time() - (self.started_at or 0), 3)}
         if fired is not None:
             rec["fired"] = fired
+        if detail:
+            rec["detail"] = detail
         self.results.append(rec)
         self.counts[outcome] = self.counts.get(outcome, 0) + 1
         self.bus.publish("glitch_result", rec, droppable=False)
@@ -130,7 +135,8 @@ class GlitchJob(LongJob):
     def progress(self) -> Dict[str, Any]:
         return {"done": self.i, "total": len(self.points), "point": self.i, "points": len(self.points),
                 "repeats": self.repeats,
-                "counts": dict(self.counts), "parameters": [p["path"] for p in self.params]}
+                "counts": dict(self.counts), "parameters": [p["path"] for p in self.params], "checker": self.checker_name,
+                "command": self.cmd, "data": self.data.hex(), "expected": self.expected}
 
     # --- one glitch attempt -----------------------------------------------
     def _reset_target(self):
@@ -193,6 +199,14 @@ class GlitchJob(LongJob):
             fired = (now - fired0) if now is not None and now >= fired0 else None
             if fired == 0 and outcome == "normal":
                 outcome = "not_fired"  # the target answered normally because no glitch was emitted (trigger source, arm timing or enable), not because it survived one
+        detail = None
+        if self.checker is not None:
+            payload = bytes(val["payload"]) if val and val.get("valid") and val.get("payload") is not None else None
+            ctx = {"resp": payload, "hex": payload.hex() if payload is not None else None, "valid": payload is not None, "timed_out": timed_out,
+                   "expected": self.expected_b, "value": int.from_bytes(payload, "little") if payload else None,
+                   "expected_value": int.from_bytes(self.expected_b, "little") if self.expected_b else None,
+                   "fired": fired, "outcome": outcome, "n": len(self.results)}
+            outcome, detail = cwcheckers.apply(self.checker, ctx)
         if self.display:
             try:
                 wave = self.scope.get_last_trace()
@@ -202,7 +216,7 @@ class GlitchJob(LongJob):
                 pass
         if outcome in ("reset", "garbled") and self.reset_on in ("reset", "always"):
             self._reset_target()
-        return outcome, resp_hex, fired
+        return outcome, resp_hex, fired, detail
 
     def export_csv(self, path: str) -> str:
         path = os.path.expanduser(path)
@@ -210,7 +224,7 @@ class GlitchJob(LongJob):
             path += ".csv"
         with open(path, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["i", "rep"] + [p["path"] for p in self.params] + ["result", "response", "fired", "t"])
+            w.writerow(["i", "rep"] + [p["path"] for p in self.params] + ["result", "response", "fired", "detail", "t"])
             for r in self.results:
-                w.writerow([r["i"], r["rep"]] + r["values"] + [r["result"], r["response"], r.get("fired", ""), r["t"]])
+                w.writerow([r["i"], r["rep"]] + r["values"] + [r["result"], r["response"], r.get("fired", ""), r.get("detail", ""), r["t"]])
         return path
