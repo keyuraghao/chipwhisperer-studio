@@ -1,155 +1,16 @@
 {
  "mode": "husky",
- "started": "2026-10-05 14:42:58",
+ "started": "2026-10-29 15:49:36",
  "env": {
   "hw": "husky",
   "sn": null,
   "platform": "CW308_SAM4S",
   "programmer": null,
   "skip_program": false,
-  "manual": false
+  "manual": false,
+  "target": "SimpleSerial"
  },
  "stages": {
-  "environment": {
-   "tests": {
-    "test_01_libusb_loads": "passed",
-    "test_02_udev_and_groups": "passed",
-    "test_03_studio_meta": "passed"
-   },
-   "measurements": {
-    "usb_devices": 9,
-    "libusb": "libusb-1.0.so.0",
-    "udev_rules": [
-     "50-newae.rules"
-    ],
-    "groups_ok": true,
-    "studio_version": "0.5.1",
-    "data_dir": "/home/kalki/Desktop/chipwhisperer/.studio-dev/hw-data"
-   },
-   "result": "passed"
-  },
-  "discovery": {
-   "tests": {
-    "test_10_devices_lists_husky": "passed"
-   },
-   "measurements": {
-    "devices": [
-     {
-      "name": "ChipWhisperer-Husky",
-      "sn": "502032204c5846303130303137303033",
-      "hw_loc": [
-       3,
-       7
-      ],
-      "kind": "husky"
-     }
-    ]
-   },
-   "result": "passed"
-  },
-  "scope": {
-   "tests": {
-    "test_20_connect_auto": "passed",
-    "test_21_connect_explicit": "passed",
-    "test_22_devices_while_connected": "passed",
-    "test_23_settings_roundtrip": "passed",
-    "test_24_reconnect_cycle": "passed"
-   },
-   "measurements": {
-    "connect_s": 2.3,
-    "fw_version": {
-     "major": 1,
-     "minor": 7,
-     "debug": 0
-    },
-    "name": "ChipWhisperer Husky",
-    "sn": "502032204c5846303130303137303033",
-    "devices_while_connected_s": 0.009,
-    "set_gain.db": 20.045871559633028,
-    "set_adc.samples": 3000,
-    "set_clock.clkgen_freq": 7363636.363636363,
-    "force_connect_type": "cwhusky"
-   },
-   "result": "passed"
-  },
-  "firmware": {
-   "tests": {
-    "test_30_build": "passed",
-    "test_31_program": "passed"
-   },
-   "measurements": {
-    "build_s": 0.5,
-    "hex": "/home/kalki/Desktop/chipwhisperer/.studio-dev/hw-data/firmware/builds/simpleserial-aes-CW308_SAM4S-gcc.hex",
-    "size": {
-     "text": 3724,
-     "data": 276,
-     "bss": 4844
-    },
-    "program_s": 5.0,
-    "programmer": "SAM4S",
-    "program_result": {
-     "ok": true,
-     "bytes": 11314,
-     "path": "/home/kalki/Desktop/chipwhisperer/.studio-dev/hw-data/firmware/builds/simpleserial-aes-CW308_SAM4S-gcc.hex",
-     "programmer": "SAM4S"
-    }
-   },
-   "result": "passed"
-  },
-  "target": {
-   "tests": {
-    "test_40_aes_known_answer": "passed"
-   },
-   "measurements": {
-    "ciphertext": "8df4e9aac5c7573a27d8d055d6e4d64b"
-   },
-   "result": "passed"
-  },
-  "capture": {
-   "tests": {
-    "test_50_capture[50]": "passed",
-    "test_50_capture[500]": "passed",
-    "test_51_export_import": "passed",
-    "test_52_websocket_events": "passed"
-   },
-   "measurements": {
-    "rate_50_per_s": 28.9,
-    "timeouts_50": 0,
-    "rate_500_per_s": 30.1,
-    "timeouts_500": 0,
-    "export": "/home/kalki/Desktop/chipwhisperer/.studio-dev/hw-data/hw_session/traces.npz"
-   },
-   "result": "passed"
-  },
-  "analysis": {
-   "tests": {
-    "test_60_cpa_recovers_key": "passed"
-   },
-   "measurements": {
-    "traces": 3000,
-    "best_key": "2b7e151628aed2a6abf7158809cf4f3c",
-    "pge": [
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0
-    ],
-    "cpa_s": 1.5
-   },
-   "result": "passed"
-  },
   "glitch": {
    "tests": {
     "test_70_glitch_capabilities": "passed",
@@ -159,203 +20,112 @@
    "measurements": {
     "capabilities": {},
     "clock_counts": {
-     "normal": 11,
+     "normal": 12,
      "success": 0,
-     "reset": 1
+     "reset": 0,
+     "garbled": 0,
+     "not_fired": 0
     },
     "clock_per_point": {
      "10,0": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      },
      "10,30": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      },
      "25,0": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      },
      "25,30": {
-      "normal": 1,
-      "success": 0,
-      "reset": 1
+      "not_fired": 0,
+      "reset": 0,
+      "normal": 2,
+      "garbled": 0,
+      "success": 0
      },
      "40,0": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      },
      "40,30": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      }
     },
     "clock_recovery_attempts": 1,
     "voltage_counts": {
-     "normal": 12,
+     "normal": 11,
      "success": 0,
-     "reset": 0
+     "reset": 1,
+     "garbled": 0,
+     "not_fired": 0
     },
     "voltage_per_point": {
      "1,0": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      },
      "1,30": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      },
      "3,0": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      },
      "3,30": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      },
      "5,0": {
-      "normal": 2,
-      "success": 0,
-      "reset": 0
+      "not_fired": 0,
+      "reset": 1,
+      "normal": 1,
+      "garbled": 0,
+      "success": 0
      },
      "5,30": {
+      "not_fired": 0,
+      "reset": 0,
       "normal": 2,
-      "success": 0,
-      "reset": 0
+      "garbled": 0,
+      "success": 0
      }
     },
     "voltage_recovery_attempts": 1
    },
    "result": "passed"
-  },
-  "husky": {
-   "tests": {
-    "test_80_capabilities": "passed",
-    "test_81_logic_analyser": "passed",
-    "test_82_triggers": "passed",
-    "test_83_sad_trigger": "passed",
-    "test_84_uart_and_gpio": "passed"
-   },
-   "measurements": {
-    "model": "husky",
-    "unavailable": {},
-    "la_samples": 4000,
-    "la_edges": 6619,
-    "la_warnings": [],
-    "triggers": {
-     "uart_pattern": {
-      "done": 0,
-      "timeouts": 5,
-      "error": "5 consecutive timeouts - check trigger and target"
-     },
-     "edge_counter": {
-      "done": 5,
-      "timeouts": 0,
-      "error": null
-     }
-    },
-    "sad": {
-     "done": 0,
-     "timeouts": 5
-    },
-    "uart": {
-     "baud": 38400,
-     "parity": "none",
-     "stop_bits": 1,
-     "data_bits": 8,
-     "rx": "tio1",
-     "tx": "tio2",
-     "pins": {
-      "tio1": "serial_rx",
-      "tio2": "serial_tx",
-      "tio3": "high_z",
-      "tio4": "high_z"
-     },
-     "target": "SimpleSerial"
-    },
-    "uart_rx": "7238444634453941414335433735373341323744384430353544364534443634420a7a30300a",
-    "gpio": {
-     "tio1": 1,
-     "tio2": 1,
-     "tio3": 1,
-     "tio4": 0,
-     "pdic": 0,
-     "pdid": 1,
-     "nrst": 1,
-     "miso": 1,
-     "mosi": 0,
-     "sck": 1
-    },
-    "userio": {
-     "mode": "normal",
-     "direction": 0,
-     "drive": 0,
-     "status": 511,
-     "pins": [
-      "D0",
-      "D1",
-      "D2",
-      "D3",
-      "D4",
-      "D5",
-      "D6",
-      "D7",
-      "CK"
-     ],
-     "width": 9,
-     "modes": [
-      "normal",
-      "trace",
-      "fpga_debug",
-      "target_debug_jtag",
-      "target_debug_swd"
-     ]
-    }
-   },
-   "result": "passed"
-  },
-  "notebook": {
-   "tests": {
-    "test_90_notebook_scope": "passed"
-   },
-   "measurements": {
-    "output": "fw {'major': 1, 'minor': 7, 'debug': 0} last 7df76b0c1ab899b33e42f047b91b546f"
-   },
-   "result": "passed"
-  },
-  "mcp": {
-   "tests": {
-    "test_95_mcp_agent": "passed"
-   },
-   "measurements": {
-    "ciphertext": "8df4e9aac5c7573a27d8d055d6e4d64b"
-   },
-   "result": "passed"
-  },
-  "robustness": {
-   "tests": {
-    "test_97_devices_does_not_reopen": "passed",
-    "test_98_manual_unplug": "skipped: set CWSTUDIO_HW_MANUAL=1 for the operator unplug test"
-   },
-   "measurements": {},
-   "result": "passed"
-  },
-  "disconnect": {
-   "tests": {
-    "test_99_disconnect": "passed"
-   },
-   "measurements": {},
-   "result": "passed"
   }
  },
- "finished": "2026-10-05 14:45:51"
+ "finished": "2026-10-29 15:49:43"
 }

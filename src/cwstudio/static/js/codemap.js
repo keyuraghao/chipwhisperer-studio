@@ -200,7 +200,9 @@ export function initCodeMap(ctx, el) {
       const cls = w.r >= 0.7 ? 'good' : w.r >= 0.3 ? 'weak' : 'none';
       windowsEl.append(h('i', { class: cls, title: `samples ${w.start} to ${w.end}: r ${w.r.toFixed(2)}, the model sits ${w.lag > 0 ? w.lag + ' samples late' : (-w.lag) + ' samples early'}${w.used ? '' : ' (not used)'}` }));
     });
-    refineTxt.textContent = ref.applied ? `refined: ${ref.matched}/${(ref.windows || []).length} windows match (mean r ${ref.mean_r.toFixed(2)}) · drift up to ${ref.max_abs} samples corrected` : `not refined: ${ref.reason || ''}`;
+    const corr = ref.corr_linear != null ? ` · model match ${ref.corr_linear.toFixed(2)}${ref.applied ? ' → ' + ref.corr_warped.toFixed(2) : ''}` : '';
+    const matched = `${ref.matched}/${(ref.windows || []).length} windows match the code`;
+    refineTxt.textContent = ref.applied ? `refined: ${matched} (mean r ${ref.mean_r.toFixed(2)}) · drift up to ${ref.max_abs} samples corrected${corr}` : `${matched}${corr} · ${ref.reason || 'no correction applied'}`;
     refineTxt.className = 'help mono' + (ref.applied ? '' : ' warn');
   }
 

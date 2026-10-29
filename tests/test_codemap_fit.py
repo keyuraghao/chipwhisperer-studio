@@ -71,20 +71,17 @@ def test_refine_follows_the_drift(stretch):
     t = time.time()
     r = power.refine(mean, P, 200, lin)
     assert time.time() - t < 1.0
-    assert r["applied"] and r["matched"] >= 20 and len(r["windows"]) >= 20 and r["reason"] is None
+    assert r["matched"] >= 20 and len(r["windows"]) >= 20 and {"corr_linear", "corr_warped"} <= set(r)
     assert all({"start", "end", "r", "lag", "used"} <= set(w) for w in r["windows"])
-    warped = power.Mapping(**{**lin.__dict__, "knots": r["knots"]})
-
-    def corr(mp):
-        xs = power.model_samples(P, 200, mp, len(mean))
-        return abs(np.corrcoef(power._prep(mean, 4), power._prep(xs, 4))[0, 1])
     truth = (2000 + 2000 * stretch + 1000 - 200) * 4  # where cycle 5000 really is
     if stretch == 1.0:
-        assert r["max_abs"] < 1.0 and corr(warped) == pytest.approx(corr(lin), abs=0.01)  # nothing to correct: the warp stays within a sample
+        # no drift: the warp cannot beat the straight line by the margin, so it is correctly not applied
+        assert not r["applied"] and r["knots"] == [] and r["corr_warped"] == pytest.approx(r["corr_linear"]) and "did not improve" in r["reason"]
     else:
-        assert corr(warped) > corr(lin) + 0.3
+        assert r["applied"] and r["reason"] is None and r["corr_warped"] > r["corr_linear"] + 0.3
+        warped = power.Mapping(**{**lin.__dict__, "knots": r["knots"]})
         assert abs(float(warped.sample(4800)) - truth) < 2 < abs(float(lin.sample(4800)) - truth)
-    assert np.allclose(warped.cycle(warped.sample(np.array([0.0, 2500.0, 5000.0]))), [0.0, 2500.0, 5000.0])
+        assert np.allclose(warped.cycle(warped.sample(np.array([0.0, 2500.0, 5000.0]))), [0.0, 2500.0, 5000.0])
 
 
 def test_refine_refuses_without_matches():
@@ -193,26 +190,27 @@ def test_build_phases_refinement_and_activity(api):
     ph = st["phase"]
     assert ph["phase"] == "ready" and ph["message"].startswith("built in") and "aligned" in ph["message"] and ph["elapsed"] is not None and ph["instructions"] == st["instructions"]
     al = st["alignment"]
-    assert al["label"] in ("high", "medium") and "refine" in al and al["refine"]["windows"] and all("r" in w for w in al["refine"]["windows"])
-    assert al["refine"]["applied"] and al["refine"]["max_abs"] < 3  # the simulator runs the same emulation, so there is no drift to follow
-    assert len(st["mapping"]["knots"]) == al["refine"]["matched"] and st["mapping"]["warp"]["knots"] == al["refine"]["matched"]
+    assert al["label"] in ("high", "medium") and "refine" in al and al["refine"]["windows"] and all({"r", "lag", "used"} <= set(w) for w in al["refine"]["windows"])
+    assert {"corr_linear", "corr_warped", "matched"} <= set(al["refine"])
+    # the simulator runs the exact emulation it is matched against, so there is no drift: the window fit is near perfect but the warp is correctly NOT applied (it cannot beat the straight line), and no knots are added
+    assert al["refine"]["matched"] >= 20 and al["refine"]["corr_linear"] > 0.9 and not al["refine"]["applied"] and st["mapping"]["knots"] is None
     an = api.get("/api/status").json()["analysis"]
     assert not an["busy"] and an["last"]["name"] == "code map" and an["last"]["state"] == "done" and an["last"]["seconds"] >= 0
-    # the warp is part of the band's mapping; lookups go through it; clear_warp drops it and keeps the fit
-    band = api.get("/api/codemap/band").json()
-    assert band["mapping"]["knots"] and band["mapping"]["warp"]
+    # clear_warp and reset are no-ops here (no warp) but keep the fit; lookups are stable across them
     sb = api.post("/api/codemap/lookup", json={"function": "SubBytes"}).json()["ranges"][0]["samples"]
     m = api.put("/api/codemap/mapping", json={"clear_warp": True}).json()["mapping"]
     assert m["knots"] is None and "warp" not in m and m["shift"] == pytest.approx(al["shift"]) and m["scale"] == pytest.approx(al["scale"])
     sb2 = api.post("/api/codemap/lookup", json={"function": "SubBytes"}).json()["ranges"][0]["samples"]
     assert abs(sb2[0] - sb[0]) < 4
-    # align without refinement: no knots; with a window count out of range: refused inside the refine report, the linear fit stands
+    # (the warp-applies-on-drift path is covered by test_refine_follows_the_drift above)
+    # align without refinement: no refine report, the linear fit stands
     r = api.post("/api/codemap/align", json={"source": "mean", "refine": False}).json()
     assert r["mapping"]["knots"] is None and "refine" not in r["alignment"] and api.get("/api/codemap").json()["phase"]["message"] == "aligned (" + r["alignment"]["label"] + ")"
     r = api.post("/api/codemap/align", json={"source": "mean", "windows": 1}).json()
     assert not r["alignment"]["refine"]["applied"] and "windows must be" in r["alignment"]["refine"]["reason"]
+    # the window diagnostic still comes back, with correlations, even though the warp is not applied on the clean simulator
     r = api.post("/api/codemap/align", json={"source": "trace", "windows": 12}).json()
-    assert r["alignment"]["refine"]["applied"] and len(r["alignment"]["refine"]["windows"]) <= 13 and r["mapping"]["warp"]["knots"] >= 3
+    assert r["alignment"]["refine"]["windows"] and "corr_linear" in r["alignment"]["refine"] and r["mapping"]["knots"] is None
     assert api.put("/api/codemap/mapping", json={"reset": True}).json()["mapping"]["knots"] is None
     # a failed build lands in the error phase and in the activity as a failure
     r = api.post("/api/codemap/build", json={"elf": elf, "options": {"max_instructions": 10}})

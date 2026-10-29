@@ -330,13 +330,14 @@ def _sweep(studio, api, report, name, parameters, repeats=2):
     assert not res.get("running")
     assert len(res["results"]) == points * repeats, f"{len(res['results'])} results for {points} points x {repeats}"
     assert sum(res["counts"].values()) == points * repeats
-    assert set(res["counts"]) <= {"normal", "success", "reset"}
+    outcomes = {"normal", "success", "reset", "garbled", "not_fired"}  # a Husky also reports garbled (reply not a valid frame) and not_fired (the glitch counter did not move)
+    assert set(res["counts"]) <= outcomes
     assert any(e.get("type") == "glitch_result" for e in events), "no glitch_result events reached the websocket"
     assert any(e.get("type") == "glitch" and e.get("state") == "done" for e in events), "no final glitch event"
     per_point = {}
     for r in res["results"]:
         k = ",".join(str(v) for v in r["values"])
-        per_point.setdefault(k, {"normal": 0, "success": 0, "reset": 0})[r["result"]] += 1
+        per_point.setdefault(k, {o: 0 for o in outcomes})[r["result"]] += 1
     report("glitch", f"{name}_counts", res["counts"])
     report("glitch", f"{name}_per_point", per_point)
     exported = api.post("/api/glitch/export", {"path": f"hw_{name}.csv"})["path"]

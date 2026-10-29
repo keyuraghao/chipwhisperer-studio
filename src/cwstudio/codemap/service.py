@@ -416,20 +416,22 @@ class CodeMapService:
         if apply:
             self.mapping.shift, self.mapping.scale = res["shift"], res["scale"]
         want = p.get("refine", True)
-        if want and apply:  # local refinement: follow the drift between the emulated cycle counts and the real core, window by window
-            self._set_phase("refining", "following the drift window by window")
+        if want:
+            # the local refinement runs even when the global fit was too weak to apply: it is a diagnostic (which parts of the trace the code matches, and by how much) as much as a correction, and on a weak global fit it is often the only way to see where the map holds. The warp is applied only when the global fit is in use and it actually improves the match.
+            self._set_phase("refining", "matching the code to the trace window by window")
             try:
                 windows = int(p["windows"]) if p.get("windows") else 24
                 if not 3 <= windows <= 400:
                     raise ValueError("windows must be 3 to 400")
-                ref = power.refine(x, self.P, tl.t0, self.mapping, windows=windows, cum=self.cum)
+                fit = power.Mapping(**{**self.mapping.__dict__, "knots": None, "shift": res["shift"], "scale": res["scale"]})  # the fitted straight line, whether or not it was applied, so the window search starts from the best guess
+                ref = power.refine(x, self.P, tl.t0, fit, windows=windows, cum=self.cum)
             except Exception as e:  # noqa: BLE001  the refinement is a bonus on top of the linear fit
                 ref = {"applied": False, "reason": f"{type(e).__name__}: {e}", "knots": [], "windows": []}
-            if ref.get("applied"):
+            if ref.get("applied") and apply:  # only warp a mapping that is actually in use
                 self.mapping.knots = ref["knots"]
+            elif ref.get("applied") and not apply:
+                ref = {**ref, "applied": False, "reason": "the straight-line fit was low confidence, so the window correction is shown but not applied; set the mapping by hand, or capture cleaner traces, then refine"}
             res["refine"] = {k: v for k, v in ref.items() if k != "knots"}
-        elif want:
-            res["refine"] = {"applied": False, "reason": "the linear fit was not applied (low confidence), so there is nothing to refine", "windows": []}
         self.alignment = res
         return res
 

@@ -359,20 +359,38 @@ def refine(trace: np.ndarray, P: np.ndarray, t0: int, mapping: Mapping, windows:
         else:
             reach = min(4 * ml, 2 * reach)
     used = [row for row in rows if row["used"]]
+    lo, hi = int(s_lo), int(s_hi)
+
+    def _corr(mp: Mapping) -> float:
+        """How well the model under ``mp`` matches the trace over the covered region (abs correlation of the baseline-removed signals)."""
+        xs = _prep(model_samples(P, t0, mp, L, cum=cum), mapping.spc)
+        a, b = xp[lo:hi], xs[lo:hi]
+        if a.std() < 1e-12 or b.std() < 1e-12:
+            return 0.0
+        return float(abs(np.corrcoef(a, b)[0, 1]))
+
     knots: List[List[float]] = []
     applied = False
     reason = None
+    corr_linear = round(_corr(lin), 4)
+    corr_warped = corr_linear
     if len(used) >= 3:
         cs = np.array([lin.cycle((row["start"] + row["end"]) / 2.0) for row in used])
         ds = np.array([-row["lag"] for row in used])
         # the corrected mapping must keep running forward: successive knots may not move closer than half a window
         if np.all(np.diff(cs * lin.a + ds) > w * 0.5):
-            knots = [[round(float(c), 2), round(float(d), 3)] for c, d in zip(cs, ds)]
-            applied = True
+            cand = [[round(float(c), 2), round(float(d), 3)] for c, d in zip(cs, ds)]
+            cw = round(_corr(Mapping(**{**lin.__dict__, "knots": cand})), 4)
+            # only keep the warp when it actually matches the trace better than the straight line: on weak model-to-trace correlation (real targets) the window lags can be noise, and a warp through noise fits worse
+            if cw >= corr_linear + 0.02:
+                knots, applied, corr_warped = cand, True, cw
+            else:
+                reason = f"the per-window correction did not improve the match (linear {corr_linear}, warped {cw}); the straight-line mapping is kept"
         else:
             reason = "the window lags do not form a forward mapping (repetitive code matched different iterations); correction not applied"
     else:
         reason = f"only {len(used)} of {len(rows)} windows match the model (correlation {min_r} or better): correction needs at least three"
     rs = [row["r"] for row in rows]
     return {"knots": knots, "windows": rows, "applied": applied, "reason": reason, "window_samples": int(w), "max_local": float(max_local),
-            "mean_r": round(float(np.mean(rs)), 4) if rs else 0.0, "matched": len(used), "max_abs": round(float(max(abs(k[1]) for k in knots)), 2) if knots else 0.0}
+            "mean_r": round(float(np.mean(rs)), 4) if rs else 0.0, "matched": len(used), "max_abs": round(float(max(abs(k[1]) for k in knots)), 2) if knots else 0.0,
+            "corr_linear": corr_linear, "corr_warped": corr_warped}
