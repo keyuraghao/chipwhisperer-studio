@@ -143,7 +143,7 @@ Studio uses a small in-process kernel instead of a Jupyter kernel, because a sep
 
 ## MCP server
 
-`mcp_server.py` builds an MCP server with `mcplite.py`, a compact implementation of the protocol that ships with Studio, and registers the 123 tools (70 of its own plus those of `mcp_interfaces.py`, `mcp_logic.py` and `mcp_codemap.py`). Each tool is a small function that calls the HTTP API, so the MCP server is just another API client. Unsupported requests come back as `{ok: false, supported: false, reason}` so agents can explain them. It attaches to a running Studio or starts one headless in the same process. Long operations accept `wait=true` and poll the API, so an agent can do "capture 500 traces" or "build and flash" in one call. See [MCP Server](MCP-Server).
+`mcp_server.py` builds an MCP server with `mcplite.py`, a compact implementation of the protocol that ships with Studio, and registers the 123 tools (84 of its own plus those of `mcp_interfaces.py`, `mcp_logic.py` and `mcp_codemap.py`). Each tool is a small function that calls the HTTP API, so the MCP server is just another API client. Unsupported requests come back as `{ok: false, supported: false, reason}` so agents can explain them. It attaches to a running Studio or starts one headless in the same process. Long operations accept `wait=true` and poll the API, so an agent can do "capture 500 traces" or "build and flash" in one call. See [MCP Server](MCP-Server).
 
 ## Frontend
 

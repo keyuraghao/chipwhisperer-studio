@@ -151,7 +151,7 @@ The Husky's glitch module works differently in the details (it uses a PLL and di
 
 ### Husky extras
 
-The ChipWhisperer-Husky exposes extra groups, such as its logic analyzer, trace interface, user IO header and ADC mode settings. They all appear in the tree and can be edited like any other setting. Several have their own controls as well: the logic analyser in the [Logic](Logic-Analyser) tab, the USERIO header, the UART trigger, edge counter, ADC level trigger, sequencer and bit-banger in the [Interfaces](Protocols-and-Interfaces) tab, and SWO trace in the [Code](Code-on-the-Waveform#exact-mode-husky-swo) tab's exact mode. See the ChipWhisperer documentation for what each setting does.
+The ChipWhisperer-Husky exposes extra groups, such as its logic analyser, trace interface, user IO header and ADC mode settings. They all appear in the tree and can be edited like any other setting. Several have their own controls as well: the logic analyser in the [Logic](Logic-Analyser) tab, the USERIO header, the UART trigger, edge counter, ADC level trigger, sequencer and bit-banger in the [Interfaces](Protocols-and-Interfaces) tab, and SWO trace in the [Code](Code-on-the-Waveform#exact-mode-husky-swo) tab's exact mode. See the ChipWhisperer documentation for what each setting does.
 
 ### Choices the model does not have
 

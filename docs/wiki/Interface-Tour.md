@@ -24,7 +24,7 @@ This page explains every part of the Studio window: the top bar, the navigation,
   - The **scope** chip shows the device name and serial number (for example `ChipWhisperer-Simulator (Husky) · SIM000001`) with a green dot when connected, or **No scope**.
   - The **target** chip shows the target type (for example `SimpleSerial2`) or **No target**.
   - The **job** chip shows **Idle**, or the running job with its progress and rate (for example `capture: 120/500 · 850/s`) with a pulsing amber dot. It turns red if the last job ended with an error.
-  - The **health** chip appears when the scope reports a problem (temperature, a clock that is not locked, a sticky error) and shows how many problems and the temperature; green when all is well. See [CPA and leakage analysis](CPA-Analysis) and the health notes on each tab.
+  - The **health** chip appears when the scope reports a problem (temperature, a clock that is not locked, a sticky error) and shows how many problems and the temperature; green when all is well. Hover it for the list of problems; the **Health** card in the Connect tab shows the details with a Clear action, and the [Glitching](Glitching) page explains the XADC alarm it reports after long crowbar sweeps.
   - The **analysis** chip shows what long analysis is running (code map, CPA, TVLA, SNR, DFA) with its phase and progress, and what finished last.
 - **Single** captures one trace. **Run** starts a capture with the settings of the [Capture tab](Capturing-Traces). **Stop** stops the running capture or glitch sweep. Single and Run are disabled until a scope is connected.
 - **Trace count** shows how many traces are stored in memory.

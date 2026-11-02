@@ -28,7 +28,7 @@ Everything runs in one Python process. Clients (the UI in Studio's window or a b
 
 `chipwhisperer` objects are not thread-safe and the USB transport is stateful, so exactly one thread (`HardwareWorker`) touches the scope and target. The asyncio server hands every hardware request to that thread and awaits a future. Long-running operations (a 10,000 trace capture, a glitch sweep) are long jobs: objects with a `step()` method that the worker calls repeatedly, servicing queued short jobs between steps. That keeps the UI responsive (you can read settings, poll the serial console and stop the capture) without ever running two hardware calls at once.
 
-CPA analysis is pure numpy over an in-memory trace array and runs on its own thread with progressive reporting. Toolchain downloads and firmware builds also run on their own threads because they never touch the hardware; only the final "program target" step goes through the hardware worker.
+CPA analysis is numpy (or CuPy when a GPU is present) over an in-memory trace array and runs on its own thread with progressive reporting. Toolchain downloads and firmware builds also run on their own threads because they never touch the hardware; only the final "program target" step goes through the hardware worker.
 
 ### Event streaming
 

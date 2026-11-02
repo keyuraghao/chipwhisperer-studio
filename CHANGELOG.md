@@ -4,6 +4,14 @@ All notable changes to ChipWhisperer Studio are listed here, newest first. Versi
 
 ## [Unreleased]
 
+### Fixed
+
+- `tools/screenshots.py` and `tools/demo_video.py` swept `glitch.width` in percent on the simulated Husky, which takes phase steps, so the sweep failed at its first point and the Glitch tab screenshot and video chapter showed an empty result map. The sweep now covers 0 to 2200 phase steps and the regenerated screenshots, clips and video show the success region.
+
+### Changed
+
+- Documentation proofread end to end: the HTTP API page lists every route (pinout, health, recipes, leakage tools, DFA, glitch checkers, trigger outputs and the SAD preview), the MCP page's tool tables render correctly and list the full `trigger_configure`, `userio_set` and `code_map_align` parameters, the Glitching page uses the checker names the dropdown shows, the Simulator page gives the real firmware versions the simulator reports, and the skill files describe all nine CPA models and 123 tools.
+
 ## [1.0.0] - 2026-10-29
 
 The first stable release. Studio now knows the scope it is driving, turns a glitch campaign into a recovered key, maps firmware onto a real trace window by window, and runs its heaviest analysis on the GPU. Everything below was verified on the simulator for all five scope models and on a real ChipWhisperer-Husky with a CW308 SAM4S target.
@@ -12,7 +20,7 @@ The first stable release. Studio now knows the scope it is driving, turns a glit
 
 - **Every ChipWhisperer model, with its own shape.** A profile per model (Nano, Lite, Pro, Husky, Husky Plus) drives the whole app: the capture settings it offers, the sample limits it enforces, the glitch engine it exposes, the triggers it can arm and the monitors it reports. The simulator takes the same profile, so a simulated Nano, Lite, Pro and Husky each look and refuse like the real one. Served at `/api/capabilities` as `profile` and over MCP. See [Scope Settings](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Scope-Settings).
 - **GPU acceleration.** The CPA runs on the GPU through CuPy when one is present (`CWSTUDIO_GPU=0` turns it off), with a CPU fallback. A 5000-trace attack over 24400 samples drops from about 18 s to 1.3 s. The compute backend shows in the Connect card and the Analysis status. Install with `pip install chipwhisperer-studio[gpu]`. See [Performance](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Performance).
-- **Differential fault analysis.** Recover an AES-128 key from the ciphertexts a glitch campaign faults: the Analysis tab's DFA card and the `dfa_aes` MCP tool work from the last sweep's replies or from pasted ciphertexts, and the Glitch tab's "AES fault campaign" button sets the sweep up. See [Code on the Waveform](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Glitching).
+- **Differential fault analysis.** Recover an AES-128 key from the ciphertexts a glitch campaign faults: the Analysis tab's DFA card and the `dfa_aes` MCP tool work from the last sweep's replies or from pasted ciphertexts, and the Glitch tab's "AES fault campaign" button sets the sweep up. See [Glitching](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Glitching).
 - **Glitch per model, with presets and checkers.** The Glitch tab shows the connected model's engine (the Nano's firmware crowbar, the Lite and Pro DCMs, the Husky MMCM phase shifter) with its parameters in the right units and a nanosecond readout, one-click Clock, Voltage and Disable presets, and a pluggable result checker (loop counter, AES fault, flag byte, a Python expression, or your own file) on top of the built-in classification. Results gain the `garbled` and `not_fired` classes.
 - **Segmented capture and streaming to disk.** The Husky captures many traces per arm (thousands of traces per second); any model can stream a capture straight to a `.npy` set on disk for runs too long to hold in memory. See [Capturing Traces](https://github.com/keyuraghao/chipwhisperer-studio/wiki/Capturing-Traces).
 - **Leakage assessment and more CPA models.** TVLA (the fixed-versus-random t-test), signal-to-noise ratio, static trace alignment, FIR filtering and a spectrum, plus the S-box LSB and MSB, AES-256 and custom-expression CPA models and a CPA result export. See [CPA Analysis](https://github.com/keyuraghao/chipwhisperer-studio/wiki/CPA-Analysis).
@@ -331,7 +339,8 @@ Initial version, written as `software/cwstudio` inside a fork of ChipWhisperer a
 - A built-in simulator (AES leakage and glitch behaviour) for use without hardware.
 - PyInstaller packaging that bundles Python and libusb, and CI that builds Linux, Windows and macOS archives.
 
-[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.3...v1.0.0
 [0.5.3]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/keyuraghao/chipwhisperer-studio/compare/v0.5.0...v0.5.1

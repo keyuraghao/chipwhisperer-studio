@@ -5,7 +5,7 @@
 - pip (Python 3.10 to 3.12, because chipwhisperer 6.0.0 pins numpy<=1.26.4): `pip install chipwhisperer-studio`. This provides `cw-studio` (own window), `cw-studio-web` (browser) and `cw-studio mcp`.
 - Standalone bundles (Linux x86_64, Windows x86_64, macOS arm64) from https://github.com/keyuraghao/chipwhisperer-studio/releases. Run the bundle executable with `mcp` as its first argument. In the Windows window build use `cw-studio.exe` next to `ChipWhispererStudio.exe` (the latter has no console, so it cannot speak stdio).
 - Not sure which command this installation needs? `GET http://127.0.0.1:8765/api/meta` returns it as `mcp_command`, and Studio's Help tab shows copy-ready snippets.
-- Real hardware on Linux needs NewAE's udev rules; on Windows, the ChipWhisperer USB driver. See the wiki page Installation.
+- Real hardware on Linux needs NewAE's udev rules; on Windows, current ChipWhisperer firmware needs no driver (an old libusb-win32 driver must be removed). See the wiki page Installation.
 
 ## Register it with a client
 

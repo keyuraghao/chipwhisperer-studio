@@ -28,7 +28,7 @@ What the simulated interfaces do (an SPI flash, GPIO levels, USERIO, the bit-ban
 
 ## What the simulated scope provides
 
-The simulated scope implements the parts of the `chipwhisperer` scope API that Studio and typical notebooks use: `arm()`, `capture()`, `get_last_trace()`, `default_setup()`, `con()`, `dis()` and the settings objects below. Its serial number is `SIM000001` and it reports firmware version 0.1.0. Every setting appears in the [Scope tab](Scope-Settings) with a short description.
+The simulated scope implements the parts of the `chipwhisperer` scope API that Studio and typical notebooks use: `arm()`, `capture()`, `get_last_trace()`, `default_setup()`, `con()`, `dis()` and the settings objects below. Its serial number is `SIM000001` and it reports the scope firmware version that the `chipwhisperer` library bundles for the chosen model (for example 1.7.0 for the Husky). Every setting appears in the [Scope tab](Scope-Settings) with a short description.
 
 | Group | Settings (default) |
 |-------|--------------------|
@@ -94,7 +94,7 @@ The simulated target reacts to the scope's glitch settings when the glitch modul
 | Width 35 to 45, when not a success case above | Reset about 30% of the time, otherwise normal |
 | Anything else | Normal |
 
-With the built-in model, a success on the `g` command returns a loop counter slightly below 2500 and a success on the `p` command returns a corrupted ciphertext. A sweep of `glitch.ext_offset` from 0 to 90 and `glitch.width` from -45 to 45 shows a clear success region in the **Glitch** tab. On the `p` command the reset outcome is not modelled: the target still answers with the ciphertext.
+With the built-in model, a success on the `g` command returns a loop counter slightly below 2500 and a success on the `p` command returns a corrupted ciphertext. A sweep of `glitch.ext_offset` from 0 to 90 and `glitch.width` across the model's range (0 to 2200 phase steps on a simulated Husky, -45 to 45 percent on a Lite or Pro) shows a clear success region in the **Glitch** tab. On the `p` command the reset outcome is not modelled: the target still answers with the ciphertext.
 
 **With emulated firmware**, a glitch is an instruction skip, the most common effect of clock and voltage glitches on real microcontrollers. The width decides the outcome as above (between 5 and 40: a skip about 75% of the time, a crash 10%, no effect 15%; too wide: a crash), and `glitch.ext_offset` is the number of target clock cycles after the trigger where it lands: the instruction executing at that cycle is skipped (more with a larger `repeat`). Whether that changes the answer depends on the firmware, so a sweep finds the real vulnerable instructions of simpleserial-glitch or a password check. A skip that makes the firmware fault or hang counts as a reset.
 

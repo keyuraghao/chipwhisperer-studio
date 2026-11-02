@@ -312,7 +312,7 @@ def record(base: str, api: Api, out: str, width: int, height: int) -> Demo:
         d.tab("glitch")
         d.caption("Fault injection: sweep glitch parameters", "Each point sends a command, checks the response and colours the result", 0.5)
         d.point(pg.locator("#panel-glitch button", has_text="Start sweep"))
-        sweep = [{"path": "glitch.ext_offset", "start": 0, "stop": 90, "step": 3}, {"path": "glitch.width", "start": -45, "stop": 45, "step": 3}]
+        sweep = [{"path": "glitch.ext_offset", "start": 0, "stop": 90, "step": 3}, {"path": "glitch.width", "start": 0, "stop": 2200, "step": 100}]  # the simulated Husky takes phase steps, 0 to 2296
         api("POST", "/api/glitch/start", {"parameters": sweep, "command": "g", "expected": "c4090000", "output_len": 4, "reset": "nrst"})
         d.wait(2)
         d.idle(300)

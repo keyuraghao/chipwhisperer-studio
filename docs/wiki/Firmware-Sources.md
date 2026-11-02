@@ -71,7 +71,7 @@ To build your own changes to the firmware, or a ChipWhisperer version Studio can
 - the `firmware/mcu` folder of a ChipWhisperer checkout, for example `~/src/chipwhisperer/firmware/mcu`, or
 - the root of the checkout, for example `~/src/chipwhisperer` (Studio finds `firmware/mcu` in it).
 
-Studio checks that the folder contains `Makefile.inc` and `hal/Makefile.hal`. While a custom folder is in use, **Download**, **Update** and **Check for updates** are disabled (update it with git yourself), and the badge reads **Your folder**. **Back to downloaded sources** switches back.
+Studio checks that the folder contains `Makefile.inc` and `hal/Makefile.hal`. While a custom folder is in use, **Download**, **Update now** and **Check for updates** are disabled (update it with git yourself), and the badge reads **Your folder**. **Back to downloaded sources** switches back.
 
 > **Tip:** Many CW308 platforms need the `chipwhisperer-fw-extra` submodule. In a fresh clone, run `git submodule update --init firmware/mcu/hal/chipwhisperer-fw-extra`, otherwise those platforms are greyed out on the Firmware tab.
 

@@ -115,7 +115,6 @@ Every tool carries MCP annotations that clients can use to decide when to ask yo
 | `list_devices` | ChipWhisperer USB devices attached to the Studio machine (name, serial number, in use). | none | read only |
 | `get_logs` | Recent Studio and ChipWhisperer log messages, plus capture and glitch events. | `since_seq=0`, `limit=200`, `level=None` (DEBUG, INFO, WARNING, ERROR, CRITICAL) | read only |
 | `open_ui` | Returns the web UI URL and the API docs URL, and can open the UI in the default browser. | `open_browser=False` | read only |
-
 | `recipes` | The best way to reach each goal on the connected model (fast capture, long capture, a trigger without a GPIO, a first voltage or clock glitch, cleanest traces): the settings and actions each applies and the notes that matter; unavailable goals say why. | none | read only |
 | `recipe_apply` | Apply a recipe's settings and actions on the connected scope and return what was done plus the capture parameters to follow. | `goal` (fast_capture, long_capture, trigger_without_gpio, voltage_glitch, clock_glitch, clean_traces) | hardware |
 | `scope_pinout` | Pin diagram of the active device: every pin of the 20-pin header with its number, name, direction, function and `scope.io` alias, the USERIO header, the coax ports and model notes. | none | read only |
@@ -175,9 +174,8 @@ Every tool carries MCP annotations that clients can use to decide when to ask yo
 | `cpa_stop` | Stops a running CPA attack; the partial result stays available. | none | hardware |
 | `cpa_result` | Latest result: best key guess, per-byte ranking and correlation, PGE per byte when the key is known, progress. | none | read only |
 | `cpa_correlation` | Correlation versus sample index for the best guess of one key byte, decimated. Shows where the leakage happens. | `byte`, `max_points=1000` | read only |
-
 | `cpa_export` | Save the CPA result (per-guess maxima and samples, best correlation trace per byte as `.npz`; the summary with history as `.json`). | `path="cpa_result"` | hardware |
-| `dfa_aes` | Differential fault analysis of AES-128: recover the key from faulty ciphertexts (a glitch that corrupts one byte entering round 9 faults one MixColumns column; about two faults per column give the key). Uses the last glitch sweep, or a correct and faulty ciphertexts you give. | `correct=None`, `faulty=None` | read only |
+| `dfa_aes` | Differential fault analysis of AES-128: recover the key from faulty ciphertexts (a glitch that corrupts one byte entering round 9 faults one MixColumns column; about two faults per column give the key). Uses the last glitch sweep, or a correct ciphertext and faulty ones you give. | `correct=None`, `faulty=None` | read only |
 | `leakage_ttest` | TVLA: Welch's t-test per sample between the fixed-plaintext and random traces (capture with `text_mode` tvla). `|t|` above 4.5 means it leaks there. | `fixed_text=None`, `trace_start=0`, `trace_end`, `max_points=2000` | read only |
 | `leakage_snr` | Signal-to-noise ratio per sample for one key byte, classing traces by the S-box output Hamming weight under the known key, or by the plaintext byte. | `byte=0`, `classes="sbox_hw"` (sbox_hw, byte), `known_key=None`, `trace_start=0`, `trace_end`, `max_points=2000` | read only |
 | `trace_spectrum` | Magnitude spectrum (dB) of one stored trace or the mean trace, in Hz from the ADC rate when connected. Shows the clock harmonics and where a filter cutoff goes. | `trace=None`, `max_points=2000` | read only |
@@ -191,7 +189,6 @@ Every tool carries MCP annotations that clients can use to decide when to ask yo
 | `glitch_start` | Sweeps glitch parameters. Each entry of `parameters` is `{path, start, stop, step}` or `{path, values: [...]}`. | `parameters`, `command="g"`, `data=""`, `expected=None` (hex), `output_len=4`, `repeats=1`, `order="nested"` or `"random"`, `reset="nrst"` (none, nrst, pdic), `reset_on="reset"` (never, reset, always), `reset_delay=0.05`, `glitch_timeout=1000`, `arm_scope=True`, `checker="expected"` (expected, loop_counter, aes_dfa, flag, expr, or a user file), `checker_expr=None`, `wait=False`, `timeout_s=1800` | hardware |
 | `glitch_results` | Counts per outcome and each point's parameter values, outcome and response. | `only=None` (success, reset, normal), `limit=500` | read only |
 | `glitch_export` | Saves the sweep results as CSV. | `path="glitch_results.csv"` | hardware |
-
 | `glitch_checkers` | The result checkers `glitch_start` accepts: the built-in ones (loop counter, AES fault, flag, expression), the user's own from the data folder's `checkers` directory, and the context fields an expression sees. | none | read only |
 
 ### Toolchains
@@ -264,8 +261,11 @@ The [Interfaces](Protocols-and-Interfaces) tab's features. Anything the connecte
 | `gpio_read` | Mode and level of each target pin (the CW-Nano cannot read back). | none | read only |
 | `gpio_set` | Drives a pin high or low, or releases it. | `pin`, `state` (high, low, high_z) | hardware |
 | `gpio_pulse` | Pulls a pin low for some milliseconds; on nRST this resets the target. | `pin="nrst"` (nrst, pdic), `ms=50` | hardware |
-| `userio_set` | Husky USERIO direction and drive bit masks; returns the levels read back. | `direction`, `drive` | hardware |
-| `trigger_configure` | Configures the capture trigger; captures use it right away. | `kind="basic"` (basic, uart_decode, uart_pattern, edge_counter, adc_level, sequencer, sad), and per kind `pins`, `op`, `edge`, `pin`, `baud`, `pattern`, `rule`, `data_bits`, `stop_bits`, `parity`, `edges`, `level`, `window_start`, `window_end`, `threshold`, `start`, `enabled` | hardware |
+| `userio_set` | Husky USERIO direction and drive bit masks; returns the levels read back. | `direction`, `drive`, `mode` | hardware |
+| `trigger_configure` | Configures the capture trigger; captures use it right away. | `kind="basic"` (basic, uart_decode, uart_pattern, edge_counter, adc_level, sequencer, sad), and per kind `pins`, `op`, `edge`, `pin`, `baud`, `pattern`, `rule`, `data_bits`, `stop_bits`, `parity`, `edges`, `level`, `steps`, `windows`, `window_start`, `window_end`, `trace`, `start`, `threshold`, `interval`, `emode`, `mask`, `enabled` | hardware |
+| `trigger_outputs` | The trigger and clock output ports of the scope (Pro AUX SMA; Husky TRIG/GLITCH and AUX MCX, USERIO clock or HS2) and what each carries now. | none | read only |
+| `trigger_output_set` | Route a trigger or clock output port. | `port` (aux, trig_mcx, aux_mcx), `value` | hardware |
+| `trigger_sad_preview` | Score a SAD reference (a stored trace from a sample) over the stored traces offline, exactly as the model's SAD engine would: where each trace fires, how many fire at the expected position and a suggested threshold. No hardware. | `trace=-1`, `start=0`, `threshold=10`, `interval=10`, `emode=False`, `mask=None`, `traces=200` | read only |
 | `bitbang` | Husky bit-banger: sends bits with a clock and returns the recorded ones. | `bits`, `record`, `data_pin="USERIO_D0"`, `clock_pin="USERIO_CK"`, `clk_div` | hardware |
 | `onewire` | 1-Wire reset and presence, or Read ROM (family, serial, CRC). | `action="read_rom"` (reset, read_rom), `data_pin="USERIO_D0"`, `clk_div` | hardware |
 | `openocd_status` | OpenOCD install, server, ports, MPSSE mode (`mpsse.detected` for a scope found already in MPSSE mode) and recent log lines; `list_targets` adds the target configurations. | `list_targets=False`, `filter` | read only |
@@ -276,10 +276,6 @@ The [Interfaces](Protocols-and-Interfaces) tab's features. Anything the connecte
 | `openocd_program` | Flashes a `.hex`, `.elf` or `.bin` through OpenOCD, then verifies and resets. | `path`, `verify=True`, `reset=True`, `address` (for .bin) | destructive |
 
 OpenOCD itself is installed with `toolchain_install(toolchain_id="openocd")`.
-
-| `trigger_outputs` | The trigger and clock output ports of the scope (Pro AUX SMA; Husky TRIG/GLITCH and AUX MCX, USERIO clock or HS2) and what each carries now. | none | read only |
-| `trigger_output_set` | Route a trigger or clock output port. | `port` (aux, trig_mcx, aux_mcx), `value` | hardware |
-| `trigger_sad_preview` | Score a SAD reference (a stored trace from a sample) over the stored traces offline, exactly as the model's SAD engine would: where each trace fires, how many fire at the expected position and a suggested threshold. No hardware. | `trace=-1`, `start=0`, `threshold=10`, `interval=10`, `emode=False`, `mask=None`, `traces=200` | read only |
 
 ### Logic analyser
 
@@ -307,7 +303,7 @@ The [Logic](Logic-Analyser) tab. The tools work on the current capture; `la_sele
 | `code_map_build` | Emulates the firmware ELF (default: the one programmed in this session, else the newest build) for a stored trace's key and plaintext, maps cycles to samples and aligns with the stored traces. Returns whether the emulated ciphertext is correct and matches the trace, the mapping, the alignment and the top functions in the trigger window. | `elf`, `sources`, `trace`, `key`, `text`, `core`, `protocol`, `wait_states`, `align`, `target_freq`, `adc_freq`, `top=25`, `cmd`, `raw`, `max_instructions` | hardware |
 | `code_map_region` | The functions (self cycles, share) and source lines (file, line, text, cycles, executions) that ran in a range of samples. | `start`, `end`, `limit=100` | read only |
 | `code_map_lookup` | Where a function or a source line ran: cycle and sample ranges. | `function`, or `file` and `line` | read only |
-| `code_map_align` | Fits the mapping by cross-correlation and returns shift, scale, correlation and confidence (a low confidence fit is not applied); or sets shift and scale by hand. | `source="mean"`, `trace`, `scale_min=0.9`, `scale_max=1.1`, `max_shift`, `shift`, `scale` | hardware |
+| `code_map_align` | Fits the mapping by cross-correlation and returns shift, scale, correlation and confidence (a low confidence fit is not applied); with `refine` it then follows the drift window by window and keeps it as a piecewise correction; or sets shift and scale by hand (`clear_warp` drops the piecewise correction). | `source="mean"`, `trace`, `scale_min=0.9`, `scale_max=1.1`, `max_shift`, `refine=True`, `windows=24`, `shift`, `scale`, `clear_warp=False` | hardware |
 | `code_map_disassemble` | Disassembly of a function or source line with how often each instruction ran. | `function`, or `file` and `line` | read only |
 | `code_map_pc_trace` | Exact mode: records program counter samples through a Husky's SWO trace port (needs simpleserial-trace firmware) and compares them with the emulation. The interval is rounded to the nearest the Arm DWT supports (64 or 1024 cycles times 1 to 16) and the one used is returned. On the simulator the samples come from the emulated run. | `interval=64` | hardware |
 

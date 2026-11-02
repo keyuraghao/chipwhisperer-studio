@@ -69,6 +69,8 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 - [Target and Programming](Target-and-Programming)
 - [Capturing Traces](Capturing-Traces)
 - [Waveform Viewer](Waveform-Viewer)
+- [CPA and leakage analysis](CPA-Analysis)
+- [Glitching and fault analysis](Glitching)
 - [Protocols and Interfaces](Protocols-and-Interfaces)
 - [Logic Analyser](Logic-Analyser)
 - [Code on the Waveform](Code-on-the-Waveform)
@@ -103,4 +105,4 @@ ChipWhisperer Studio is a desktop application for [NewAE ChipWhisperer](https://
 - Downloads for Windows, macOS and Linux are on the [releases page](https://github.com/keyuraghao/chipwhisperer-studio/releases/latest).
 - What changed in each version is listed in the [CHANGELOG](https://github.com/keyuraghao/chipwhisperer-studio/blob/main/CHANGELOG.md).
 - The source code is at [github.com/keyuraghao/chipwhisperer-studio](https://github.com/keyuraghao/chipwhisperer-studio).
-- ChipWhisperer Studio is licensed under the [Apache License 2.0](https://github.com/keyuraghao/chipwhisperer-studio/blob/main/LICENSE), the same license as ChipWhisperer. Third-party components are listed in [NOTICE](https://github.com/keyuraghao/chipwhisperer-studio/blob/main/NOTICE). Compilers that Studio downloads for you are covered by their own licenses.
+- ChipWhisperer Studio is licensed under the [Apache License 2.0](https://github.com/keyuraghao/chipwhisperer-studio/blob/main/LICENSE), the same license as ChipWhisperer. Third-party components are listed in [NOTICE](https://github.com/keyuraghao/chipwhisperer-studio/blob/main/NOTICE). Compilers that Studio downloads for you are covered by their own licences.

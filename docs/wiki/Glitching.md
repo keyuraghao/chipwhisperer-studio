@@ -13,8 +13,8 @@ Each ChipWhisperer model glitches differently, so the top card shows the engine 
 | Model | Engine | Parameters | Presets |
 |-------|--------|------------|---------|
 | Nano | Firmware crowbar: one MOSFET fired a set number of CPU cycles after the trigger | `glitch.ext_offset` and `glitch.repeat` in 8.3 ns cycles | Enable crowbar, Disable |
-| Lite, Pro | Two phase-shifted DCM clocks | `glitch.width` and `glitch.offset` in percent of a clock period (plus fine steps) | Clock, Voltage LP/HP/Both, Disable |
-| Husky, Husky Plus | MMCM phase shifter, up to 32 glitches per trigger with a fired counter | `glitch.width` and `glitch.offset` in phase steps | Clock, Voltage LP/HP/Both, Disable |
+| Lite, Pro | Two phase-shifted DCM clocks | `glitch.width` and `glitch.offset` in percent of a clock period (plus fine steps) | Clock glitch, Voltage LP/HP/Both, Disable |
+| Husky, Husky Plus | MMCM phase shifter, up to 32 glitches per trigger with a fired counter | `glitch.width` and `glitch.offset` in phase steps | Clock glitch, Voltage LP/HP/Both, Disable |
 
 A line under the engine converts the current settings to nanoseconds using the target clock, so you can see how long a glitch is regardless of the units. The presets call the library's own setup functions (`cglitch_setup`, `vglitch_setup`) and leave your capture settings alone; anything finer, such as `glitch.trigger_src` or `io.hs2`, is in the **Scope** tab.
 
@@ -41,11 +41,11 @@ The default classification looks only at whether the reply is valid and matches 
 | Checker | What counts as success |
 |---------|------------------------|
 | expected reply | The built-in rule above. |
-| loop counter | The little-endian counter in the reply came out lower than expected (the `simpleserial-glitch` loop skipped iterations). |
-| AES fault | The ciphertext differs from the correct one in exactly one MixColumns column, a usable fault for the DFA below; any other difference is garbled. |
-| flag | Any non-zero byte in the reply, for a bypassed password or signature check that answers 1. |
-| expression | A one-line Python expression over the reply context (`value`, `expected_value`, `resp`, `fired`, `outcome`, ...). |
-| your own file | A `.py` with a `check(ctx)` function in the data folder's `checkers` directory. |
+| `loop_counter` | The little-endian counter in the reply came out lower than expected (the `simpleserial-glitch` loop skipped iterations). |
+| `aes_dfa` | The ciphertext differs from the correct one in exactly one MixColumns column, a usable fault for the DFA below; any other difference is garbled. |
+| `flag` | Any non-zero byte in the reply, for a bypassed password or signature check that answers 1. |
+| `expr` | A one-line Python expression over the reply context (`value`, `expected_value`, `resp`, `fired`, `outcome`, ...). |
+| your own file, listed as `<name> (file)` | A `.py` with a `check(ctx)` function in the data folder's `checkers` directory. |
 
 A checker that raises marks that one attempt garbled with the error, so a bad expression never stops a long sweep. Each attempt's checker verdict is shown in the results table and the CSV.
 

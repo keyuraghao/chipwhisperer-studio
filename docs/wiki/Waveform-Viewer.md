@@ -6,7 +6,7 @@ The waveform viewer is the large plot on the right of the ChipWhisperer Studio w
 
 *The toolbar at the top controls what is drawn; the footer below the plot shows statistics of the displayed trace.*
 
-The viewer is visible on every tab except **Notebook**, which uses the main area for its cells (see [Notebooks](Notebooks)). Traces captured by notebook code still appear here when you switch back.
+The viewer is visible on every tab except **Notebook**, which uses the main area for its cells (see [Notebooks](Notebooks)), and **Logic**, which shows the logic view there (see [Logic Analyser](Logic-Analyser)). Traces captured by notebook code still appear here when you switch back.
 
 ![Overlay of recent traces with the mean and min/max envelope (animated)](images/clips/waveform-view.webp)
 

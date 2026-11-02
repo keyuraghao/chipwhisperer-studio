@@ -5,7 +5,7 @@ description: Drive ChipWhisperer Studio (NewAE ChipWhisperer side-channel and fa
 
 # ChipWhisperer Studio
 
-ChipWhisperer Studio (`cw-studio`, PyPI `chipwhisperer-studio`) is a desktop app for NewAE ChipWhisperer boards (Nano, Lite, Pro, Husky, Husky Plus) with a built-in simulator. Its MCP server, `cw-studio mcp`, exposes 106 tools that each wrap one call of Studio's HTTP API, so an agent has exactly the features of the UI and can share one live session with a person watching the Studio window.
+ChipWhisperer Studio (`cw-studio`, PyPI `chipwhisperer-studio`) is a desktop app for NewAE ChipWhisperer boards (Nano, Lite, Pro, Husky, Husky Plus) with a built-in simulator. Its MCP server, `cw-studio mcp`, exposes 123 tools that each wrap one call of Studio's HTTP API, so an agent has exactly the features of the UI and can share one live session with a person watching the Studio window.
 
 ## Before you start
 

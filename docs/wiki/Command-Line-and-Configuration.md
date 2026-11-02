@@ -66,6 +66,7 @@ On Linux, `cw-studio --install-desktop` (or `./ChipWhispererStudio --install-des
 | `CWSTUDIO_WINDOW_SNAPSHOT`, `CWSTUDIO_WINDOW_SCRIPT`, `CWSTUDIO_WINDOW_DOWNLOAD_DIR`, `CWSTUDIO_WINDOW_UPLOAD` | Internal hooks of the Linux window helper, used by the automated window tests and CI. |
 | `CWSTUDIO_DEFAULT_UI` | `window` or `browser`: how Studio opens when neither `--browser` nor `--app-window` is given (overrides the build's default). |
 | `CWSTUDIO_GTK_PYTHON` | Linux: the Python interpreter that runs Studio's window (it needs PyGObject and WebKitGTK). Default: the system `python3`. |
+| `CWSTUDIO_WINDOW_GPU` | Linux window: set to `0` to leave WebKitGTK's default rendering policy instead of asking for GPU compositing. |
 | `CWSTUDIO_DEVTOOLS` | Linux window: set to `1` to enable the web inspector (right-click, Inspect Element) and print the page's console messages in the terminal. |
 | `CWSTUDIO_SIGROK_CLI` | Path to `sigrok-cli` for the [Logic Analyser](Logic-Analyser#external-analysers-sigrok), when it is not on `PATH`. |
 | `MPLBACKEND` | If it is not set, Studio sets it to its own inline backend so notebook figures render to images (shell commands run from a notebook get `Agg`). |

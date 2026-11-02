@@ -336,7 +336,7 @@ Pinned toolchain versions and checksums live in `src/cwstudio/resources/toolchai
 
 Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). To cut a release, move the Unreleased notes under a new version heading, bump `__version__` in `src/cwstudio/__init__.py` and push a tag such as `v0.5.0`. CI then runs the tests and firmware builds on all three operating systems, builds the standalone bundles (window and Web builds for each OS) and the Python packages, publishes a GitHub release using the matching CHANGELOG section as its description, and uploads the Python packages to [PyPI](https://pypi.org/project/chipwhisperer-studio/).
 
-## Star History
+## Star history
 
 <a href="https://www.star-history.com/?repos=keyuraghao%2Fchipwhisperer-studio&type=date&legend=top-left">
  <picture>

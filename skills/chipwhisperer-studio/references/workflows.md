@@ -38,7 +38,7 @@ Typical counts: simulator 50 to 100 traces; CW-Lite software AES 50 to 200; hard
 ## 4. CPA key recovery
 
 1. Traces captured with a fixed key and random plaintexts (section 3).
-2. `cpa_start(model="sbox_hw", wait=true)`. Models: `sbox_hw` (first-round S-box output, software AES such as TINYAES128C), `lastround_hd` (hardware AES, uses ciphertexts), `ptkey_hw`, `invsbox_hw`, `lastround_hw`. Narrow with `point_start`/`point_end` once you know where leakage is, `trace_end` to test with fewer traces, `bytes=[0,1]` to attack only some bytes.
+2. `cpa_start(model="sbox_hw", wait=true)`. Models: `sbox_hw` (first-round S-box output, software AES such as TINYAES128C), `lastround_hd` (hardware AES, uses ciphertexts), `ptkey_hw`, `invsbox_hw`, `lastround_hw`, `sbox_lsb`, `sbox_msb`, `aes256_round2_hw` (needs the first 16 key bytes known) and `custom` (a numpy expression). Narrow with `point_start`/`point_end` once you know where leakage is, `trace_end` to test with fewer traces, `bytes=[0,1]` to attack only some bytes.
 3. Read `best_key` and, per byte, `top` (guess, corr, sample), `best`, `known` and `pge`. PGE 0 for every byte means the full key is recovered. Studio uses the stored key as the known key unless `use_stored_key=false` or `known_key` is given.
 4. `cpa_correlation(byte=0)` shows where in the trace the byte leaks; good for narrowing the window.
 5. If some bytes have PGE above 0: capture more traces, narrow the sample window, or check the model matches the implementation.

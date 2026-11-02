@@ -70,6 +70,7 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `openocd` | text | OpenOCD: `kind` `log` (a log line), `state` (`running`, `exit_code`) or `mpsse` (MPSSE mode on or off). |
 | `la` | text | Logic analyser: `kind` `job` (capture progress: `state`, `source`, `phase`), `capture` (a new capture), `select` (the current capture changed), `channels`, `decoders`, `decoded` (a background decode finished). |
 | `codemap` | text | The code map changed (same object as `GET /api/codemap`). |
+| `analysis` | text | Analysis activity for the header indicator: `active` (the code map build, CPA, TVLA, SNR or DFA in progress, each with `elapsed`), `busy` and `last`. |
 
 ## Endpoints
 
@@ -81,6 +82,7 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `GET /api/meta` | Version, scope kinds, target kinds, programmers, CPA models, crypto targets, SimpleSerial versions, simulator models (`sim_models`), the command an MCP client should run for this installation (`mcp_command`: `{command, args}`), host platform, platform help (drivers, udev), `data_dir` and `simulate_default` (whether Studio was started with `--simulate`). |
 | `GET /api/capabilities` | What the connected scope supports: UART, SimpleSerial, SPI, JTAG, SWD, trace, GPIO, USERIO, bit-banger, 1-Wire, every trigger type, every programmer and the logic analyser sources, each as `{available, reason, ...details}`. For a scope type the Interfaces tab does not support, a top-level `reason` says so. See [Protocols and Interfaces](Protocols-and-Interfaces). |
 | `GET /api/devices` | Attached ChipWhisperer USB devices. |
+| `GET /api/pinout` | Pin diagram of the scope Studio has open: the 20-pin target header, the Husky USERIO header and the coax ports, or `connected: false` when none. |
 | `GET /api/logs?since=SEQ` | Log, capture and glitch events after a sequence number. |
 | `POST /api/shutdown` | Stops the Studio server. |
 
@@ -93,6 +95,11 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `GET /api/scope/settings` | Settings tree (groups with `children`, leaves with `path`, `value`, `type`, `writable`, `doc`, `choices`, and `disabled_choices` with the reason for choices the connected model does not have). |
 | `PUT /api/scope/settings` | Body: `path`, `value`. Returns the read-back value. Values the connected model does not support are refused with the reason. |
 | `POST /api/scope/action/{action}` | `default_setup`, `arm_capture`, `reset_fpga` or `glitch_disable`. |
+| `GET /api/scope/health?refresh=` | Temperature and rails (Husky XADC), clock locks, external clock drift, sticky capture errors, USB controller errors, glitches fired and the last trigger length, with a `problems` list in plain words. Refreshed every few seconds while the scope is idle; `refresh=true` reads it now. |
+| `POST /api/scope/health/clear` | Clear the scope's sticky errors and alarms and read the health again. |
+| `POST /api/scope/firmware/upgrade` | Flash the SAM firmware bundled with the `chipwhisperer` library onto the scope; it re-enumerates, so replug and connect again afterwards. |
+| `GET /api/recipes` | The best way to reach each goal on the connected model (fast capture, long capture, trigger without a GPIO, voltage or clock glitch, cleanest traces): settings, actions and notes. |
+| `POST /api/recipes/{goal}/apply` | Apply a recipe's settings and actions; returns what was done and the capture parameters to follow. |
 
 ### Target
 
@@ -111,7 +118,7 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 
 | Method and path | Purpose |
 |-----------------|---------|
-| `POST /api/capture/start` | Body: `count` (0 = continuous), `mode` (simpleserial, trigger_only), `key_mode` (fixed, random), `text_mode` (random, fixed, counter), `key`, `text`, `length`, `seed`, `store`, `clear`, `ack`, `max_timeouts`, `display_rate`, `max_rate`. |
+| `POST /api/capture/start` | Body: `count` (0 = continuous), `mode` (simpleserial, trigger_only), `key_mode` (fixed, random), `text_mode` (random, fixed, counter, tvla), `key`, `text`, `length`, `seed`, `store`, `clear`, `ack`, `max_timeouts`, `display_rate`, `max_rate`, `disk` (a name or path: every trace is also streamed to `<name>_waves.npy`; relative paths go into the data folder). |
 | `POST /api/capture/single` | Same body, captures one trace. |
 | `POST /api/capture/stop` | Stop the running capture or glitch sweep. |
 | `GET /api/traces` | Trace store summary. |
@@ -133,8 +140,16 @@ Connect to `ws://127.0.0.1:8765/ws`. Studio sends a `hello` message with the ver
 | `POST /api/analysis/cpa/stop` | Stop the attack. |
 | `GET /api/analysis/cpa` | Latest result: `best_key`, `bytes` (ranking per byte), `history`, `done`, `traces_used`, `known_key`. |
 | `GET /api/analysis/cpa/corr/{b}` | Correlation trace for key byte `b` (binary frame). |
+| `POST /api/analysis/cpa/export` | Body: `path` (relative to the data folder or absolute, default `cpa_result`). Saves the per-guess maxima and the best correlation traces as `.npz` and the summary as `.json`. |
+| `POST /api/analysis/ttest` | TVLA: Welch's t-test per sample between fixed-plaintext and random traces. Body: `fixed_text` (hex, default the capture's `tvla` text), `trace_start`, `trace_end`, `max_points`. |
+| `POST /api/analysis/snr` | Signal-to-noise ratio per sample. Body: `byte`, `classes` (sbox_hw with the known key, or byte), `known_key`, `trace_start`, `trace_end`, `max_points`. |
+| `POST /api/analysis/align` | Static alignment to a reference trace's window by cross-correlation. Body: `reference` (index, -1 newest), `start`, `end`, `max_shift`, `apply` (false previews the shifts only). |
+| `POST /api/analysis/filter` | Filter every stored trace in place. Body: `kind` (lowpass, highpass, bandpass, moving_average), `cutoff` (fraction of the sample rate, or Hz with `sample_rate`; samples for moving_average), `cutoff2` (bandpass upper), `taps`. |
+| `POST /api/analysis/spectrum` | Magnitude spectrum of a stored trace or the mean trace, dB below the peak. Body: `trace`, `sample_rate`, `max_points`. |
+| `POST /api/analysis/dfa` | Differential fault analysis of AES-128 (a single-byte fault entering round 9). Body: `source: "glitch"` (the last sweep's replies, the expected reply being the correct ciphertext) or `correct` (hex) plus `faulty` (list of hex). |
 | `POST /api/glitch/start` | Body: `parameters` ([{path, start, stop, step}] or [{path, values}]), `command`, `data`, `expected`, `output_len`, `repeats`, `order`, `reset`, `reset_on`, `reset_delay`, `glitch_timeout`, `arm_scope`, `display` (default true: each point's captured trace is sent to the waveform view). |
 | `GET /api/glitch/results` | Results, counts and progress. |
+| `GET /api/glitch/checkers` | The result checkers a sweep can use: built-in (expected, loop_counter, aes_dfa, flag, expr) and the user's own from the data folder's `checkers` directory, with the context fields an expression sees. |
 | `POST /api/glitch/export` | Body: `path` (CSV). |
 
 ### Toolchains and firmware
@@ -209,6 +224,8 @@ Everything in the [Interfaces](Protocols-and-Interfaces) tab. Requests for somet
 | `POST /api/interfaces/gpio/pulse` | Body: `pin` (nrst or pdic), `ms` (1 to 5000). |
 | `GET` / `PUT /api/interfaces/userio` | Husky USERIO header; PUT body: `direction` (bit mask, 1 = driven by the Husky), `drive` (bit mask), `mode` (normal). |
 | `GET` / `PUT /api/interfaces/trigger` | PUT body: `kind` (basic, uart_decode, uart_pattern, edge_counter, adc_level, sequencer, sad) plus its parameters (the same as the MCP tool `trigger_configure`). |
+| `POST /api/interfaces/trigger/sad/preview` | Score a SAD reference over the stored traces offline, as the model's engine would: where it fires, on how many traces, and a threshold suggestion. Body: `trace`, `start`, `threshold`, `interval`, `emode`, `mask`, `traces` (how many to sample). |
+| `GET` / `PUT /api/interfaces/outputs` | The trigger and clock output ports (Pro AUX SMA, Husky TRIG/GLITCH and AUX MCX) and what they carry; PUT body: `port` (aux, trig_mcx, aux_mcx), `value`. |
 | `POST /api/interfaces/bitbang` | Body: `bits` (`'0110...'`), `record` (same length, 1 = release and record that slot), `data_pin`, `clock_pin`, `clk_div`. Returns the recorded bits. |
 | `POST /api/interfaces/onewire` | Body: `action` (reset, read_rom), `data_pin`, `clk_div`. Returns the presence and the ROM (family, serial, CRC check). |
 | `GET /api/interfaces/openocd` | OpenOCD binary, scripts folder, server state, ports, MPSSE state and the newest log lines. `mpsse` carries `detected: true` (with `connected`, `sn` and `kind`) for a scope Studio found already in MPSSE mode, for example after a restart. |
@@ -263,8 +280,8 @@ The [Logic](Logic-Analyser) tab. Sample indices count from the start of the capt
 | `GET /api/codemap/band` | The timeline the code band draws: function spans and source line runs in cycles from the trigger, and the mapping. |
 | `POST /api/codemap/region` | Body: `start`, `end` (samples), `limit`. The functions and source lines that ran there; code without line information is one line entry with `no_line_info: true`. |
 | `POST /api/codemap/lookup` | Body: `function`, or `file` and `line`. Where it ran: cycle and sample ranges. |
-| `POST /api/codemap/align` | Body: `source` (mean, trace), `trace`, `scale_min`, `scale_max`, `max_shift`, `apply` (true, false or `auto`: apply unless the confidence is low). |
-| `PUT /api/codemap/mapping` | Body: `shift`, `scale` (absolute), `dshift` (samples) or `dscale` (fraction) to nudge, `adc_offset`, `presamples`, `decimate`, `adc_freq`, `target_freq`, `reset`. |
+| `POST /api/codemap/align` | Body: `source` (mean, trace), `trace`, `scale_min`, `scale_max`, `max_shift`, `apply` (true, false or `auto`: apply unless the confidence is low), `refine` (default true: after the linear fit, follow the drift between emulated and real cycle counts window by window and keep it as a piecewise correction of the mapping), `windows` (pieces, default 24). |
+| `PUT /api/codemap/mapping` | Body: `shift`, `scale` (absolute), `dshift` (samples) or `dscale` (fraction) to nudge, `adc_offset`, `presamples`, `decimate`, `adc_freq`, `target_freq`, `reset` (shift 0, scale 1, no warp), `clear_warp` (drop the piecewise correction, keep shift and scale). |
 | `GET /api/codemap/source?file=` | A source file: text, lines with code, executed lines with their cycles. |
 | `GET /api/codemap/disasm` | Disassembly of a line (`file`, `line`), a `function` or an address range (`lo`, `hi`), with how often each instruction ran. |
 | `GET /api/codemap/at?sample=` | The instruction (address, function, file and line, cycle) at a sample. |
